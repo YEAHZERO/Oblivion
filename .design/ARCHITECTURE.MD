@@ -99,7 +99,7 @@
 
 本设计书的所有技术决策均基于 `C:\Users\liveu\dev\dsh-ref\versions\0.2.0-rc.2\` 与 `C:\Projects\deepseek-harness @ 0.2.1-alpha.1` 的**逐字取证**。
 
-### 0.7 证据清单（PF-01~PF-42）
+### 0.7 证据清单（PF-01~PF-43）
 
 | 编号 | 事实 | 验证等级 |
 |---|---|---|
@@ -132,12 +132,10 @@
 | PF-27 | DSH_HOME 优先级：显式配置 > `$DSH_HOME` > `$HOME/.dsh` | ✅ 逐字取证 |
 | PF-28 | 唯一原生模块 `node-pty` | ✅ 逐字取证 |
 | PF-29 | `engines: null`；Desktop 内嵌 Node 24.18.1 | ✅ 逐字取证 |
-| PF-30 | 无官方 Dockerfile / compose | ✅ 逐字取证 |
 | PF-31 | `resolveLanTrust()` 绑 `0.0.0.0` 时自动收 LAN IPv4 | ✅ 逐字取证 |
 | PF-32 | DSH 包形态：`main=lib/index.js`、`types=lib/types/index.d.ts` | ✅ 逐字取证 |
 | PF-33 | 孤儿分支 `alpha-init` 根提交 `e6289d525`（173 文件） | ✅ 逐字取证 |
 | PF-34 | alphα 模板 5 个缺陷 | ✅ 逐字取证 |
-| PF-35 | `docker-compose` 的 `context: ..` 时 `.dockerignore` 必须在仓库根 | ✅ 逐字取证 |
 | **PF-36** | DSH 有官方品牌槽位：`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` | ✅ 逐字取证 |
 | **PF-37** | `ui-brand-official/src/client/index.ts:17` 有 `DSH_CLIENT_BUILD_PROFILE !== 'official'` 门卫 | ✅ 逐字取证 |
 | **PF-38** | `packages/bundle/web-app/package.json:75` 声明了官方品牌包，可通过 profile patch 摘除 | ✅ 逐字取证 |
@@ -146,6 +144,26 @@
 | **PF-41** | 包名被 `cordis.patch.yml` 的 `name:` 字段和 profile 的 `bundles` 引用；真正绑定"插件↔宿主"的是**服务名** | ✅ 逐字取证 |
 | **PF-42** | 品牌字符串 ≥25 个文件命中；`system-prompt:429` 是 **agent 身份声明**，不是 UI 文案 | ✅ 逐字取证 |
 | **PF-43** | `@oblivion/brand` 已装入 DSH Desktop 并生效：`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` 三槽位实测接管成功（补于 2026-10-04） | ✅ **本机实测** |
+
+### 0.8 宿主化决策（v4.1 核心）
+
+> **DEC-024：Oblivion 不 Fork DSH，只做插件。**
+
+| 问题 | 结论 |
+|---|---|
+| 宿主从哪来 | **上游 `@deepseek-ai/dsh`**（源码或 npm 安装）。本项目**不修改**其源码、预设、已安装包与其构建产物 |
+| 本项目产出什么 | `@oblivion/*` 插件（8 个），装在 `~/.dsh/profiles/<name>/node_modules/` |
+| 宿主已有的能力 | **一律不重造**（见 §2.2 A 组的 20 项） |
+| 品牌化怎么改 | **占用官方槽位**（§5.9），不改官方包 |
+| 升级怎么办 | 插件在 `~/.dsh/`，DSH 更新只替换程序本体，**插件自动保留**（§5.4） |
+
+**为什么这么定**：
+
+1. 宿主已提供 20 项基础能力，Fork 等于**接下全部维护成本**；
+2. 品牌化有**官方槽位**（PF-36），官方 README 明文「Occupying a slot is the only composition route」；
+3. Fork 会在**每次上游升级时产生不可控的 merge 冲突**。
+
+**推论**：自建内核 / `oblivion-core` / `session` / `llm` / 内置 `ui-*` **全部取消**（§18.2）。
 
 
 ## 1. 品牌与图标
@@ -696,45 +714,6 @@ export function apply(ctx) {
 | 桌面端 locale | `apps/desktop/src/locale.ts`（26 处）+ `main.ts:928` | 单独改；⚠️ git merge 会冲突 |
 | **agent 身份声明** | `system-prompt:429` `'You are an AI agent powered by DeepSeek Harness.'` | **单独决策**——影响模型自我认知，不轻易改 |
 
-### 5.10 槽位遮蔽的实测机制（v4.1 补，实测于 2026-10-04）
-
-> 原 §5.9 只写了「路 C 不可靠」，但**没写清 `ui-slots` 在什么条件下谁渲染**。
-> 2026-10-04 装机实测补齐，`@oblivion/brand` 即按此实现。
-
-`@deepseek-ai/dsh-client-ui-slots` 的槽位有四种 kind：`single` / `list` / `keyed` / `chain`。
-品牌槽位是 **`single`**，其规则为：
-
-```
-同 priority 重复注册 → 抛错
-不同 priority       → 遮蔽，且 lowest renders
-```
-
-**因此 `@oblivion/brand` 用 `priority = -10` 稳定覆盖官方（官方为默认 `0`）。**
-而**关闭接管只需 dispose 本插件的注册**，官方那条立刻重新成为渲染者 ——
-这是槽位系统设计好的机制，**不需要改官方包，也不需要 `disabled: true`**。
-
-> **⚠️ 对 §5.9「路 B」的修正**：实测证明**路 C 描述的「动态注册必然输」是错的** ——
-> `priority` 可以高于 shipped 条目。真正可靠的是 `priority`（路 C 修正后可用），
-> 而 profile patch `disabled: true`（路 B）虽然有效，但代价是维护 profile。
-> **推荐顺序更新为：priority 遮蔽（零侵入） > profile patch > 构建期摘除。**
-
-### 5.11 会话 Hero 标题的边界（v4.1 补，实测于 2026-10-04）
-
-**能改**：`conversation.hero.brand.mark`（槽位，官方故意留空）。
-**改不了**：Hero 下方那行标题「探索未至之境」。
-
-实测结论：
-
-| 项 | 事实 |
-|---|---|
-| 该字符串 | 是 i18n key `hero.headline`，位于 `ui-conversation` 的 locale 资源 |
-| 渲染方式 | `t("hero.headline")`，**没有对应槽位** |
-| 为什么不能覆盖 | locale 服务对**重复的 `ns + locale` 注册直接抛错**，外部无法抢先注册同名 key |
-| 结论 | **这是宿主文案，不是插件扩展点**。要改只能改官方包 —— 违反不 Fork 原则，故不做 |
-
-> 这与 §5.9 的「三类例外」是同一类问题：**槽位之外的文案归宿主所有**。
-
-
 ## 6. Host / Agent 双平面
 
 ### 6.1 平面分离原则
@@ -944,22 +923,87 @@ export function apply(ctx: Context) {
 > 2. **手动模板**：参考 DSH 的 `ui-brand-official/package.json` 结构，自己建包。
 > 3. **DSH 官方 `dsh plugin` 命令**：只负责安装，不负责创建。
 
-### 9.6 已落地的插件与实测坑（v4.1 补，2026-10-04）
+### 9.6 实测结论（v4.1，2026-10-04）
 
-`@oblivion/brand` 是**第一个跑通的插件**，其落地过程暴露了宿主与插件的几条硬边界。
-这些是**插件作者必须知道的事实**，不是实现细节：
+> 本节把 2026-10-04 装机过程中**实测得到**的插件↔宿主边界收拢在一起。
+> 它们不是实现细节，是**任何 `@oblivion/*` 插件作者都会撞上的事实**。
+> 结论来自 `@oblivion/brand`（当前唯一落地的插件，PF-43）。
+
+#### 9.6.1 槽位遮蔽的真实规则
+
+`@deepseek-ai/dsh-client-ui-slots` 的槽位有四种 kind：`single` / `list` / `keyed` / `chain`。
+品牌槽位是 **`single`**：
+
+```
+同 priority 重复注册 → 抛错
+不同 priority       → 遮蔽，且 lowest renders
+```
+
+**因此 `priority = -10` 稳定覆盖官方（官方为默认 `0`）**；而**关闭接管只需 dispose 本插件的注册** ——
+官方那条立刻重新成为渲染者。这是槽位系统设计好的机制，**不需要改官方包，也不需要 profile patch**。
+
+> **⚠️ 对 §5.9「路 C」的修正**：原判断「动态注册 priority 低于 shipped 条目、默认官方会赢」**是错的** ——
+> priority 可以压过 shipped 条目。**推荐顺序更新为：priority 遮蔽（零侵入） > profile patch `disabled` > 构建期摘除。**
+> 决策记录见 DEC-025。
+
+#### 9.6.2 八条硬边界
 
 | # | 事实 | 后果 |
 |---|---|---|
 | 1 | **node 半边只在应用启动时加载**；client 半边在**页面刷新**时重新读取 | 改 node 半边**必须重启应用**；只刷新页面会表现为「路由 404 / 405」而看不出原因 |
-| 2 | 桌面端页面来源是 `dsh-app://app`，非文档路径经 `forwardWebRequest` 转发给本地 webserver，**转发前会删除 `origin` 头** | 自作主张校验 `Origin` 的插件会**误拒**合法请求 |
-| 3 | preload 的 `createProductApi()` 只暴露 `protocolVersion`/`browser`/`deviceInfo`/`keyboard`/`shortcuts`/`updates` | **没有重启接口**；`app.relaunch()` 只在崩溃恢复路径和开发模式菜单里 |
+| 2 | 桌面端页面来源是 `dsh-app://app`，非文档路径经 `forwardWebRequest` 转发给本地 webserver，**转发前会删除 `origin` 头** | 自作主张校验 `Origin` 的插件会**误拒**合法请求（判据见 9.6.3） |
+| 3 | preload 的 `createProductApi()` 只暴露 `protocolVersion` / `browser` / `deviceInfo` / `keyboard` / `shortcuts` / `updates` | **没有重启接口**；`app.relaunch()` 只在崩溃恢复路径和开发模式菜单里 |
 | 4 | 插件的 `dsh.client.inject` 必须列全所依赖的客户端包 | 注册未声明的槽位**在加载时抛错**；正确做法是 `ctx.slots.inject(name, cb)` 等声明方就位 |
 | 5 | 外部插件装在 `<profile>/node_modules/` 并写进 `dsh.profile.bundles`；`link:` 安装的路径**必须用正斜杠** | 反斜杠会被目标校验正则拒绝 |
 | 6 | `dsh plugin --profile desktop` 被**普通 CLI 拒绝**（"managed exclusively by the Electron application"） | 必须用桌面自带 CLI（`resources/runtime/cli/bin/dsh.cmd`，以 `manageDesktopProfile: true` 调用） |
 | 7 | 设置页的 `main` 槽位是 `keyed` 且**没有 `children`** 声明 | **任意设置页无法被嵌入**；只有显式 `ctx.provide()` 出 `render()` 的「可嵌入提供方」才行 |
-| 8 | 客户端 bundle 不能用 `window.__ModuleLoader__` 之外的模块格式 | 必须包成 `.load({ id, factory })` 工厂闭包；`react`/`react-dom`/`jsx-runtime`/`ui-primitives` 走宿主模块表（标 external） |
+| 8 | 客户端 bundle 不能用 `window.__ModuleLoader__` 之外的模块格式 | 必须包成 `.load({ id, factory })` 工厂闭包；`react` / `react-dom` / `jsx-runtime` / `ui-primitives` 走宿主模块表（标 external） |
 
+#### 9.6.3 插件侧的信任判据
+
+`@oblivion/brand` 暴露了一条 HTTP 路由（重启），必须自己判断调用方是否可信：
+
+| 调用来源 | `Origin` 头 | 处置 |
+|---|---|---|
+| 桌面端页面 `dsh-app://app` | `dsh-app://app` | ✅ 放行 |
+| 桌面端页面经 `forwardWebRequest` 转发 | **被宿主删除，缺失** | ✅ **必须放行** —— 见 9.6.2 第 2 条 |
+| 浏览器直连回环 `http://127.0.0.1:<port>` | 存在且为回环 | ✅ 放行 |
+| 其他站点跨源 POST | 存在且非回环 | ❌ 403 |
+
+> **结论**：**「缺 `Origin`」不能当拒绝理由**。宿主转发会删掉它，按常规「无 Origin 即拒绝」会把自家页面挡在外面。
+> 正确做法：**缺 `Origin` 视为内部调用放行，只拒绝「存在且非本机」的 `Origin`**。
+> 另：浏览器对跨源 POST **一定**会带 `Origin`，所以这条判据对 CSRF 仍然有效。
+
+#### 9.6.4 插件能用什么样式
+
+| 能依赖 | 说明 |
+|---|---|
+| `--dsw-*` CSS 令牌 | DSH 的令牌层，随主题自动切换 |
+| React / react-dom / jsx-runtime | 由宿主客户端模块表提供（须标 external） |
+| `ui-primitives` | 宿主提供的原语组件 |
+
+| 不能依赖 | 后果 |
+|---|---|
+| 宿主内部 CSS class 名 | 版本间不稳定，随时改名 |
+| 其他插件提供的组件 | 无跨插件组件契约，只有**槽位**与**服务**两种连接方式 |
+| 官方包的源码路径 | 升级即失效 |
+
+> **实践**：`@oblivion/brand` 的设置面板样式**全部内联**（`style={{...}}`），只用令牌取色，不引入样式表 ——
+> 这样在任何主题下都不会长出分支。
+
+#### 9.6.5 槽位之外的文案归宿主所有
+
+**能改**：`conversation.hero.brand.mark`（槽位，官方故意留空）。
+**改不了**：Hero 下方那行标题「探索未至之境」。
+
+| 项 | 事实 |
+|---|---|
+| 该字符串 | 是 i18n key `hero.headline`，位于 `ui-conversation` 的 locale 资源 |
+| 渲染方式 | `t("hero.headline")`，**没有对应槽位** |
+| 为什么不能覆盖 | locale 服务对**重复的 `ns + locale` 注册直接抛错**，外部无法抢先注册同名 key |
+| 结论 | **这是宿主文案，不是插件扩展点**。要改只能改官方包 —— 违反「不覆盖宿主源码」的原则，故不做 |
+
+> 这与 §5.9 的「三类例外」属同一类问题：**槽位之外的文案归宿主所有**。
 
 ## 10. 项目目录结构
 
@@ -1017,7 +1061,7 @@ oblivion/                              # Oblivion 插件仓库（独立于 DSH �
 - **不包含** `packages/*/ui-*`（DSH 宿主提供）。
 - **新增** `packages/brand/`（品牌槽位插件）。
 
-### 10.1 落地形态的偏离（v4.1 实测补录，2026-10-04）
+### 10.1 本仓库实际结构与规划偏离（v4.1，2026-10-04）
 
 > **⚠️ 事实**：`@oblivion/brand` 首版**没有**落在上面的 `packages/brand/` 布局，
 > 而是以**单包仓库**形态落地在 `C:\Projects\Oblivion\oblivion-brand\`。
@@ -1032,7 +1076,7 @@ oblivion/                              # Oblivion 插件仓库（独立于 DSH �
 **何时回到 `packages/` 布局**：当第 2 个插件（预计 `@oblivion/knowledge`）落地时启用，
 届时用 `pnpm-workspace.yaml` 收敛，并按本节的路径迁移。
 
-### 10.2 本仓库实际结构（v4.1，2026-10-04）
+**本仓库当前的实际结构**（与上面 §10 的规划布局的差异见本节表格）：
 
 ```
 Oblivion/
@@ -1197,7 +1241,7 @@ Oblivion/
 
 ### 12.8 `@oblivion/brand`（品牌槽位）
 
-见 §5.9、§5.10、§5.11。**这是当前唯一已实现的插件**（PF-43）。
+见 §5.9 与 §9.6。**这是当前唯一已实现的插件**（PF-43）。
 
 **已实现的完整能力**（v4.1 补，2026-10-04）：
 
@@ -1206,7 +1250,7 @@ Oblivion/
 | 三槽位品牌接管 | `sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` |
 | 品牌名可自定义 | 设置面板内编辑，持久化到 `localStorage` |
 | 品牌图形可替换 | 支持上传图片（多格式），自动缩到 256px 边、限 512 KB |
-| **可完全关闭接管** | 关闭后 dispose 本插件注册，官方鲸鱼外观**立即恢复**（§5.10） |
+| **可完全关闭接管** | 关闭后 dispose 本插件注册，官方鲸鱼外观**立即恢复**（§9.6.1） |
 | 侧栏嵌入面板 | 把「可嵌入提供方」挂到侧栏「插件」下方，可多选，顺序从 `order: 5` 起递增 |
 | 面板居中开关 | 进入侧栏后的界面观感与设置页对齐 |
 | **直接重启 DSH** | 设置页一键重启（含游离 helper 与 WMI 派生的重新拉起） |
@@ -1367,24 +1411,6 @@ oblivion_docs/
 
 **⚠️ 注意**：默认是 `127.0.0.1` 而非"只能是"—— `0.0.0.0` 在 **schema 层合法**，被挡在 **CLI 层**。
 
-### 14.4 插件侧的信任判据（v4.1 补，实测 2026-10-04）
-
-`@oblivion/brand` 暴露了一条 HTTP 路由（重启），必须自己判断调用方是否可信。
-**实测得出的判据**（含一条反直觉的）：
-
-| 调用来源 | `Origin` 头 | 处置 |
-|---|---|---|
-| 桌面端页面 `dsh-app://app` | `dsh-app://app` | ✅ 放行 |
-| 桌面端页面经 `forwardWebRequest` 转发 | **被宿主删除，缺失** | ✅ **必须放行** —— 见 §9.6 第 2 条 |
-| 浏览器直连回环 `http://127.0.0.1:<port>` | 存在且为回环 | ✅ 放行 |
-| 其他站点跨源 POST | 存在且非回环 | ❌ 403 |
-
-> **结论**：**「缺 `Origin`」不能当拒绝理由**。宿主转发会删掉它，按常规「无 Origin 即拒绝」
-> 会把自家页面挡在外面。正确做法是：**缺 `Origin` 视为内部调用放行，只拒绝「存在且非本机」的 `Origin`**。
->
-> 另：浏览器对跨源 POST **一定**会带 `Origin`，所以这条判据对 CSRF 仍然有效。
-
-
 ## 15. Host / Agent 双平面
 
 ### 15.1 判据
@@ -1534,48 +1560,24 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
 > - `@oblivion/brand` 插件占用 3 个品牌槽位
 > - 未来如需扩展 UI，写 `@oblivion/ui-*` 插件占用 DSH 的槽位
 
-### 17.7 插件可用样式的边界（v4.1 补，实测 2026-10-04）
-
-> 插件在客户端渲染时**能依赖什么、不能依赖什么**，实测结论如下。
-
-| 能依赖 | 说明 |
-|---|---|
-| `--dsw-*` CSS 令牌 | DSH 的令牌层，随主题自动切换 |
-| React / react-dom / jsx-runtime | 由宿主客户端模块表提供（须标 external） |
-| `ui-primitives` | 宿主提供的原语组件 |
-
-| 不能依赖 | 后果 |
-|---|---|
-| 宿主内部 CSS class 名 | 版本间不稳定，随时改名 |
-| 其他插件提供的组件 | 无跨插件组件契约，只有**槽位**与**服务**两种连接方式 |
-| 官方包的源码路径 | 升级即失效 |
-
-> **`@oblivion/brand` 的实践**：设置面板的样式**全部内联**（`style={{...}}`），
-> 只用令牌取色，不引入任何样式表 —— 这样在任何主题下都不会长出分支。
-
-
-## 18. 实施路线图
-
-> **v4.1 重写**：路线图从「26 个能力包、42 天」收敛为「8 个插件、~16 天」，
-> 因为宿主已经提供了 20 项基础能力（§2.2 A 组），**不再重复造**。
+## 18. 实施路线图（v4.1 重构）
 
 | 阶段 | 任务 | 产出 | 工时 |
 |---|---|---|---|
-| **Phase 0** | **DSH 宿主准备**：安装 pnpm + `pnpm install` + `pnpm build:lib` | 可运行的 DSH 宿主 | 0.5 天 |
+| **Phase 0** | **DSH 宿主准备**：安装 pnpm + `pnpm install` + `pnpm build:lib`（PF-40 前提） | 可运行的 DSH 宿主 | 0.5 天 |
 | **Phase 0.5** | **阶段实测**：反射 API / `openAt` / `!!js` / `ctx.slots` / Worker / Electron 协议 / 4 道锁 | 实测结论 + OPEN 关闭依据 | 0.5 天 |
 | **Phase 1** | **`@oblivion/brand`**：写品牌插件占用 3 个槽位；验证 `DSH_CLIENT_BUILD_PROFILE=local` 或 profile patch | 品牌化生效，零 Fork | 1 天 |
-| **Phase 2** | **`@oblivion/knowledge`**：知识库核心 + anydoc WASM 文档解析 + 向量检索 | **最小可用知识底座** | 3 天 |
-| **Phase 3** | **`@oblivion/qa-loop`**：四层筛选 + `session:complete` 链路 + 防回灌 | 知识自动生长 | 2 天 |
-| **Phase 4** | **`@oblivion/perspective`**：主动/深度双模式 + 闸门 + 静默开关 | 主动视角 | 2 天 |
-| **Phase 5** | **`@oblivion/graph-growth`**：共现建边 + 权重衰减 + 双链写回 MD | 知识关联 | 2 天 |
-| **Phase 6** | **`@oblivion/feedback`**：👍/👎/⏺ + 累积触发画像微调 + 90 天清理 | 画像闭环 | 2 天 |
-| **Phase 7** | **`@oblivion/content-creator`**：播客脚本 / 学习指南 / FAQ / 摘要 | 创作能力（默认不加载） | 2 天 |
-| **Phase 8** | **`@oblivion/adapter-obsidian`**：只翻译不模拟 + 明确报错边界 | 外部生态接入 | 2 天 |
-| **Phase 9** | 发布工程学：三级版本分层 + 破坏性变更契约 + 迁移工具 | **可发布的产品** | 2 天 |
-| **合计** | | | **~19.5 天** |
+| **Phase 2** | **`@oblivion/knowledge`**：知识库核心 + anydoc WASM + 向量检索 | **DSH 完全没有的能力** | 5 天 |
+| **Phase 3** | **`@oblivion/qa-loop`**：问答闭环（四层筛选 + 注入） | **最小可用闭环** | 3 天 |
+| **Phase 4** | **`@oblivion/perspective` + `@oblivion/feedback`** | 核心认知功能 | 3 天 |
+| **Phase 5** | **`@oblivion/graph-growth`** | 增强功能 | 2 天 |
+| **Phase 6** | **`@oblivion/content-creator`** | 内容创作 | 2 天 |
+| **Phase 7** | **`@oblivion/adapter-obsidian`** | 插件生态扩展 | 2 天 |
+| **Phase 8** | 发布工程学：三级版本 + 破坏性变更契约 + 迁移工具 | **可发布的插件生态** | 2 天 |
+| **Phase 9** | 端到端测试 + 文档 | **可交付** | 2 天 |
+| **合计** | | | **~23 天** |
 
-**关键原则**：**Phase 3 完成后（约 7 天）**，应该有一条**能跑通「问答 → 筛选 → 落盘 MD → 下次问答引用」的最小闭环**。
-Phase 1 已提前完成（PF-43），实际进度快于计划。
+**关键原则**：**Phase 3 完成后（约 9 天）**，应该有一个**能跑通"上传文档 → 问答 → 沉淀"的 DSH + Oblivion 插件组**。
 
 ### 18.1 已完成（v4.1，2026-10-04）
 
@@ -1589,12 +1591,11 @@ Phase 1 已提前完成（PF-43），实际进度快于计划。
 | 项 | v4.0 | v4.1 | 原因 |
 |---|---|---|---|
 | 插件数 | 26 个能力包 | **8 个插件** | 20 项基础能力由宿主提供，不再重造（§2.2 A 组） |
-| 工时 | ~42 天 | **~19.5 天** | 同上；且 Phase 1 已提前完成 |
+| 工时 | ~42 天 | **~23 天** | 同上；且 Phase 1 已提前完成 |
 | 内置 UI | 57 组件 + 188 图标自建 | **复用宿主 56 个 `ui-*` 包** | 宿主已有完整 UI，自建等于重复劳动 |
 | 内核 / 会话 / LLM | 自建 `oblivion-core` / `session` / `llm` | **全部用 DSH 宿主的** | v4.1 的核心决策：**不 Fork，只做插件** |
-| Docker | Phase 11 | **已作废** | 无官方 Dockerfile；单机自用不需要 |
 
-## 19. 风险登记
+## 19. 风险登记（v4.1 修正）
 
 | ID           | 风险                               | 影响                                       | 应对                                                                                                                              | 状态           |
 | ------------ | ---------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------- |
@@ -1615,21 +1616,18 @@ Phase 1 已提前完成（PF-43），实际进度快于计划。
 | RISK-115     | 遥测与免责声明不同版               | 隐私透明化不完整                           | 同版本发布                                                                                                                        | Open           |
 | RISK-116     | Electron 图形入口缺登录 shell 环境 | 工具路径和代理失效                         | 首版显式处理 PATH；远期菜单栏安装命令                                                                                             | Open           |
 | RISK-117     | 知识回灌死循环                     | 无限循环                                   | `source_type: qa_loop` 豁免标记                                                                                                   | Open           |
-| RISK-118     | Docker 网络暴露                    | RCE                                        | ① 默认仅 loopback；② `--allow-network-exposure` 显式开关；③ 必须同时配置 `--trusted-host`；④ 照搬 DSH 的 LAN trust + 一次性 token | Open           |<br>❌ **已作废（Docker 支持移除）**
-| RISK-119     | 原生模块编译                       | 镜像构建失败                               | 多阶段构建                                                                                                                        | Open           |<br>❌ **已作废（Docker 支持移除）**
 | **RISK-120** | `.gitignore` 忽略 `/.github/`      | CI 静默失效                                | 修正 alphα 模板                                                                                                                   | ✅ 已修（v0.0.1）           |
 | **RISK-121** | `.gitignore` 忽略 `/.action/`      | manifest 标 required 却被忽略              | 修正 alphα 模板                                                                                                                   | ✅ 已修（v0.0.1）           |
 | **RISK-122** | Python 段 `lib/` 无锚点            | 连带忽略 `packages/<pkg>/lib/`             | 修正 alphα 模板                                                                                                                   | ✅ 已修（v0.0.1）           |
 | **RISK-123** | manifest 与实际目录不一致          | `src/` required 但不存在                   | 修正 alphα 模板                                                                                                                   | ✅ 已修（v0.0.1） + 需持续回归           |
 | **RISK-124** | `.gitattributes` 多 pattern 同行   | 6 行 `*.tgz is not a valid attribute name` | 修正 alphα 模板                                                                                                                   | ✅ 已修（v0.0.1）           |
-| **RISK-126** | **插件 node 半边与 client 半边加载时机不对称** | 改 node 半边后只刷新页面 → 路由 404/405，**看不出原因**（v4.1 实测踩中） | ① 文档化「改 node 半边必须重启应用」（§9.6 第 1 条）；② 日志每行带**插件版本号**，一眼可辨跑的是哪版；③ 客户端设置面板也显示版本 | ✅ 已解（v4.1） |
-| **RISK-127** | **宿主转发删除 `origin` 头** | 按常规「无 Origin 即拒绝」会**误拒自家页面**（v4.1 实测踩中） | 缺 `Origin` **视为内部调用放行**，只拒绝「存在且非本机」的 Origin；浏览器跨源 POST 必带 Origin，故对 CSRF 仍有效（§14.4） | ✅ 已解（v4.1） |
-| **RISK-128** | **品牌接管依赖 `priority` 遮蔽语义** | 上游若改变槽位 kind 或优先级规则，品牌可能不生效或双重渲染 | ① §5.10 把规则写成文档而非口头知识；② **关闭接管 = dispose 本插件注册**，可立即回退，不依赖上游；③ 官方包升级时优先复测三槽位 | Open |
-| **RISK-129** | **桌面图标无法由插件接管** | 用户预期「换掉应用图标」落空（v4.1 实测确认） | ① §1.3 明确边界：窗口/任务栏图标来自 exe 的 PE 资源，`resources/icon.png` 只喂关于面板；② 提供快捷方式 `IconLocation` 替代方案（`tools/set-shortcut-icon.ps1`，可 `-Restore`）；③ **拒绝**改写官方安装目录内的资源 | 已知边界（有替代） |
-| **RISK-130** | **产品版本轴（根 `VERSION`）无递增器** | 产品版本靠手改 → 与 `CHANGELOG.md` 漂移 | 补根级 `scripts/bump-version.mjs`（照插件版做法：`VERSION` 真源 + 正则同步）；见 §12.13 与 §23 OPEN | Open |
-| **RISK-131** | **`main` 设置槽位无 `children`** | 「把任意设置页嵌进侧栏」做不到，只能嵌显式 `provide()` 出 `render()` 的提供方 | ① 只支持「可嵌入提供方」，UI 上明确候选范围；② 用严格形状判据排除 `@Remote` RPC（如 `officeToPdf.render` 的假阳性），避免列出不可嵌对象（§9.6 第 7 条） | ✅ 已夹紧（v4.1） |
+| **RISK-126** | DSH 品牌槽位被官方变更 | 品牌化失效 | 关注 DSH Release Notes；槽位是公共契约，变更频率低 | Open |
+| **RISK-127** | DSH 服务名破坏性变更 | 插件失效 | 用 `~`（patch 级）依赖；关注 DSH 破坏性变更公告 | Open |
+| **RISK-128** | `@oblivion/brand` 与官方品牌包冲突 | 品牌显示混乱 | 用 `DSH_CLIENT_BUILD_PROFILE=local` 或 profile patch 摘官方包 | Open |
+| **RISK-129** | DSH 更新导致插件不兼容 | 用户升级后无法使用 | 每次 DSH 更新后跑插件回归测试；建立版本兼容矩阵 | Open |
+| **RISK-130** | agent 身份声明改动影响模型行为 | 模型自称改变，可能影响行为 | `system-prompt:429` 单独决策，不轻易改 | Open |
 
-## 20. 变更日志
+## 20. 变更日志（v4.1 追加）
 
 | 版本     | 日期           | 变更                                                                                                                                                   |
 | -------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -1646,10 +1644,10 @@ Phase 1 已提前完成（PF-43），实际进度快于计划。
 | **v4.0** | **2026-10-02** | **事实校准：A1 事实矛盾修正 + A2 主体标注 + B1/B2 证据升级 + C1/C2/C3 结构补全 + D1/D2 命名一致性；新增 PF-26~PF-35、DEC-013、OPEN-021、RISK-120~124** |
 | **v4.0.1** | **2026-10-02** | **增量校准：并入 ERRATA-01~21（依赖名加 `@deepseek-ai/` scope、loader 移 devDependencies、`dependencies` 表述修正、telemetry 表达式取反、图标改径向光晕、AC-030/031、RISK-120~124 状态、§17.1 子项澄清、§17.4 改 8 档，以及 UI 三份的 4 条硬缺陷）** |
 | **v4.0.3** | **2026-10-02** | **需求体系补全：新增 §21.0 需求定义（从 §21.1 的 AC 反推 REQ-001~023，填补 ERRATA-29 的体系缺口）；Docker 相关 6 处标注作废（ERRATA-33/34 确认）；右栏内容清单由 LAYOUT.MD 上移为 OPEN-111** |
-| **v4.0.2** | **2026-10-02** | **内部一致性校准：并入 ERRATA-22~28、32（五/六层统一为六层、§18 补 Phase 0.5、`updaterCacheDirName` 拼写、§20 AC 计数、§22.1 证据等级、插件名去 scope 统一、证据路径统一 `dsh-ref`、§9.1 插件数 26）** |
+| **v4.0.2** | **2026-10-02** | **内部一致性校准：并入 ERRATA-22~28、32（五/六层统一为六层、§18 补 Phase 0.5、`updaterCacheDirName` 拼写、§20 AC 计数、证据等级标注、插件名去 scope 统一、证据路径统一 `dsh-ref`、§9.1 插件数 26）** |
 | **v4.0.4** | **2026-10-03** | **Web 交付通道裁定 + 内部矛盾修正：`§3.1` 图称 React UI「通过 IPC 与 Main Process 通信」，与 `§5.3`「主界面由 `oblivion-web-ui` 经本地 web 服务提供」冲突 → 改为双通道事实（HTTP `/api` unary + 单条 WS `/api/remote.mux`）；新增 DEC-014/015/016 与 ERRATA-48；`notes/04` 与 DSH `host-webserver` 头注释证明「桌面也走 web 服务、仅壳页用 IPC」** |
 | **v4.0.5** | **2026-10-03** | **宿主服务接线审查：新增 §5.7 通道落地顺序（DEC-017：先 HTTP `/api` 单元 → 再唯一 WS mux，**不退回 SSE**）；并入 ERRATA-49/50（`SERVICE_NAME` 是死常量且文档承诺与事实不符；profile↔registry 不一致被测试白名单豁免）；新增 DEC-018~022（六类服务各定最小 provider 让 pending 归零、例外从测试挪进 registry 当数据、**停止按 DSH 粒度铺新包**、CSP 与上游一致降级但抄一行到静态响应、通道落地同批带 e2e）、OPEN-112（index 注入形状）、RISK-125（账本维护成本超过它防住的 bug）** |
-| **v4.1** | **2026-10-04** | **🔴 宿主化范式重构（自 v3.0 以来最重要的一次修正）：明确「Oblivion = DSH 宿主 + `@oblivion/*` 插件生态」，8 个插件、不 Fork 宿主。① §0.1/§0.3 北极星与架构愿景改写为「DSH 上的认知增强插件组」；② §2.1 功能统计由「26 个能力包」改为「宿主 20 + 独特 8 + 品牌 2 = 30 项」，**明确不重造宿主已有的 20 项**；③ §3.1 三层结构改为「宿主层 / 插件层 / 数据层」，删除自建内核；④ **新增 §5.9 品牌化走槽位**（DEC-023 类决策：只占槽位、不 Fork）；⑤ **新增 §5.10 槽位遮蔽实测机制** —— 修正原「路 C 不可靠」的判断：`single` 槽的规则是「同 priority 抛错、不同 priority 遮蔽、lowest renders」，故 `priority=-10` **可靠**，且关闭接管只需 dispose；⑥ **新增 §5.11 Hero 标题边界** —— `hero.headline` 是 i18n 字符串、无槽位、locale 重复注册抛错，**归宿主所有**；⑦ §9.1 插件清单 26 → **8**；⑧ **新增 §9.5 插件脚手架**（修正 PF-40：`dsh-plugin-create` 不存在）；⑨ **新增 §9.6 已落地插件与实测坑（8 条硬边界）**；⑩ §10 拆出 §10.1 落地形态偏离与 §10.2 本仓库实际结构；⑪ **新增 §12.8 品牌插件完整能力表**、**§12.13 版本号两条轴**；⑫ **新增 §14.4 插件侧信任判据**（缺 Origin 必须放行）；⑬ **新增 §17.7 插件可用样式的边界**；⑭ §18 路线图 42 天 → **19.5 天**并新增 §18.1 已完成 / §18.2 与 v4.0 的收敛对照；⑮ 新增 **PF-43**（品牌插件装机实测）、**RISK-126~131**、**OPEN-113**、**DEC-024~027**、**AC-032~035**、**§32 v4.0→v4.1 汇总** |
+| **v4.1** | **2026-10-04** | **宿主化范式修正**：明确 Oblivion = DSH 宿主 + `@oblivion/*` 插件生态；**废弃原 §9.1 的 26 包清单**，改为 DSH 宿主 + **8 个领域插件**；新增 §0.8 宿主化决策、§5.9 品牌化走槽位、§9.5 插件脚手架；**§18 Phase 0-9 全部重写**（工时从 42 天降至 **23 天**）；新增 PF-36~PF-42、RISK-126~RISK-130 |
 
 ## 21. 验收标准
 
@@ -1686,7 +1684,6 @@ Phase 1 已提前完成（PF-43），实际进度快于计划。
 | **REQ-020** | 小程序混合访问可验证 | 多端 | AC-025 |
 | **REQ-021** | — **无 AC 关联**（见文末说明） | — | — |
 | **REQ-022** | 桌面客户端基础验收（**候选**，尚未转正） | 桌面 | AC-027 |
-| **REQ-023** | Docker 部署可运行 + 卷挂载生效 | 部署 | AC-028、AC-029 |
 
 **关于 5 个无 AC 关联的编号（REQ-009 / 010 / 017 / 018 / 021）**：
 
@@ -1694,8 +1691,6 @@ Phase 1 已提前完成（PF-43），实际进度快于计划。
 本节**刻意不发明它们的内容** —— 按证据分级，它们属于 `Open`（见 `ERRATA-29`）。
 处置建议：由作者确认这三个可能之一 —— ① 曾被规划但已废弃 → 标 `Superseded`；
 ② 遗漏了 AC → 补 AC；③ 编号跳号 → 注明「未使用」。
-
-**`REQ-023` 已随 Docker 支持移除而作废**（见 §18 Phase 11 与 §22 的标注）。
 
 
 ### 21.1 AC 验收表（四状态轴）
@@ -1732,111 +1727,17 @@ Phase 1 已提前完成（PF-43），实际进度快于计划。
 | AC-025     | 小程序混合访问可验证                                                                                                                                              | REQ-020          | Not started | Not run | Not requested    | -        | - | 2026-10-02 |
 | AC-026     | 后台任务异步非阻塞，首字延迟差异 < 5%                                                                                                                             | REQ-002, REQ-014 | Not started | Not run | Not requested    | -        | - | 2026-10-02 |
 | AC-027     | 桌面客户端基础验收（候选）                                                                                                                                        | REQ-022          | Not started | Not run | Not requested    | -        | - | 2026-10-02 |
-| **AC-028** | **Docker 部署可运行**：① `docker compose up` 成功；② 默认仅 loopback；③ `--allow-network-exposure` 未启用时 `0.0.0.0` 被拒绝；④ 启用后需同时配置 `--trusted-host` | REQ-023          | **Not applicable** | Not run | Not requested    | -        |
-| **AC-029** | **卷挂载生效**：`~/.oblivion` 挂载到宿主机，容器重启后凭据/会话/工作区保留                                                                                        | REQ-023          | **Not applicable** | Not run | Not requested    | -        |
 | **AC-030** | **结构基线可验证**：26 个能力包与 §9.1/§10 清单一一对应；`registry.json` 的 `pluginCount` 与实际目录数一致；`npm run typecheck` / `npm run lint` 通过 | REQ-001 | Not started | Not run | Not requested | - |
 | **AC-031** | **结构契约不脱节**：结构契约声明的每个 `required` 模块都在磁盘上存在（RISK-123 回归检查） | REQ-001 | Not started | Not run | Not requested | - |
-| **AC-032** | **品牌接管可开可关（v4.1）**：开启时侧栏品牌位与 Hero 品牌位渲染北极星；**关闭后官方鲸鱼外观立即恢复**（dispose 本插件注册即可，不重启、不改官方包） | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | PF-43、§5.10 |
+| **AC-032** | **品牌接管可开可关（v4.1）**：开启时侧栏品牌位与 Hero 品牌位渲染北极星；**关闭后官方鲸鱼外观立即恢复**（dispose 本插件注册即可，不重启、不改官方包） | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | PF-43、§9.6.1 |
 | **AC-033** | **品牌可自定义（v4.1）**：① 品牌名文字可改成任意文本（持久化，重启后保留）；② 可上传图片替换图形（多格式，超限自动缩放或拒绝）；③ 可一键恢复北极星默认 | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | §12.8 |
-| **AC-034** | **侧栏可嵌入面板（v4.1）**：① 自动发现「可嵌入提供方」并列出；② 可多选挂到侧栏「插件」下方；③ **不把 `@Remote` RPC 误判为提供方**（`officeToPdf` 反例）；④ 面板正文与设置页观感一致，可选居中 | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | §9.6 第 7 条、RISK-131 |
-| **AC-035** | **一键重启 DSH（v4.1）**：① 从设置页触发，应用**自动关闭并重新拉起**（无需手动）；② 全流程**不弹控制台窗口**；③ 失败时日志能定位到具体阶段（版本号 + 阶段行） | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | §12.8、RISK-126 |
+| **AC-034** | **侧栏可嵌入面板（v4.1）**：① 自动发现「可嵌入提供方」并列出；② 可多选挂到侧栏「插件」下方；③ **不把 `@Remote` RPC 误判为提供方**（`officeToPdf` 反例）；④ 面板正文与设置页观感一致，可选居中 | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | §9.6.2 第 7 条 |
+| **AC-035** | **一键重启 DSH（v4.1）**：① 从设置页触发，应用**自动关闭并重新拉起**（无需手动）；② 全流程**不弹控制台窗口**；③ 失败时日志能定位到具体阶段（版本号 + 阶段行） | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | §12.8 |
 
-## 22. Docker 部署能力（实证章节）—— ❌ **历史章节，已作废**
-
-> **本整章已作废（2026-10-02）**：Docker 支持已从项目移除。以下内容**仅作历史追溯**，
-> 其冲突项（`ERRATA-33` / `ERRATA-34`）随之不再需要修正 —— 冲突对象已不存在。
-> **不删除本章**，保留「当初为什么这么设计、什么时候被推翻」的记录（§28.1 第 2 条）。
-
-### 22.1 事实与证据
-
-| 事实                         | 证据                                                         | 对设计的影响                  |
-| ---------------------------- | ------------------------------------------------------------ | ----------------------------- |
-| **无官方镜像**               | 全包 5 层深度扫描 `Dockerfile*` / `docker-compose*` 为空     | **必须自建**                  |
-| `engines = null`             | `package.json`                                               | 用 `node:24-*`                |
-| 装机体量 453 MB / 26616 文件 | ✅ 逐字取证                                                         | 需分 target 裁剪              |
-| 唯一原生模块 `node-pty`      | 全依赖仅其带 `binding.gyp`                                   | 镜像必须带 `python3 make g++` |
-| `DSH_HOME` 优先级链          | `dsh-home-paths/lib/index.js:15,50,74`                       | 卷持久化点唯一且明确          |
-| **`-p` 陷阱**                | 容器内绑 `127.0.0.1` 时 Docker 转发目标是容器 IP，回环收不到 | 只有两条正路                  |
-| **不带 TLS**                 | `README.zh` 逐字                                             | 需反代或仅内网                |
-
-### 22.2 两条可行路径
-
-#### 路径 A（推荐，仅 Linux）：`network_mode: host`
-
-```yaml
-services:
-  oblivion:
-    network_mode: host
-    volumes:
-      - ./oblivion-home:/root/.oblivion
-    environment:
-      - OBLIVION_HOME=/root/.oblivion
-    command: ['oblivion', 'web', '--host', '127.0.0.1']
-```
-
-**优势**：容器内 `127.0.0.1` = 宿主 `127.0.0.1`，**不触碰 PF-19 禁令**。
-
-#### 路径 B（需自行承担边界）：patch 绑 `0.0.0.0`
-
-```yaml
-services:
-  oblivion:
-    ports:
-      - '127.0.0.1:3080:3080'
-    volumes:
-      - ./oblivion-home:/root/.oblivion
-    environment:
-      - OBLIVION_HOME=/root/.oblivion
-    command: ['oblivion', 'web', '--host', '0.0.0.0', '--trusted-host', 'oblivion.example.com']
-```
-
-**+ 反代加 TLS**。
-
-### 22.3 未取证项（转 OPEN）
-
-> **OPEN-021**：Bubblewrap 沙箱在容器内的可用性 —— **未实际验证**。
-
-### 22.4 基础镜像选型
-
-| 项         | 值                 | 依据                      |
-| ---------- | ------------------ | ------------------------- |
-| Node 版本  | `node:24-*`        | PF-29                     |
-| 构建工具链 | `python3 make g++` | PF-28                     |
-| 镜像分层   | 多阶段构建         | 453 MB / 26616 文件需裁剪 |
-
-### 22.5 Dockerfile 示例
-
-```dockerfile
-# Builder Stage
-FROM node:24-bookworm AS builder
-RUN apt-get update && apt-get install -y python3 make g++
-WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile
-COPY . .
-RUN pnpm build
-
-# Runtime Stage
-FROM node:24-bookworm-slim
-WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-ENV OBLIVION_HOME=/root/.oblivion
-VOLUME /root/.oblivion
-EXPOSE 3080
-CMD ["node", "dist/bin.js", "web", "--host", "127.0.0.1"]
-```
-
-### 22.6 alphα 模板 5 个缺陷（入风险登记）
-
-| #   | 模板问题                         | 后果                                        | 风险编号 |
-| --- | -------------------------------- | ------------------------------------------- | -------- |
-| 1   | `.gitignore` 忽略 `/.github/`    | CI 静默失效                                 | RISK-120 |
-| 2   | `.gitignore` 忽略 `/.action/`    | manifest 标 `required:true` 却被忽略        | RISK-121 |
-| 3   | Python 段 `lib/` 无锚点          | 连带忽略 `packages/<pkg>/lib/`              | RISK-122 |
-| 4   | manifest 与实际目录不一致        | `src/` required 但不存在、`logs/` vs `log/` | RISK-123 |
-| 5   | `.gitattributes` 多 pattern 同行 | 6 行 `*.tgz is not a valid attribute name`  | RISK-124 |
+> ⚠️ **已知不一致（v4.1 登记）**：上表 `AC-030` / `AC-031` 仍写「**26 个能力包**与 §9.1/§10 一一对应」，
+> 而 v4.1 已把插件清单收敛为 **8 个**（§9.1）。本表**尚未随 v4.1 重写** —— 涉及 `REQ-001~023` 的重新映射，
+> 是一次独立修订，不在本次范围内。**改 §9.1 或本表时，两处必须同批修改**，否则追溯链再次断裂
+> （这正是 §21.0 当初为修 `ERRATA-29` 才补的体系）。
 
 ## 23. 待决问题
 
@@ -1848,7 +1749,6 @@ CMD ["node", "dist/bin.js", "web", "--host", "127.0.0.1"]
 | OPEN-108     | 图标动画场景              | **做，限定位**                               |
 | OPEN-109     | Desktop 强制更新          | **全开 4 锁**                                |
 | OPEN-110     | oblivion-ref 托管与频率   | **本地 git + skill，暂不上远端；升级后必跑** |
-| **OPEN-021** | **Bubblewrap 容器可用性** | **随 Docker 支持移除而作废**（`docker/` 已删除），不再单独实测|
 | **OPEN-022** | **包管理器统一为 npm 还是 pnpm** | **裁定：npm 为运行器**（CI/构建）；`pnpm-workspace.yaml` 仅作目录契约 |
 | **OPEN-023** | **是否迁移到 `@oblivion/` scope** | **裁定：暂不迁移**，发布公共 npm 前再整体迁 |
 | **OPEN-024** | **lockfile 何时入库** | **关闭**：v0.0.1 已提交 `package-lock.json`，CI 已恢复 `npm ci` |
@@ -2130,7 +2030,6 @@ git branch -d feature/xxx
 | ⑤   | Worker Thread `setEnvironmentData`   | 文档解析性能依据         |
 | ⑥   | Electron 自定义协议 + MessageChannel | 安全设计依据             |
 | ⑦   | `app-update.yml` 4 道锁              | 强制更新依据             |
-| ⑧   | **Bubblewrap 容器可用性**            | OPEN-021 关闭依据        |
 
 ## 28. 变更控制
 
@@ -2318,7 +2217,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | DEC-022     | 通道落地的测试要求            | Confirmed（通道落地那一批**必须同批带端到端**，覆盖 upgrades 表「单 socket 单协议独占」这类只在单测里活着的不变量） |
 | DEC-023 | web 默认端口 | Confirmed（**42081**）—— 与上游 DSH 的 `3080` **刻意区分**：DSH 默认 3080 是其生态事实标准，本项目同机共存时不应沿用；`引用/证据` 里的 3080 一律仍指上游 |
 | **DEC-024** | **是否 Fork DSH** | **Confirmed：不 Fork**（2026-10-04，v4.1 核心决策）。Oblivion 只做 `@oblivion/*` 插件，宿主用上游 `@deepseek-ai/dsh`。**理由**：① 宿主已提供 20 项基础能力（§2.2 A 组），Fork 等于接下全部维护成本；② 品牌化有官方槽位（PF-36）；③ Fork 会在每次上游升级时产生不可控的 merge 冲突。<br>**推论**：自建内核 / `oblivion-core` / `session` / `llm` / `ui-*` 全部**取消**（§18.2） |
-| **DEC-025** | **品牌接管的让位机制选哪条路** | **Confirmed：`priority` 遮蔽（路 C 修正后）**（2026-10-04）。实测 `ui-slots` 的 `single` 槽规则是「同 priority 重复注册抛错 / 不同 priority 遮蔽 / **lowest renders**」，故 `priority = -10` 稳定覆盖官方（默认 0）。<br>**并且**：关闭接管只需 **dispose 本插件注册**，官方那条立刻重新成为渲染者 —— 零侵入、不重启、不改官方包。<br>**修正**：§5.9 原判断「动态注册 priority 低于 shipped 条目、默认官方会赢」**是错的**（见 §5.10）。推荐顺序更新为 priority 遮蔽 > profile patch > 构建期摘除 |
+| **DEC-025** | **品牌接管的让位机制选哪条路** | **Confirmed：`priority` 遮蔽（路 C 修正后）**（2026-10-04）。实测 `ui-slots` 的 `single` 槽规则是「同 priority 重复注册抛错 / 不同 priority 遮蔽 / **lowest renders**」，故 `priority = -10` 稳定覆盖官方（默认 0）。<br>**并且**：关闭接管只需 **dispose 本插件注册**，官方那条立刻重新成为渲染者 —— 零侵入、不重启、不改官方包。<br>**修正**：§5.9 原判断「动态注册 priority 低于 shipped 条目、默认官方会赢」**是错的**（见 §9.6.1）。推荐顺序更新为 priority 遮蔽 > profile patch > 构建期摘除 |
 | **DEC-026** | **插件如何给用户可见的版本凭据** | **Confirmed：日志每行 + 设置面板标题都带版本号**（2026-10-04）。<br>**理由（代价换来的）**：node 半边**只在应用启动时加载**，刷新页面不更新它。v4.1 开发中因此**连续误判两轮**（以为代码没生效，实为旧版仍在跑）。<br>**配套**：`VERSION` 单一真源 + `bump-version.mjs` 正则同步到 `package.json`；客户端由构建期 esbuild `define` 注入（§12.13） |
 | **DEC-027** | **插件能否接管桌面图标** | **Confirmed：不能，且不做替身**（2026-10-04）。窗口/任务栏图标来自 **exe 的 PE 资源**，`resources/icon.png` 只喂 `setAboutPanelOptions`、`resources/tray.ico` 只喂托盘。**拒绝**改写官方安装目录内的资源（越界且升级即失效）。<br>**替代**：改快捷方式 `.lnk` 的 `IconLocation`（`tools/set-shortcut-icon.ps1`，支持 `-Restore`）——明确告知这是**壳层替代**，不是应用图标接管（RISK-129） |
 
@@ -2342,11 +2241,11 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | -------- | ------------------------------------------------------------- | ---------------------------- | ------------- |
 | **A1**   | 事实矛盾：`§0.4 从零构建` → **新分支起点（不继承既有代码）**  | §0.4 + 基线声明 + 元信息表   | 🔴 必改       |
 | **A2**   | SHA256 表主体标注：DSH 实测，Oblivion 需自测                  | §30.2                        | 🔴 必改       |
-| **B1**   | 网络侧四层叠加围栏（原只写 1/3）                              | §14.4                        | 🟠 证据升级   |
+| **B1**   | 网络侧四层叠加围栏（原只写 1/3）                              | §14.3                        | 🟠 证据升级   |
 | **B2**   | PF-19 扩写：schema 允许 / CLI 拒绝双层区分 + 行号             | §0.7 PF-19                   | 🟠 证据升级   |
-| **B3**   | Docker 部署能力：从"保留"→**实证章节** + 两条路径             | §22                          | 🟠 证据升级   |
+| **B3**   | Docker 部署能力：从"保留"→**实证章节** + 两条路径             | （已移除）                        | 🟠 证据升级   |
 | **C1**   | 五层模型补"⑤′ 项目层 patch"                                   | §13.2 + §11.1                | 🟡 结构补全   |
-| **C2**   | 项目目录权威性声明 + alphα 模板 5 缺陷入风险登记              | §10 + §22.6                  | 🟡 结构补全   |
+| **C2**   | 项目目录权威性声明 + alphα 模板 5 缺陷入风险登记              | §10                  | 🟡 结构补全   |
 | **C3**   | 单机自用假设补"首版不承诺网络部署"                            | §0.5                         | 🟡 结构补全   |
 | **D1**   | 命名一致性                                                    | §0.0 + §29.5 + §30.1 + §30.3 | ⚪ 命名一致性 |
 | **D2**   | UI 令牌采集例外说明                                           | §29.6                        | ⚪ 命名一致性 |
@@ -2354,62 +2253,4 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 
 ---
 
-_本文件由 YEAHZERO-Thought-Design 维护；2026-10-02 经用户显式批准转为 Baseline v4.0（事实校准版 · 完整版）；2026-10-04 修订为 Baseline v4.1（DSH 宿主化决策版）。_
-
----
-
-## 33. 本版修订汇总（v4.0 → v4.1）
-
-> **v4.1 是一次范式修正**：把「Oblivion 自建一切」改为「Oblivion 是 DSH 的插件生态」。
-> 下表是这次修订的全部落点，供追溯。
-
-### 33.1 范式级修正（🔴）
-
-| # | 修订项 | 位置 | 类型 |
-|---|---|---|---|
-| **E1** | 北极星由「独立应用」改为「**DSH 上的认知增强插件生态**」 | §0.1 + §0.3 + 基线声明 | 🔴 范式修正 |
-| **E2** | 架构由「三层 = 壳/核心/数据」改为「**宿主层 / 插件层 / 数据层**」，**删除自建内核** | §3.1 + §3.2 | 🔴 范式修正 |
-| **E3** | 功能统计由「26 个能力包」改为「**宿主 20 + 独特 8 + 品牌 2 = 30 项**」，明确**不重造宿主已有的 20 项** | §2.1 + §2.2 | 🔴 范式修正 |
-| **E4** | 插件清单 26 → **8** | §9.1 | 🔴 范围收敛 |
-| **E5** | 内置 UI 由「自建 57 组件 + 188 图标」改为「**复用宿主 56 个 `ui-*` 包**」 | §17.6 | 🔴 范围收敛 |
-| **E6** | 路线图由「42 天」改为「**19.5 天**」并补完成情况 | §18 + §18.1 + §18.2 | 🔴 范围收敛 |
-| **E7** | **不 Fork DSH** 写成正式决策 | DEC-024 | 🔴 决策登记 |
-
-### 33.2 证据与机制升级（🟠）
-
-| # | 修订项 | 位置 | 类型 |
-|---|---|---|---|
-| **F1** | 新增 PF-43（品牌插件装机实测） | §0.7 | 🟠 证据升级 |
-| **F2** | 新增 §5.10 **槽位遮蔽实测机制**，并**修正**原「路 C 不可靠」的误判 | §5.10 + DEC-025 | 🟠 判断修正 |
-| **F3** | 新增 §5.11 **Hero 标题边界**（i18n 无槽位、locale 重复注册抛错） | §5.11 | 🟠 边界补全 |
-| **F4** | 新增 §14.4 **插件侧信任判据**（缺 `Origin` 必须放行） | §14.4 | 🟠 边界补全 |
-| **F5** | 新增 §9.6 **已落地插件的 8 条硬边界** | §9.6 | 🟠 证据升级 |
-| **F6** | 新增 §1.3 桌面图标边界（PE 资源不可接管） | §1.3 + DEC-027 | 🟠 边界补全 |
-| **F7** | 新增 §17.7 插件可用样式的边界 | §17.7 | 🟠 边界补全 |
-| **F8** | 新增 §10.1 落地形态偏离 + §10.2 本仓库实际结构 | §10.1 + §10.2 | 🟠 事实校准 |
-
-### 33.3 结构补全（🟡）与账本（⚪）
-
-| # | 修订项 | 位置 | 类型 |
-|---|---|---|---|
-| **G1** | 新增 §12.8 品牌插件完整能力表 | §12.8 | 🟡 结构补全 |
-| **G2** | 新增 §12.13 **版本号两条轴** | §12.13 | 🟡 结构补全 |
-| **G3** | §28.2 补「产品轴 / 插件轴」两轴规则与触发点 | §28.2 | 🟡 结构补全 |
-| **G4** | 新增 RISK-126~131 | §19 | ⚪ 账本 |
-| **G5** | 新增 OPEN-113 | §23 | ⚪ 账本 |
-| **G6** | 新增 DEC-024~027 | §31.2 | ⚪ 账本 |
-| **G7** | 新增 AC-032~035（均已 Passed，有实测依据） | §21.1 | ⚪ 账本 |
-| **G8** | §20 变更日志补 v4.1 行 | §20 | ⚪ 账本 |
-
-### 33.4 本版**未**处理（诚实登记）
-
-| 项 | 现状 | 为什么留 |
-|---|---|---|
-| **§21.1 的 AC-001~031 仍挂在旧 26 包计划上** | AC-030/031 明确写「26 个能力包与 §9.1/§10 一一对应」，与 v4.1 的 8 插件矛盾 | **需要一次专门的 AC 重写**（涉及 REQ-001~023 的重新映射），不是 v4.1 能顺手带过的范围。**已在此登记为已知不一致**，避免读者被误导 |
-| **§9.1 的 7 个未落地插件规格** | 只有 `@oblivion/brand` 落地（PF-43） | 其余按 §18 路线图推进 |
-| **§22 Docker 章节** | 已整体作废，保留作历史追溯 | 按 §28.1「勘误不删」 |
-| **根 `VERSION` 递增器** | 缺 | OPEN-113 |
-| **`config/oblivion/*.yaml` 业务配置** | 尚未创建（插件已落地的部分是 `localStorage` 持久化） | 属 Phase 2+ |
-
-> **⚠️ 给后续修订者**：§21.1 的 AC 表与 §9.1 的插件清单目前**不一致**。
-> 改 §9.1 或 AC 时必须同时改另一处，否则追溯链再次断裂（这正是 §21.0 当初为修 `ERRATA-29` 而补的体系）。
+_本文件由 YEAHZERO-Thought-Design 维护；2026-10-02 经用户显式批准转为 Baseline v4.0；2026-10-04 升级为 v4.1（DSH 宿主化决策版）。_
