@@ -27,6 +27,7 @@
  * try/catch —— 单个槽位注册失败不应该让整棵客户端树倒掉。
  */
 
+import { createElement } from 'react';
 import { OblivionBrandMark, OblivionBrandName } from './Brand.js';
 import { createBrandSettingsPanel } from './BrandSettingsPanel.js';
 import {
@@ -61,7 +62,11 @@ interface ClientCtx {
   reflect?: { store?: Record<PropertyKey, unknown> } | undefined;
   effect?(callback: () => unknown, label?: string): void;
   logger?(name: string): { warn(message: string): void };
+  provide?(name: string, value: unknown): unknown;
 }
+
+/** 本插件作为「可嵌入面板提供方」对外暴露的服务名。 */
+const PROVIDER_NAME = 'oblivionBrand';
 
 /** 已声明就位的槽位。 */
 interface Ready {
@@ -115,6 +120,31 @@ export function apply(ctx: ClientCtx): void {
   };
 
   const settingsPanel = createBrandSettingsPanel(() => discoverPanelProviders(ctx));
+
+  /**
+   * 让本插件也成为一个「可嵌入的面板提供方」。
+   *
+   * 用的是与 `dshmarket` 相同的约定形状（`version` + `render()`），因此：
+   *   - 它会被自己的发现逻辑列进「左侧栏面板」，可以把自己挂到侧栏；
+   *   - 任何别的宿主插件也能通过 `ctx.get('oblivionBrand').render()` 内嵌本插件。
+   *
+   * 之所以带 `version`，是因为发现逻辑靠这个形状把 UI 控制面与
+   * `remote.*` 那类 RPC 服务区分开（见 `panels.tsx` 的说明）。
+   */
+  let disposeProvider: (() => void) | undefined;
+  if (typeof ctx.provide === 'function') {
+    try {
+      const handle = ctx.provide(PROVIDER_NAME, {
+        version: 1,
+        settingsVisible: () => true,
+        setSettingsVisible: () => undefined,
+        render: () => createElement(settingsPanel),
+      });
+      if (typeof handle === 'function') disposeProvider = handle as () => void;
+    } catch (error) {
+      warn(`提供方面板注册失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   /** 依据当前设置与槽位就绪情况，把账本对齐。 */
   const sync = (): void => {
@@ -207,6 +237,8 @@ export function apply(ctx: ClientCtx): void {
   const disposeSettings = (): void => {
     unsubscribe();
     for (const key of [...disposers.keys()]) close(key);
+    disposeProvider?.();
+    disposeProvider = undefined;
   };
   if (typeof ctx.effect === 'function') ctx.effect(() => disposeSettings, 'oblivion-brand: settings sync');
 

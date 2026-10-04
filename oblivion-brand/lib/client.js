@@ -29,6 +29,7 @@ __export(index_exports, {
   inject: () => inject
 });
 module.exports = __toCommonJS(index_exports);
+var import_react4 = require("react");
 
 // src/client/polaris.ts
 var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
@@ -192,15 +193,18 @@ function OblivionBrandName() {
 }
 
 // src/client/BrandSettingsPanel.tsx
-var import_react2 = require("react");
+var import_react3 = require("react");
 
 // src/client/panels.tsx
+var import_react2 = require("react");
 var import_jsx_runtime2 = require("react/jsx-runtime");
 var PANEL_ORDER_BASE = 5;
 var PANEL_ID_PREFIX = "obl-panel-";
-var FALLBACK_PROVIDER_KEYS = ["market"];
+var FALLBACK_PROVIDER_KEYS = ["market", "oblivionBrand"];
+var EXCLUDED_PREFIXES = ["remote.", "api."];
 var PROVIDER_LABELS = {
-  market: "\u63D2\u4EF6\u5E02\u573A"
+  market: "\u63D2\u4EF6\u5E02\u573A",
+  oblivionBrand: "Oblivion \u54C1\u724C"
 };
 function providerLabel(key) {
   return PROVIDER_LABELS[key] ?? key;
@@ -208,16 +212,19 @@ function providerLabel(key) {
 function panelEntryId(key) {
   return PANEL_ID_PREFIX + key;
 }
-function asProvider(key, value) {
+function asUiControl(key, value) {
   if (value === null || typeof value !== "object") return null;
-  const render = value.render;
+  const record = value;
+  const render = record["render"];
   if (typeof render !== "function") return null;
+  const shaped = typeof record["version"] === "number" || typeof record["settingsVisible"] === "function";
+  if (!shaped) return null;
   return {
     key,
     render: () => {
       try {
         const element = render.call(value);
-        return element ?? null;
+        return (0, import_react2.isValidElement)(element) ? element : null;
       } catch {
         return null;
       }
@@ -233,13 +240,14 @@ function discoverPanelProviders(ctx) {
         const impl = store[rawKey];
         const name = typeof impl?.name === "string" ? impl.name : typeof rawKey === "string" ? rawKey : null;
         if (name === null || found.has(name)) continue;
+        if (EXCLUDED_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
         let value;
         try {
           value = ctx.get(name);
         } catch {
           continue;
         }
-        const provider = asProvider(name, value);
+        const provider = asUiControl(name, value);
         if (provider !== null) found.set(name, provider);
       }
     }
@@ -247,7 +255,7 @@ function discoverPanelProviders(ctx) {
   }
   for (const key of FALLBACK_PROVIDER_KEYS) {
     if (found.has(key)) continue;
-    const provider = asProvider(key, ctx.get(key));
+    const provider = asUiControl(key, ctx.get(key));
     if (provider !== null) found.set(key, provider);
   }
   return [...found.values()].sort((a, b) => a.key.localeCompare(b.key));
@@ -383,10 +391,10 @@ async function normalizeImage(dataUrl, mime) {
 function createBrandSettingsPanel(listProviders) {
   return function BrandSettingsPanel() {
     const settings = useBrandSettings();
-    const [draft, setDraft] = (0, import_react2.useState)(() => brandSettings().name);
-    const [notice, setNotice] = (0, import_react2.useState)(null);
-    const [error, setError] = (0, import_react2.useState)(null);
-    const fileRef = (0, import_react2.useRef)(null);
+    const [draft, setDraft] = (0, import_react3.useState)(() => brandSettings().name);
+    const [notice, setNotice] = (0, import_react3.useState)(null);
+    const [error, setError] = (0, import_react3.useState)(null);
+    const fileRef = (0, import_react3.useRef)(null);
     const nameDirty = draft !== settings.name;
     const providers = listProviders();
     const selected = new Set(settings.sidebarPanels);
@@ -608,6 +616,7 @@ var inject = ["slots"];
 var BRAND_PRIORITY = -10;
 var SETTINGS_ORDER = 45;
 var SETTINGS_ID = "oblivion-brand";
+var PROVIDER_NAME = "oblivionBrand";
 function apply(ctx) {
   const ready = { mark: false, name: false, hero: false, panellist: false, main: false };
   const disposers = /* @__PURE__ */ new Map();
@@ -639,6 +648,20 @@ function apply(ctx) {
     else if (!wanted && has) close(key);
   };
   const settingsPanel = createBrandSettingsPanel(() => discoverPanelProviders(ctx));
+  let disposeProvider;
+  if (typeof ctx.provide === "function") {
+    try {
+      const handle = ctx.provide(PROVIDER_NAME, {
+        version: 1,
+        settingsVisible: () => true,
+        setSettingsVisible: () => void 0,
+        render: () => (0, import_react4.createElement)(settingsPanel)
+      });
+      if (typeof handle === "function") disposeProvider = handle;
+    } catch (error) {
+      warn(`\u63D0\u4F9B\u65B9\u9762\u677F\u6CE8\u518C\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const sync = () => {
     const settings = brandSettings();
     const override = settings.overrideEnabled;
@@ -728,6 +751,8 @@ function apply(ctx) {
   const disposeSettings = () => {
     unsubscribe();
     for (const key of [...disposers.keys()]) close(key);
+    disposeProvider?.();
+    disposeProvider = void 0;
   };
   if (typeof ctx.effect === "function") ctx.effect(() => disposeSettings, "oblivion-brand: settings sync");
   sync();

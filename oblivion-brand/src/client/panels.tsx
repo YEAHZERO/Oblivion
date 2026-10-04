@@ -12,12 +12,11 @@
  * 所以从 `main` 或 `sidebar.panellist` 里没有任何公开途径去渲染别的设置分节。
  *
  * 因此能搬进侧栏的，是那些**主动暴露可渲染控制面**的插件：`dshmarket` 就是
- * （`ctx.provide('market', { render })`，其注释写着「for a host that renders it
- * inside its own container」）。这类提供方可以自动发现 —— cordis 的
- * `ctx.reflect.provide()` 把服务登记在 `ctx.reflect.store`，枚举它、筛出带
- * `render()` 的服务即可。装了更多这类插件，候选列表会自动变长。
+ * （`ctx.provide('market', { version, render })`）。这类提供方自动发现 ——
+ * cordis 的 `ctx.reflect.provide()` 把服务登记在 `ctx.reflect.store`，枚举它即可。
  */
 
+import { isValidElement } from 'react';
 import type { JSX, ReactElement } from 'react';
 
 /** 侧栏面板条目的 order 基数：0 = 插件，10 = 任务，我们插在两者之间。 */
@@ -35,11 +34,20 @@ export interface EmbeddableProvider {
 }
 
 /** 反射枚举不可用时的兜底探测名单。 */
-const FALLBACK_PROVIDER_KEYS = ['market'];
+const FALLBACK_PROVIDER_KEYS = ['market', 'oblivionBrand'];
+
+/**
+ * 不参与发现的服务名前缀。
+ *
+ * `remote.<operation>` 是 DSH 的 RPC 远端面（`@deepseek-ai/dsh-api-remotes` 一族），
+ * 它们的业务方法里就有叫 `render` 的，跟 UI 无关，必须整体排除。
+ */
+const EXCLUDED_PREFIXES = ['remote.', 'api.'];
 
 /** 已知提供方的显示名；未知的回退到服务名本身。 */
 const PROVIDER_LABELS: Record<string, string> = {
   market: '插件市场',
+  oblivionBrand: 'Oblivion 品牌',
 };
 
 /** 取提供方的显示名。 */
@@ -58,18 +66,39 @@ interface DiscoverCtx {
   reflect?: { store?: Record<PropertyKey, unknown> } | undefined;
 }
 
-function asProvider(key: string, value: unknown): EmbeddableProvider | null {
+/**
+ * 判断一个服务值是不是「宿主可渲染的 UI 控制面」。
+ *
+ * ⚠️ **不能只判断 `typeof value.render === 'function'`。** DSH 里带 `render`
+ * 的服务不止 UI 一种，反例是实测到的：
+ *
+ * ```
+ * remote.officeToPdf  →  _render_decorators = [Remote]
+ *                        async render(workspaceFileScope, path, priority, signal)
+ * ```
+ *
+ * 那是 `@Remote` 装饰的 RPC 方法，作用是把 Office 文档转成 PDF。误判成面板后，
+ * 面板会真的去调它，**触发一次文档转换**。所以要求 DSH 那套控制面的约定形状：
+ * 带版本号或可见性开关。
+ */
+function asUiControl(key: string, value: unknown): EmbeddableProvider | null {
   if (value === null || typeof value !== 'object') return null;
-  const render = (value as { render?: unknown }).render;
+  const record = value as Record<string, unknown>;
+  const render = record['render'];
   if (typeof render !== 'function') return null;
+
+  const shaped = typeof record['version'] === 'number' || typeof record['settingsVisible'] === 'function';
+  if (!shaped) return null;
+
   return {
     key,
     render: () => {
       try {
-        const element = (render as () => ReactElement | null).call(value);
-        return element ?? null;
+        const element = (render as () => unknown).call(value);
+        // 第二道防线：确认拿到的真是 React 元素，否则一律回退到提示面板。
+        // 提供方自己崩了也不能连累整个客户端树。
+        return isValidElement(element) ? (element as ReactElement) : null;
       } catch {
-        // 提供方自己崩了不能连累整个客户端树
         return null;
       }
     },
@@ -93,6 +122,7 @@ export function discoverPanelProviders(ctx: DiscoverCtx): EmbeddableProvider[] {
         const impl = (store as Record<PropertyKey, unknown>)[rawKey] as { name?: unknown } | undefined;
         const name = typeof impl?.name === 'string' ? impl.name : typeof rawKey === 'string' ? rawKey : null;
         if (name === null || found.has(name)) continue;
+        if (EXCLUDED_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
         // 逐个服务单独保护：某个服务尚未就绪时 `get` 会抛，
         // 不能让一次失败中断整轮枚举、把后面的提供方全漏掉。
         let value: unknown;
@@ -101,7 +131,7 @@ export function discoverPanelProviders(ctx: DiscoverCtx): EmbeddableProvider[] {
         } catch {
           continue;
         }
-        const provider = asProvider(name, value);
+        const provider = asUiControl(name, value);
         if (provider !== null) found.set(name, provider);
       }
     }
@@ -111,7 +141,7 @@ export function discoverPanelProviders(ctx: DiscoverCtx): EmbeddableProvider[] {
 
   for (const key of FALLBACK_PROVIDER_KEYS) {
     if (found.has(key)) continue;
-    const provider = asProvider(key, ctx.get(key));
+    const provider = asUiControl(key, ctx.get(key));
     if (provider !== null) found.set(key, provider);
   }
 
