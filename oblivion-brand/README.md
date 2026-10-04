@@ -202,7 +202,7 @@ oblivion-brand/
 ├── tsconfig.json
 ├── scripts/build.mjs      # esbuild 双产物构建
 └── src/
-    ├── index.ts           # Node 半边（空 apply）
+    ├── index.ts           # Node 半边：重启路由 + 游离 helper 派生
     └── client/
         ├── index.ts       # 槽位注册 + 设置驱动的 register/dispose 对账
         ├── Brand.tsx      # OblivionBrandMark({size}) + OblivionBrandName()
@@ -211,6 +211,24 @@ oblivion-brand/
         ├── BrandSettingsPanel.tsx
         └── panels.tsx     # 提供方发现 + 面板条目/正文
 ```
+
+### 重启功能的第四个坑：`detached` 必须为 false
+
+`spawn` 的 `detached: true` 在 Windows 上用 `DETACHED_PROCESS` 创建进程，而
+**Windows PowerShell 5.1 需要控制台** —— 无控制台时它初始化失败、**以退出码 0 直接结束，
+脚本一行都不执行**。现象极具迷惑性：spawn 成功、子进程创建、退出码 0、日志却一个字节都没有。
+
+逐个参数隔离实测（HostPid 用 `explorer.exe`，走拒绝分支，不杀任何进程）：
+
+| 派生方式 | 结果 |
+| --- | --- |
+| `detached: true` + powershell 5.1 | 退出 0，**未写日志** |
+| `detached: false` + powershell 5.1 | 退出 1，**已写日志** ✅ |
+| `detached: true` + `cmd /c start` + powershell | 退出 0，未写日志 |
+| `detached: true` + pwsh 7 | 可用，但 pwsh 只存在于版本化的 `WindowsApps\Microsoft.PowerShell_<版本>_x64__<hash>\` 下，该目录 `readdir` 返回 **EPERM**，无法可靠发现，不能依赖 |
+
+去掉 `detached` 不会让子进程随父进程消失 —— 已单独实测：**父进程退出后 6 秒内心跳仍在继续**
+（Windows 本就不会因父进程结束而终止子进程）。
 
 ## 来源
 

@@ -29,7 +29,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -221,6 +221,40 @@ function isTrustedCaller(request: HostRequest): boolean {
 }
 
 /**
+ * 向 helper 日志追加一行宿主侧诊断。
+ *
+ * 宿主与 helper 共用一个日志文件：helper 若不执行（例如根本没起来），
+ * 日志里至少会留下「宿主请求过派生」的痕迹，从而把「路由没通」与
+ * 「helper 起不来」两类故障区分开。
+ */
+function appendLog(line: string): void {
+  try {
+    appendFileSync(LOG_PATH, `${new Date().toISOString()} [host] ${line}\n`, 'utf8');
+  } catch {
+    /* 诊断失败不能影响主流程 */
+  }
+}
+
+/**
+ * 解析 PowerShell 的**绝对路径**。
+ *
+ * ⚠️ 用**绝对路径**而不是裸 `'powershell.exe'`：DSH 宿主的环境由
+ * `desktopNodeEnvironment()` 构造，PATH 未必含 `System32\WindowsPowerShell\v1.0`。
+ * 裸名一旦解析不到，`spawn` 只异步抛 `error` 事件 —— 无人监听就静默消失。
+ *
+ * 这里刻意**不优先选 pwsh 7**：实测本机 pwsh 只存在于版本化的
+ * `C:\Program Files\WindowsApps\Microsoft.PowerShell_<版本>_x64__<hash>\pwsh.exe`，
+ * 而该目录 `readdir` 返回 EPERM，无法可靠发现；裸名与 ProgramFiles 路径均不存在。
+ * Windows PowerShell 5.1 恒在，是唯一可靠选择。
+ */
+function resolvePowerShell(): string | null {
+  if (process.platform !== 'win32') return null;
+  const root = process.env['SystemRoot'] ?? process.env['windir'] ?? 'C:\\Windows';
+  const absolute = join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return existsSync(absolute) ? absolute : 'powershell.exe';
+}
+
+/**
  * 派生游离 helper 去重启应用。
  *
  * @returns 日志文件路径；派生失败返回 `null`。
@@ -230,12 +264,18 @@ function spawnRestartHelper(): string | null {
     // ⚠️ 必须带 UTF-8 BOM：Windows PowerShell 5.1 对无 BOM 的 .ps1 按 ANSI 解码，
     // 一旦脚本里出现非 ASCII 字符就会在解析期失败（见 RESTART_SCRIPT 的说明）。
     writeFileSync(SCRIPT_PATH, `\uFEFF${RESTART_SCRIPT}`, 'utf8');
-  } catch {
+  } catch (error) {
+    appendLog(`script write failed: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 
-  const shell = process.platform === 'win32' ? 'powershell.exe' : null;
-  if (shell === null) return null;
+  const shell = resolvePowerShell();
+  if (shell === null) {
+    appendLog('no PowerShell on this platform');
+    return null;
+  }
+
+  appendLog(`spawning helper: shell=${shell} hostPid=${String(process.pid)} script=${SCRIPT_PATH}`);
 
   try {
     const child = spawn(
@@ -253,12 +293,33 @@ function spawnRestartHelper(): string | null {
         '-LogPath',
         LOG_PATH,
       ],
-      { detached: true, stdio: 'ignore', windowsHide: true },
+      // ⚠️ `detached` 必须是 **false**，这是实测隔离出来的结论：
+      //
+      //   Node 在 Windows 上用 `DETACHED_PROCESS` 实现 detached。而
+      //   Windows PowerShell 5.1 **需要控制台**，无控制台时它初始化失败、直接以
+      //   退出码 0 结束，**脚本一行都不执行**。现象极具迷惑性：spawn 成功、
+      //   子进程创建、退出码 0、日志却一个字节都没有。
+      //
+      //   实测对照（HostPid 用 explorer，走拒绝分支，不杀任何进程）：
+      //     detached: true  + powershell 5.1  → 退出 0，未写日志
+      //     detached: false + powershell 5.1  → 退出 1，已写日志 ✅
+      //     detached: true  + pwsh 7          → 可用，但 pwsh 只存在于版本化的
+      //                                          WindowsApps 路径下且无法枚举
+      //                                          （readdir 返回 EPERM），不能依赖
+      //
+      //   去掉 detached 不会让子进程随父进程消失 —— 已单独实测：父进程退出后
+      //   6 秒内心跳仍在继续（Windows 本就不会因父进程结束而终止子进程）。
+      { detached: false, stdio: 'ignore', windowsHide: true },
     );
-    // 游离：本进程随后会被 helper 杀掉，子进程必须活下来。
+    // 必须监听 error：ENOENT / EPERM 之类只以事件形式出现，
+    // 不监听就既不会抛也不会记录，故障完全不可见。
+    child.on('error', (error) => {
+      appendLog(`spawn error: ${error.message}`);
+    });
     child.unref();
     return LOG_PATH;
-  } catch {
+  } catch (error) {
+    appendLog(`spawn threw: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
