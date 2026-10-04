@@ -155,7 +155,21 @@ export function createBrandSettingsPanel(
     };
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '4px', maxWidth: '620px' }}>
+      <div
+        data-obl-brand-settings=""
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '14px',
+          // 内边距与限宽都长在面板自己身上，而不是外层容器上 ——
+          // 外层容器是通用的（插件市场等也走它），在那里加约束会把别人的面板挤窄。
+          padding: '16px 20px 48px',
+          maxWidth: '620px',
+          width: '100%',
+          boxSizing: 'border-box',
+          margin: settings.centerPanel ? '0 auto' : '0',
+        }}
+      >
         <div>
           <h2 style={{ margin: '0 0 4px', fontSize: '16px', fontWeight: 500, color: LABEL }}>Oblivion 品牌</h2>
           <p style={hintStyle}>
@@ -281,6 +295,24 @@ export function createBrandSettingsPanel(
             </button>
             {nameDirty ? <span style={hintStyle}>有未保存的改动</span> : null}
           </div>
+        </section>
+
+        {/* ---- 面板显示 ---- */}
+        <section style={cardStyle}>
+          <h3 style={headingStyle}>面板显示</h3>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={settings.centerPanel}
+              onChange={(event) => apply({ centerPanel: event.target.checked })}
+            />
+            <span style={{ fontSize: '13px', color: LABEL }}>内容居中显示</span>
+          </label>
+          <p style={hintStyle}>
+            本面板会出现在两个宽度差异很大的容器里：设置弹窗很窄，而挂到左侧栏后是整窗宽。
+            居中时内容限宽 620px 并水平居中；关闭则贴左对齐。
+            本设置只作用于本面板，不影响其它插件的面板。
+          </p>
         </section>
 
         {/* ---- 侧栏面板 ---- */}

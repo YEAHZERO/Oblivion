@@ -38,6 +38,13 @@ export interface BrandSettings {
   readonly overrideEnabled: boolean;
   /** 要挂到左侧栏的面板提供方服务名。 */
   readonly sidebarPanels: readonly string[];
+  /**
+   * 面板被嵌进主区域时，内容是否居中限宽。
+   *
+   * 同一个设置面板会渲染在两个宽度差异极大的容器里：设置弹窗很窄，主区域
+   * 却是整窗宽。不居中时限宽列会贴在左边、右边留一大片空白，因此默认居中。
+   */
+  readonly centerPanel: boolean;
 }
 
 const DEFAULTS: BrandSettings = {
@@ -45,6 +52,7 @@ const DEFAULTS: BrandSettings = {
   image: null,
   overrideEnabled: true,
   sidebarPanels: ['market'],
+  centerPanel: true,
 };
 
 function coerce(raw: unknown): BrandSettings {
@@ -53,10 +61,11 @@ function coerce(raw: unknown): BrandSettings {
   const name = typeof record['name'] === 'string' ? record['name'].slice(0, MAX_BRAND_NAME_LENGTH) : DEFAULTS.name;
   const image = typeof record['image'] === 'string' && record['image'].startsWith('data:') ? record['image'] : null;
   const overrideEnabled = typeof record['overrideEnabled'] === 'boolean' ? record['overrideEnabled'] : DEFAULTS.overrideEnabled;
+  const centerPanel = typeof record['centerPanel'] === 'boolean' ? record['centerPanel'] : DEFAULTS.centerPanel;
   const panels = Array.isArray(record['sidebarPanels'])
     ? record['sidebarPanels'].filter((v): v is string => typeof v === 'string')
     : [...DEFAULTS.sidebarPanels];
-  return { name, image, overrideEnabled, sidebarPanels: panels };
+  return { name, image, overrideEnabled, sidebarPanels: panels, centerPanel };
 }
 
 function load(): BrandSettings {

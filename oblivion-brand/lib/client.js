@@ -50,7 +50,8 @@ var DEFAULTS = {
   name: DEFAULT_BRAND_NAME,
   image: null,
   overrideEnabled: true,
-  sidebarPanels: ["market"]
+  sidebarPanels: ["market"],
+  centerPanel: true
 };
 function coerce(raw) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULTS };
@@ -58,8 +59,9 @@ function coerce(raw) {
   const name = typeof record["name"] === "string" ? record["name"].slice(0, MAX_BRAND_NAME_LENGTH) : DEFAULTS.name;
   const image = typeof record["image"] === "string" && record["image"].startsWith("data:") ? record["image"] : null;
   const overrideEnabled = typeof record["overrideEnabled"] === "boolean" ? record["overrideEnabled"] : DEFAULTS.overrideEnabled;
+  const centerPanel = typeof record["centerPanel"] === "boolean" ? record["centerPanel"] : DEFAULTS.centerPanel;
   const panels = Array.isArray(record["sidebarPanels"]) ? record["sidebarPanels"].filter((v) => typeof v === "string") : [...DEFAULTS.sidebarPanels];
-  return { name, image, overrideEnabled, sidebarPanels: panels };
+  return { name, image, overrideEnabled, sidebarPanels: panels, centerPanel };
 }
 function load() {
   let text = null;
@@ -427,187 +429,220 @@ function createBrandSettingsPanel(listProviders) {
       else next.delete(key);
       apply2({ sidebarPanels: [...next] });
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: "14px", padding: "4px", maxWidth: "620px" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h2", { style: { margin: "0 0 4px", fontSize: "16px", fontWeight: 500, color: LABEL }, children: "Oblivion \u54C1\u724C" }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u4FA7\u680F\u4E0E\u4F1A\u8BDD Hero \u533A\u7684\u54C1\u724C\u5448\u73B0\u3002\u5173\u95ED\u300C\u63A5\u7BA1 DSH \u54C1\u724C\u300D\u540E\uFF0CDeepSeek Harness \u7684\u9CB8\u9C7C\u5916\u89C2\u4F1A\u7ACB\u5373\u6062\u590D\u3002" })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-            "input",
-            {
-              type: "checkbox",
-              checked: settings.overrideEnabled,
-              onChange: (event) => apply2({ overrideEnabled: event.target.checked })
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "13px", color: LABEL }, children: "\u63A5\u7BA1 DSH \u54C1\u724C\uFF08\u4FA7\u680F\u56FE\u5F62\u4E0E\u540D\u79F0\uFF09" })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: settings.overrideEnabled ? "\u5F53\u524D\u7531\u672C\u63D2\u4EF6\u63A5\u7BA1\uFF1A\u5B98\u65B9\u54C1\u724C\u69FD\u4F4D\u7684\u6CE8\u518C\u88AB\u672C\u63D2\u4EF6\u906E\u853D\u3002" : "\u5F53\u524D\u5DF2\u91CA\u653E\u69FD\u4F4D\uFF1A\u5B98\u65B9\u9CB8\u9C7C\u56FE\u6807\u4E0E wordmark \u5DF2\u6062\u590D\u3002" })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h3", { style: headingStyle, children: "\u54C1\u724C\u56FE\u5F62" }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "14px" }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-            "div",
-            {
-              style: {
-                width: "48px",
-                height: "48px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: `1px solid ${BORDER}`,
-                borderRadius: "8px",
-                flex: "none"
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+      "div",
+      {
+        "data-obl-brand-settings": "",
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          gap: "14px",
+          // 内边距与限宽都长在面板自己身上，而不是外层容器上 ——
+          // 外层容器是通用的（插件市场等也走它），在那里加约束会把别人的面板挤窄。
+          padding: "16px 20px 48px",
+          maxWidth: "620px",
+          width: "100%",
+          boxSizing: "border-box",
+          margin: settings.centerPanel ? "0 auto" : "0"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h2", { style: { margin: "0 0 4px", fontSize: "16px", fontWeight: 500, color: LABEL }, children: "Oblivion \u54C1\u724C" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u4FA7\u680F\u4E0E\u4F1A\u8BDD Hero \u533A\u7684\u54C1\u724C\u5448\u73B0\u3002\u5173\u95ED\u300C\u63A5\u7BA1 DSH \u54C1\u724C\u300D\u540E\uFF0CDeepSeek Harness \u7684\u9CB8\u9C7C\u5916\u89C2\u4F1A\u7ACB\u5373\u6062\u590D\u3002" })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  checked: settings.overrideEnabled,
+                  onChange: (event) => apply2({ overrideEnabled: event.target.checked })
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "13px", color: LABEL }, children: "\u63A5\u7BA1 DSH \u54C1\u724C\uFF08\u4FA7\u680F\u56FE\u5F62\u4E0E\u540D\u79F0\uFF09" })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: settings.overrideEnabled ? "\u5F53\u524D\u7531\u672C\u63D2\u4EF6\u63A5\u7BA1\uFF1A\u5B98\u65B9\u54C1\u724C\u69FD\u4F4D\u7684\u6CE8\u518C\u88AB\u672C\u63D2\u4EF6\u906E\u853D\u3002" : "\u5F53\u524D\u5DF2\u91CA\u653E\u69FD\u4F4D\uFF1A\u5B98\u65B9\u9CB8\u9C7C\u56FE\u6807\u4E0E wordmark \u5DF2\u6062\u590D\u3002" })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h3", { style: headingStyle, children: "\u54C1\u724C\u56FE\u5F62" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "14px" }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "div",
+                {
+                  style: {
+                    width: "48px",
+                    height: "48px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    border: `1px solid ${BORDER}`,
+                    borderRadius: "8px",
+                    flex: "none"
+                  },
+                  children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(OblivionBrandMark, { size: 32 })
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px" }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", style: buttonStyle, onClick: () => fileRef.current?.click(), children: "\u4E0A\u4F20\u56FE\u7247" }),
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    style: buttonStyle,
+                    disabled: settings.image === null,
+                    onClick: () => {
+                      apply2({ image: null });
+                      setNotice(null);
+                    },
+                    children: "\u6062\u590D\u5317\u6781\u661F"
+                  }
+                )
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              "input",
+              {
+                ref: fileRef,
+                type: "file",
+                accept: "image/*",
+                style: { display: "none" },
+                onChange: (event) => {
+                  void onPickFile(event.target.files?.[0]);
+                  event.target.value = "";
+                }
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { style: hintStyle, children: [
+              "\u652F\u6301\u4EFB\u610F\u6D4F\u89C8\u5668\u53EF\u89E3\u7801\u7684\u683C\u5F0F\uFF08PNG / JPEG / WebP / GIF / SVG / AVIF / BMP / ICO\uFF09\u3002 \u8D85\u8FC7 ",
+              BRAND_IMAGE_MAX_EDGE,
+              "px \u7684\u4F4D\u56FE\u4F1A\u81EA\u52A8\u7F29\u653E\uFF0CSVG \u4FDD\u6301\u77E2\u91CF\u3002"
+            ] }),
+            notice !== null ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { ...hintStyle, color: ACCENT }, children: notice }) : null
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h3", { style: headingStyle, children: "\u54C1\u724C\u540D\u6587\u5B57" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              "input",
+              {
+                type: "text",
+                value: draft,
+                maxLength: MAX_BRAND_NAME_LENGTH,
+                placeholder: DEFAULT_BRAND_NAME,
+                onChange: (event) => setDraft(event.target.value.slice(0, MAX_BRAND_NAME_LENGTH)),
+                style: {
+                  font: "inherit",
+                  fontSize: "13px",
+                  padding: "7px 10px",
+                  borderRadius: "6px",
+                  border: `1px solid ${BORDER}`,
+                  background: "var(--dsw-alias-bg-layer-2, transparent)",
+                  color: LABEL
+                }
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { style: hintStyle, children: [
+              draft.length,
+              "/",
+              MAX_BRAND_NAME_LENGTH,
+              " \u5B57\u7B26",
+              draft === "" ? " \xB7 \u7559\u7A7A\u8868\u793A\u53EA\u663E\u793A\u56FE\u5F62" : ""
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "button",
+                {
+                  type: "button",
+                  disabled: !nameDirty,
+                  onClick: () => apply2({ name: draft }),
+                  style: {
+                    ...buttonStyle,
+                    border: "none",
+                    background: nameDirty ? ACCENT : BORDER,
+                    color: nameDirty ? "#fff" : MUTED,
+                    cursor: nameDirty ? "pointer" : "not-allowed"
+                  },
+                  children: "\u4FDD\u5B58"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                "button",
+                {
+                  type: "button",
+                  style: buttonStyle,
+                  onClick: () => {
+                    setDraft(DEFAULT_BRAND_NAME);
+                    apply2({ name: DEFAULT_BRAND_NAME });
+                  },
+                  children: [
+                    "\u6062\u590D\u9ED8\u8BA4\uFF08",
+                    DEFAULT_BRAND_NAME,
+                    "\uFF09"
+                  ]
+                }
+              ),
+              nameDirty ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: hintStyle, children: "\u6709\u672A\u4FDD\u5B58\u7684\u6539\u52A8" }) : null
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h3", { style: headingStyle, children: "\u9762\u677F\u663E\u793A" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  checked: settings.centerPanel,
+                  onChange: (event) => apply2({ centerPanel: event.target.checked })
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "13px", color: LABEL }, children: "\u5185\u5BB9\u5C45\u4E2D\u663E\u793A" })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u672C\u9762\u677F\u4F1A\u51FA\u73B0\u5728\u4E24\u4E2A\u5BBD\u5EA6\u5DEE\u5F02\u5F88\u5927\u7684\u5BB9\u5668\u91CC\uFF1A\u8BBE\u7F6E\u5F39\u7A97\u5F88\u7A84\uFF0C\u800C\u6302\u5230\u5DE6\u4FA7\u680F\u540E\u662F\u6574\u7A97\u5BBD\u3002 \u5C45\u4E2D\u65F6\u5185\u5BB9\u9650\u5BBD 620px \u5E76\u6C34\u5E73\u5C45\u4E2D\uFF1B\u5173\u95ED\u5219\u8D34\u5DE6\u5BF9\u9F50\u3002 \u672C\u8BBE\u7F6E\u53EA\u4F5C\u7528\u4E8E\u672C\u9762\u677F\uFF0C\u4E0D\u5F71\u54CD\u5176\u5B83\u63D2\u4EF6\u7684\u9762\u677F\u3002" })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h3", { style: headingStyle, children: "\u5DE6\u4FA7\u680F\u9762\u677F" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u52FE\u9009\u7684\u63D2\u4EF6\u9762\u677F\u4F1A\u4EE5\u72EC\u7ACB\u6761\u76EE\u51FA\u73B0\u5728\u5DE6\u4FA7\u680F\uFF08\u300C\u63D2\u4EF6\u300D\u4E0B\u65B9\uFF09\u3002\u53EF\u591A\u9009\u3002" }),
+            providers.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u6CA1\u6709\u53D1\u73B0\u53EF\u5D4C\u5165\u7684\u9762\u677F\u63D0\u4F9B\u65B9\u3002\u53EA\u6709\u4E3B\u52A8\u66B4\u9732\u6E32\u67D3\u63A5\u53E3\u7684\u63D2\u4EF6\uFF08\u4F8B\u5982 dshmarket\uFF09\u624D\u80FD\u88AB\u642C\u8FDB\u4FA7\u680F\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { display: "flex", flexDirection: "column", gap: "8px" }, children: providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+              "label",
+              {
+                style: { display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" },
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: selected.has(provider.key),
+                      onChange: (event) => togglePanel(provider.key, event.target.checked)
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "13px", color: LABEL }, children: providerLabel(provider.key) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "11px", color: MUTED }, children: provider.key })
+                ]
               },
-              children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(OblivionBrandMark, { size: 32 })
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px" }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", style: buttonStyle, onClick: () => fileRef.current?.click(), children: "\u4E0A\u4F20\u56FE\u7247" }),
+              provider.key
+            )) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
               "button",
               {
                 type: "button",
                 style: buttonStyle,
-                disabled: settings.image === null,
                 onClick: () => {
-                  apply2({ image: null });
+                  const failure = resetBrandSettings();
+                  setDraft(DEFAULT_BRAND_NAME);
                   setNotice(null);
+                  setError(failure);
                 },
-                children: "\u6062\u590D\u5317\u6781\u661F"
+                children: "\u5168\u90E8\u6062\u590D\u9ED8\u8BA4"
               }
-            )
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-          "input",
-          {
-            ref: fileRef,
-            type: "file",
-            accept: "image/*",
-            style: { display: "none" },
-            onChange: (event) => {
-              void onPickFile(event.target.files?.[0]);
-              event.target.value = "";
-            }
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { style: hintStyle, children: [
-          "\u652F\u6301\u4EFB\u610F\u6D4F\u89C8\u5668\u53EF\u89E3\u7801\u7684\u683C\u5F0F\uFF08PNG / JPEG / WebP / GIF / SVG / AVIF / BMP / ICO\uFF09\u3002 \u8D85\u8FC7 ",
-          BRAND_IMAGE_MAX_EDGE,
-          "px \u7684\u4F4D\u56FE\u4F1A\u81EA\u52A8\u7F29\u653E\uFF0CSVG \u4FDD\u6301\u77E2\u91CF\u3002"
-        ] }),
-        notice !== null ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { ...hintStyle, color: ACCENT }, children: notice }) : null
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h3", { style: headingStyle, children: "\u54C1\u724C\u540D\u6587\u5B57" }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-          "input",
-          {
-            type: "text",
-            value: draft,
-            maxLength: MAX_BRAND_NAME_LENGTH,
-            placeholder: DEFAULT_BRAND_NAME,
-            onChange: (event) => setDraft(event.target.value.slice(0, MAX_BRAND_NAME_LENGTH)),
-            style: {
-              font: "inherit",
-              fontSize: "13px",
-              padding: "7px 10px",
-              borderRadius: "6px",
-              border: `1px solid ${BORDER}`,
-              background: "var(--dsw-alias-bg-layer-2, transparent)",
-              color: LABEL
-            }
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { style: hintStyle, children: [
-          draft.length,
-          "/",
-          MAX_BRAND_NAME_LENGTH,
-          " \u5B57\u7B26",
-          draft === "" ? " \xB7 \u7559\u7A7A\u8868\u793A\u53EA\u663E\u793A\u56FE\u5F62" : ""
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-            "button",
-            {
-              type: "button",
-              disabled: !nameDirty,
-              onClick: () => apply2({ name: draft }),
-              style: {
-                ...buttonStyle,
-                border: "none",
-                background: nameDirty ? ACCENT : BORDER,
-                color: nameDirty ? "#fff" : MUTED,
-                cursor: nameDirty ? "pointer" : "not-allowed"
-              },
-              children: "\u4FDD\u5B58"
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
-            "button",
-            {
-              type: "button",
-              style: buttonStyle,
-              onClick: () => {
-                setDraft(DEFAULT_BRAND_NAME);
-                apply2({ name: DEFAULT_BRAND_NAME });
-              },
-              children: [
-                "\u6062\u590D\u9ED8\u8BA4\uFF08",
-                DEFAULT_BRAND_NAME,
-                "\uFF09"
-              ]
-            }
-          ),
-          nameDirty ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: hintStyle, children: "\u6709\u672A\u4FDD\u5B58\u7684\u6539\u52A8" }) : null
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h3", { style: headingStyle, children: "\u5DE6\u4FA7\u680F\u9762\u677F" }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u52FE\u9009\u7684\u63D2\u4EF6\u9762\u677F\u4F1A\u4EE5\u72EC\u7ACB\u6761\u76EE\u51FA\u73B0\u5728\u5DE6\u4FA7\u680F\uFF08\u300C\u63D2\u4EF6\u300D\u4E0B\u65B9\uFF09\u3002\u53EF\u591A\u9009\u3002" }),
-        providers.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u6CA1\u6709\u53D1\u73B0\u53EF\u5D4C\u5165\u7684\u9762\u677F\u63D0\u4F9B\u65B9\u3002\u53EA\u6709\u4E3B\u52A8\u66B4\u9732\u6E32\u67D3\u63A5\u53E3\u7684\u63D2\u4EF6\uFF08\u4F8B\u5982 dshmarket\uFF09\u624D\u80FD\u88AB\u642C\u8FDB\u4FA7\u680F\u3002" }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { display: "flex", flexDirection: "column", gap: "8px" }, children: providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
-          "label",
-          {
-            style: { display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" },
-            children: [
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  checked: selected.has(provider.key),
-                  onChange: (event) => togglePanel(provider.key, event.target.checked)
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "13px", color: LABEL }, children: providerLabel(provider.key) }),
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "11px", color: MUTED }, children: provider.key })
-            ]
-          },
-          provider.key
-        )) })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-          "button",
-          {
-            type: "button",
-            style: buttonStyle,
-            onClick: () => {
-              const failure = resetBrandSettings();
-              setDraft(DEFAULT_BRAND_NAME);
-              setNotice(null);
-              setError(failure);
-            },
-            children: "\u5168\u90E8\u6062\u590D\u9ED8\u8BA4"
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: hintStyle, children: "\u4FDD\u5B58\u5728\u6D4F\u89C8\u5668\u672C\u5730\uFF08localStorage\uFF09\u3002" })
-      ] }),
-      error !== null ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { ...hintStyle, color: DANGER }, children: error }) : null
-    ] });
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: hintStyle, children: "\u4FDD\u5B58\u5728\u6D4F\u89C8\u5668\u672C\u5730\uFF08localStorage\uFF09\u3002" })
+          ] }),
+          error !== null ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { ...hintStyle, color: DANGER }, children: error }) : null
+        ]
+      }
+    );
   };
 }
 
