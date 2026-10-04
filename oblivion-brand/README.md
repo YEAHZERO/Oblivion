@@ -60,6 +60,39 @@ protocolVersion / browser / deviceInfo / keyboard / shortcuts / updates
 - 脚本与日志在临时目录：`%TEMP%\obl-brand-restart.ps1` / `obl-brand-restart.log`。失败时先看日志。
 - 路由 `POST /obl-brand/restart` 校验 `Origin` 必须是本机回环，挡掉跨站页面发起的重启。
 
+### ⚠️ 三个实测踩出来的坑
+
+**① 脚本正文必须纯 ASCII，且写入要带 UTF-8 BOM**
+
+脚本交给 `powershell.exe`（Windows PowerShell **5.1**）执行，而 5.1 对**无 BOM** 的 `.ps1` 默认按 ANSI/GBK 解码。脚本里只要出现中文就会被误解码并在**解析期失败** —— 连 `try` 块都进不去。现场表现极具误导性：
+
+```
+脚本文件写出来了（3019 B），日志却一个字节都没有。
+PowerShell 报：Write-Log ("澶辫触锛歿0}" -f $_)   ← "失败：" 被按 GBK 解码
+                The string is missing the terminator: ".
+```
+
+双保险：正文全 ASCII + 写入时前置 `\uFEFF`。
+
+**② 身份判据的「取最外层」不是优化，是必需**
+
+宿主与 Electron 主进程**共用同一个可执行文件**，标记在 `depth 0` 就命中。若首个命中即锁定，杀的是宿主子进程而非主进程。实测最终锁定的是最外层的 `8316`（主进程）。
+
+**③ 桌面端转发会删除 `Origin`**
+
+页面来源是 `dsh-app://app`，非文档路径经 `forwardWebRequest` 转发给本地 webserver，而它在转发前执行了 `headers.delete("origin")`。所以到达路由时 `Origin` **是缺失的** —— 按「必须等于回环来源」判会把桌面端自己的请求拒成 403。
+
+### 自查：`-DryRun`
+
+脚本支持只识别不动作，用来在不结束应用的前提下验证身份判据：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\obl-brand-restart.ps1" `
+  -HostPid <任意进程 PID> -LogPath "$env:TEMP\obl-brand-restart.log" -DryRun
+```
+
+日志会打印完整祖先链与最终锁定的 PID。
+
 设置存在浏览器 `localStorage`（键 `oblivion-brand:settings:v1`）。0.1.0 的裸字符串键 `oblivion-brand:name` 会在首次读取时自动迁移。
 
 ## 槽位

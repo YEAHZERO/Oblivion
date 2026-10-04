@@ -45,6 +45,15 @@ const LOG_PATH = join(tmpdir(), 'obl-brand-restart.log');
 /**
  * 游离重启脚本。
  *
+ * ⚠️ **脚本正文必须保持纯 ASCII。** 这是踩出来的坑：
+ *
+ *   它由 `powershell.exe`（Windows PowerShell **5.1**）执行，而 5.1 对**无 BOM**
+ *   的 `.ps1` 默认按 ANSI/GBK 解码。脚本里只要出现中文，就会被误解码并在**解析期
+ *   直接失败** —— 连 `try` 块都进不去。现场表现是「脚本文件写出来了、日志却一个
+ *   字节都没有」，极难从表面定位。
+ *
+ * 因此双保险：正文全 ASCII，且写入时带 UTF-8 BOM（见 `spawnRestartHelper`）。
+ *
  * 参数：
  *   - `HostPid`  DSH 宿主进程 PID（插件所在进程），用于沿父链上溯。
  *   - `LogPath`  日志文件，便于失败后排查。
@@ -52,7 +61,8 @@ const LOG_PATH = join(tmpdir(), 'obl-brand-restart.log');
 const RESTART_SCRIPT = String.raw`
 param(
   [Parameter(Mandatory = $true)][int]$HostPid,
-  [Parameter(Mandatory = $true)][string]$LogPath
+  [Parameter(Mandatory = $true)][string]$LogPath,
+  [switch]$DryRun
 )
 $ErrorActionPreference = 'Continue'
 
@@ -64,7 +74,7 @@ function Write-Log([string]$message) {
 }
 
 try {
-  Write-Log "helper 启动：宿主 PID=$HostPid"
+  Write-Log "helper start: host pid=$HostPid"
 
   $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, ExecutablePath
   $byId = @{}
@@ -75,21 +85,22 @@ try {
   for ($depth = 0; $depth -lt 16; $depth++) {
     if (-not $byId.ContainsKey($cursor)) { break }
     $proc = $byId[$cursor]
-    Write-Log ("祖先 pid={0} ppid={1} path={2}" -f $proc.ProcessId, $proc.ParentProcessId, $proc.ExecutablePath)
+    Write-Log ("ancestor pid={0} ppid={1} path={2}" -f $proc.ProcessId, $proc.ParentProcessId, $proc.ExecutablePath)
 
     $exe = $proc.ExecutablePath
     if ($exe) {
-      # 唯一的身份判据：同目录下存在 resources\app.asar 这个文件。
-      # 不依赖进程名，因此不可能误判 explorer.exe 或 node.exe。
+      # Only identity proof: resources\app.asar exists next to the executable.
+      # No process-name heuristic, so explorer.exe or node.exe can never match.
       $marker = Join-Path (Split-Path -Parent $exe) 'resources\app.asar'
       if (Test-Path -LiteralPath $marker -PathType Leaf) {
-        # ⚠️ 关键：命中后**继续上溯**，最后取「最外层」那个匹配者。
+        # Keep walking up and take the OUTERMOST match.
         #
-        # 实测本机进程树：宿主本身也是 DeepSeek Harness.exe（以 Node 模式运行，
-        # ELECTRON_RUN_AS_NODE=1），与 Electron 主进程同路径，因此 depth 0 就会命中。
-        # 若在首个命中处停下，杀的会是宿主子进程而不是主进程 —— 主进程会因失去
-        # 子进程而异常，随后 Start-Process 又拉起第二个实例，撞上
-        # 「Another DSH instance is running」。主进程是这条链上最外层的匹配者。
+        # The DSH host itself is also DeepSeek Harness.exe (ELECTRON_RUN_AS_NODE=1)
+        # and shares its executable path with the Electron main process, so depth 0
+        # already matches. Stopping at the first match would kill the host child
+        # instead of the main process: the main would break because it lost its
+        # child, and Start-Process would then race into
+        # "Another DSH instance is running".
         $target = $proc
       }
     }
@@ -100,27 +111,34 @@ try {
   }
 
   if (-not $target) {
-    Write-Log '拒绝重启：父链中没有找到带 resources\app.asar 标记的宿主可执行文件'
+    Write-Log 'refused: no ancestor carries the resources\app.asar marker'
     exit 1
   }
   if ($target.ProcessId -eq $PID) {
-    Write-Log '拒绝重启：目标进程就是自己'
+    Write-Log 'refused: target process is the helper itself'
     exit 1
   }
 
   $exe = $target.ExecutablePath
   if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-    Write-Log "拒绝重启：可执行文件不存在 $exe"
+    Write-Log "refused: executable not found $exe"
     exit 1
   }
 
-  Write-Log ("目标已确认：pid={0} exe={1}" -f $target.ProcessId, $exe)
+  Write-Log ("target confirmed: pid={0} exe={1}" -f $target.ProcessId, $exe)
 
-  # 留出时间让 HTTP 202 先回到浏览器，否则页面会在响应到达前断连。
+  # Verify-only mode: report the target and stop. Used to prove identification
+  # without ending the running application.
+  if ($DryRun) {
+    Write-Log 'dry run: target identified, nothing stopped'
+    exit 0
+  }
+
+  # Let the HTTP 202 reach the browser first, otherwise the page drops the response.
   Start-Sleep -Milliseconds 1200
 
   Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop
-  Write-Log ("已停止 pid={0}" -f $target.ProcessId)
+  Write-Log ("stopped pid={0}" -f $target.ProcessId)
 
   for ($i = 0; $i -lt 60; $i++) {
     if (-not (Get-Process -Id $target.ProcessId -ErrorAction SilentlyContinue)) { break }
@@ -129,9 +147,9 @@ try {
 
   Start-Sleep -Milliseconds 900
   Start-Process -FilePath $exe
-  Write-Log '已重新拉起应用'
+  Write-Log 'relaunched'
 } catch {
-  Write-Log ("失败：{0}" -f $_)
+  Write-Log ("failed: {0}" -f $_)
   exit 1
 }
 `;
@@ -209,7 +227,9 @@ function isTrustedCaller(request: HostRequest): boolean {
  */
 function spawnRestartHelper(): string | null {
   try {
-    writeFileSync(SCRIPT_PATH, RESTART_SCRIPT, 'utf8');
+    // ⚠️ 必须带 UTF-8 BOM：Windows PowerShell 5.1 对无 BOM 的 .ps1 按 ANSI 解码，
+    // 一旦脚本里出现非 ASCII 字符就会在解析期失败（见 RESTART_SCRIPT 的说明）。
+    writeFileSync(SCRIPT_PATH, `\uFEFF${RESTART_SCRIPT}`, 'utf8');
   } catch {
     return null;
   }
