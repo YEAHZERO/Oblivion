@@ -49,6 +49,14 @@ const cardStyle = {
   borderRadius: '8px',
 } as const;
 
+/**
+ * 宿主半边注册的重启路由。
+ *
+ * 两侧各自打包（Node / 浏览器），不能互相 import，因此路径常量在此独立声明；
+ * 改动时需与 `src/index.ts` 的 `RESTART_PATH` 保持一致。
+ */
+const RESTART_PATH = '/obl-brand/restart';
+
 const headingStyle = { margin: 0, fontSize: '13px', fontWeight: 600, color: LABEL } as const;
 const hintStyle = { margin: 0, fontSize: '12px', lineHeight: '18px', color: MUTED } as const;
 
@@ -116,6 +124,8 @@ export function createBrandSettingsPanel(
     const [draft, setDraft] = useState(() => brandSettings().name);
     const [notice, setNotice] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [restartState, setRestartState] = useState<'idle' | 'confirming' | 'sending'>('idle');
+    const [restartMessage, setRestartMessage] = useState<string | null>(null);
     const fileRef = useRef<HTMLInputElement | null>(null);
 
     const nameDirty = draft !== settings.name;
@@ -125,6 +135,39 @@ export function createBrandSettingsPanel(
     const apply = (patch: Parameters<typeof updateBrandSettings>[0]): void => {
       const failure = updateBrandSettings(patch);
       setError(failure);
+    };
+
+    /**
+     * 请求宿主重启应用。
+     *
+     * 宿主会派生游离 helper：先回 202，再停掉应用进程并重新拉起。
+     * 因此成功时页面通常撑不到渲染结果 —— 断连本身即预期行为。
+     */
+    const doRestart = async (): Promise<void> => {
+      setRestartState('sending');
+      setRestartMessage(null);
+      try {
+        const response = await fetch(RESTART_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        });
+        const body = (await response.json().catch(() => null)) as
+          | { ok?: boolean; error?: string; logPath?: string }
+          | null;
+        if (!response.ok || body?.ok !== true) {
+          setRestartState('idle');
+          setRestartMessage(`重启请求被拒绝：${body?.error ?? `HTTP ${String(response.status)}`}`);
+          return;
+        }
+        setRestartMessage(`已受理，应用即将重启${body.logPath ? `（日志：${body.logPath}）` : ''}`);
+      } catch (cause) {
+        // 应用已被停掉时 fetch 会直接失败，这属于正常路径而非错误。
+        setRestartMessage(
+          `连接已断开，应用应正在重启：${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+        setRestartState('idle');
+      }
     };
 
     const onPickFile = async (file: File | undefined): Promise<void> => {
@@ -343,6 +386,48 @@ export function createBrandSettingsPanel(
               ))}
             </div>
           )}
+        </section>
+
+        {/* ---- 重启应用 ---- */}
+        <section style={cardStyle}>
+          <h3 style={headingStyle}>应用重启</h3>
+          <p style={hintStyle}>
+            服务端（Node 半边）的改动需要重启 DSH 才会加载。本机热重载在 Windows 上不可用，
+            因此这里提供一个直接重启的入口。
+          </p>
+          <p style={{ ...hintStyle, color: DANGER }}>
+            重启会<strong>强制结束</strong>当前 DSH 进程再重新拉起：正在运行的会话与任务会被中断，
+            DSH 自身的退出确认不会弹出。
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {restartState === 'confirming' ? (
+              <>
+                <button
+                  type="button"
+                  style={{ ...buttonStyle, border: 'none', background: DANGER, color: '#fff' }}
+                  onClick={() => void doRestart()}
+                >
+                  确认重启
+                </button>
+                <button type="button" style={buttonStyle} onClick={() => setRestartState('idle')}>
+                  取消
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                style={buttonStyle}
+                disabled={restartState === 'sending'}
+                onClick={() => {
+                  setRestartMessage(null);
+                  setRestartState('confirming');
+                }}
+              >
+                {restartState === 'sending' ? '正在重启…' : '重启 DSH'}
+              </button>
+            )}
+            {restartMessage !== null ? <span style={hintStyle}>{restartMessage}</span> : null}
+          </div>
         </section>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["react"]
+    "types": ["react", "node"]
   },
   "include": ["src"]
 }

@@ -16,6 +16,50 @@ Oblivion 品牌插件：把 DSH 侧栏与会话 Hero 的品牌换成**北极星*
 | **面板显示** | 内容是否居中限宽。同一面板会出现在两个宽度差异极大的容器里（设置弹窗很窄、挂到左侧栏后是整窗宽），居中时限宽 620px 并水平居中，关闭则贴左。**只作用于本面板**，不影响其它插件的面板 |
 | **左侧栏面板** | **多选**：勾选的插件面板以独立条目出现在左侧栏「插件」下方 |
 
+## 直接重启应用
+
+设置面板底部有「应用重启 → 重启 DSH」（两步确认）。服务端（Node 半边）的改动需要重启才加载，而本机热重载在 Windows 上不可用，所以这个入口是刚需。
+
+### 为什么必须由 Node 半边做
+
+客户端半边跑在渲染进程，而 DSH 的 `contextBridge` **没有暴露任何重启接口**。实测 `app.asar/lib/preload-app.cjs` 的 `createProductApi()` 只有：
+
+```
+protocolVersion / browser / deviceInfo / keyboard / shortcuts / updates
+```
+
+主进程里那个 `restart: () => { app.relaunch(); quitWithoutConfirmation() }` 属于**崩溃恢复专用面**，渲染进程够不着；而「重启应用与 Host」菜单项被 `...development ? [...] : []` 包着，**生产构建里根本不显示**。
+
+所以路径是：宿主半边派生一个**游离** PowerShell 进程 → 回 202 给浏览器 → 停掉应用进程 → 重新拉起。参考实现是社区的 `dsh-tray`（按 PID `Stop-Process` 再 `Start-Process`），区别是它本身独立于 dsh 进程，而我们跑在 dsh 里面，必须 `detached`。
+
+### 身份判据：为什么不能用进程名
+
+重启即杀进程，**误杀后果严重**，因此脚本不做任何「名字像不像」的启发式，只用一条文件系统验证：
+
+> 祖先的可执行文件所在目录里，必须存在 `resources\app.asar` 这个**文件**。
+
+`explorer.exe` 的目录（`C:\Windows`）永远不满足；找不到就**拒绝重启**，绝不猜。
+
+### ⚠️ 一个实测踩到的坑：宿主与主进程同路径
+
+本机进程树：
+
+```
+17864  DeepSeek Harness.exe        ← Electron 主进程
+├── 20440  DeepSeek Harness.exe    ← DSH 宿主（ELECTRON_RUN_AS_NODE=1）
+│   └── 11008  ...                 ← 工具子进程
+```
+
+**宿主用的是同一个可执行文件**，所以标记在 `depth 0` 就命中。若「首个命中即锁定」，杀的会是宿主子进程而不是主进程 —— 主进程因失去子进程而异常，随后 `Start-Process` 又拉起第二个实例，撞上 `Another DSH instance is running`。
+
+因此脚本命中后**继续上溯**，取这条链上**最外层**的匹配者（实测最终锁定 17864，正确）。
+
+### 已知行为
+
+- **强制结束**：`Stop-Process -Force`，不弹 DSH 自身的退出确认，正在运行的会话与任务会被中断。
+- 脚本与日志在临时目录：`%TEMP%\obl-brand-restart.ps1` / `obl-brand-restart.log`。失败时先看日志。
+- 路由 `POST /obl-brand/restart` 校验 `Origin` 必须是本机回环，挡掉跨站页面发起的重启。
+
 设置存在浏览器 `localStorage`（键 `oblivion-brand:settings:v1`）。0.1.0 的裸字符串键 `oblivion-brand:name` 会在首次读取时自动迁移。
 
 ## 槽位

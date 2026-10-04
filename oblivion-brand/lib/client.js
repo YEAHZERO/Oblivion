@@ -343,6 +343,7 @@ var cardStyle = {
   border: `1px solid ${BORDER}`,
   borderRadius: "8px"
 };
+var RESTART_PATH = "/obl-brand/restart";
 var headingStyle = { margin: 0, fontSize: "13px", fontWeight: 600, color: LABEL };
 var hintStyle = { margin: 0, fontSize: "12px", lineHeight: "18px", color: MUTED };
 function dataUrlBytes(dataUrl) {
@@ -396,6 +397,8 @@ function createBrandSettingsPanel(listProviders) {
     const [draft, setDraft] = (0, import_react3.useState)(() => brandSettings().name);
     const [notice, setNotice] = (0, import_react3.useState)(null);
     const [error, setError] = (0, import_react3.useState)(null);
+    const [restartState, setRestartState] = (0, import_react3.useState)("idle");
+    const [restartMessage, setRestartMessage] = (0, import_react3.useState)(null);
     const fileRef = (0, import_react3.useRef)(null);
     const nameDirty = draft !== settings.name;
     const providers = listProviders();
@@ -403,6 +406,29 @@ function createBrandSettingsPanel(listProviders) {
     const apply2 = (patch) => {
       const failure = updateBrandSettings(patch);
       setError(failure);
+    };
+    const doRestart = async () => {
+      setRestartState("sending");
+      setRestartMessage(null);
+      try {
+        const response = await fetch(RESTART_PATH, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}"
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok || body?.ok !== true) {
+          setRestartState("idle");
+          setRestartMessage(`\u91CD\u542F\u8BF7\u6C42\u88AB\u62D2\u7EDD\uFF1A${body?.error ?? `HTTP ${String(response.status)}`}`);
+          return;
+        }
+        setRestartMessage(`\u5DF2\u53D7\u7406\uFF0C\u5E94\u7528\u5373\u5C06\u91CD\u542F${body.logPath ? `\uFF08\u65E5\u5FD7\uFF1A${body.logPath}\uFF09` : ""}`);
+      } catch (cause) {
+        setRestartMessage(
+          `\u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF0C\u5E94\u7528\u5E94\u6B63\u5728\u91CD\u542F\uFF1A${cause instanceof Error ? cause.message : String(cause)}`
+        );
+        setRestartState("idle");
+      }
     };
     const onPickFile = async (file) => {
       if (file === void 0) return;
@@ -621,6 +647,42 @@ function createBrandSettingsPanel(listProviders) {
               },
               provider.key
             )) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h3", { style: headingStyle, children: "\u5E94\u7528\u91CD\u542F" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u670D\u52A1\u7AEF\uFF08Node \u534A\u8FB9\uFF09\u7684\u6539\u52A8\u9700\u8981\u91CD\u542F DSH \u624D\u4F1A\u52A0\u8F7D\u3002\u672C\u673A\u70ED\u91CD\u8F7D\u5728 Windows \u4E0A\u4E0D\u53EF\u7528\uFF0C \u56E0\u6B64\u8FD9\u91CC\u63D0\u4F9B\u4E00\u4E2A\u76F4\u63A5\u91CD\u542F\u7684\u5165\u53E3\u3002" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { style: { ...hintStyle, color: DANGER }, children: [
+              "\u91CD\u542F\u4F1A",
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("strong", { children: "\u5F3A\u5236\u7ED3\u675F" }),
+              "\u5F53\u524D DSH \u8FDB\u7A0B\u518D\u91CD\u65B0\u62C9\u8D77\uFF1A\u6B63\u5728\u8FD0\u884C\u7684\u4F1A\u8BDD\u4E0E\u4EFB\u52A1\u4F1A\u88AB\u4E2D\u65AD\uFF0C DSH \u81EA\u8EAB\u7684\u9000\u51FA\u786E\u8BA4\u4E0D\u4F1A\u5F39\u51FA\u3002"
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }, children: [
+              restartState === "confirming" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    style: { ...buttonStyle, border: "none", background: DANGER, color: "#fff" },
+                    onClick: () => void doRestart(),
+                    children: "\u786E\u8BA4\u91CD\u542F"
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", style: buttonStyle, onClick: () => setRestartState("idle"), children: "\u53D6\u6D88" })
+              ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "button",
+                {
+                  type: "button",
+                  style: buttonStyle,
+                  disabled: restartState === "sending",
+                  onClick: () => {
+                    setRestartMessage(null);
+                    setRestartState("confirming");
+                  },
+                  children: restartState === "sending" ? "\u6B63\u5728\u91CD\u542F\u2026" : "\u91CD\u542F DSH"
+                }
+              ),
+              restartMessage !== null ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: hintStyle, children: restartMessage }) : null
+            ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
