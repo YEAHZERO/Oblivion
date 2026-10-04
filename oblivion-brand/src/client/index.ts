@@ -1,38 +1,43 @@
 /**
  * @oblivion/brand — 浏览器半边入口。
  *
- * 注册四组东西，全部走 DSH 的公开槽位 API：
+ * ## 注册面
  *
- * | 槽位 | 组件 | 作用 |
+ * | 槽位 | 组件 | 何时注册 |
  * |---|---|---|
- * | `sidebar.brand.mark` | `OblivionBrandMark` | 侧栏品牌图形 → 北极星 |
- * | `sidebar.brand.name` | `OblivionBrandName` | 侧栏品牌名 → 可在设置里改 |
- * | `conversation.hero.brand.mark` | `OblivionBrandMark` | 会话 Hero 区图形 → 北极星 |
- * | `settings.section` | `BrandSettingsPanel` | 「设置 → Oblivion 品牌」 |
- * | `sidebar.panellist` + `main` | `MarketPanelIcon` / 市场面板 | 左侧栏「插件」下方的插件市场 |
+ * | `sidebar.brand.mark` | `OblivionBrandMark` | 设置里「接管 DSH 品牌」为开 |
+ * | `sidebar.brand.name` | `OblivionBrandName` | 同上 |
+ * | `conversation.hero.brand.mark` | `OblivionBrandMark` | 同上 |
+ * | `settings.section` | 设置分节 | **永远**（否则关掉接管后无法再打开） |
+ * | `sidebar.panellist` + `main` | 侧栏面板条目 / 正文 | 设置里勾选了对应提供方 |
  *
  * ## priority 为什么是 -10
  *
  * 官方 `@deepseek-ai/dsh-client-ui-brand-official` 在默认 priority(0) 占了同一批
- * single 槽。single 槽的注册规则（`ui-slots` 实现）是：
+ * single 槽。single 槽规则（`ui-slots` 实现）：
  *   同 priority 重复注册 → 抛错；不同 priority → 遮蔽，且 **lowest renders**。
- * 因此 -10 稳定覆盖官方，不需要改官方包。
  *
- * ## 为什么每处都包 `slots.inject`
+ * 于是「关闭接管」只需要 **dispose 本插件的注册** —— 官方那条立刻重新成为渲染者，
+ * DSH 恢复原生外观。这是槽位系统本来就支持的机制，不需要改官方包。
  *
- * 注册未声明过的槽位会在加载时抛错。用 `slots.inject(name, cb)` 等声明方就位，
- * 于是本插件无论先于还是后于 ui-sidebar / ui-layout / ui-settings 加载都成立。
+ * ## 动态注册
+ *
+ * 设置变化时按需 register / dispose。槽位必须先被声明才能注册，所以每一处都先
+ * 用 `slots.inject` 等声明就位，再在 `sync()` 里统一对账；注册动作本身也包了
+ * try/catch —— 单个槽位注册失败不应该让整棵客户端树倒掉。
  */
 
 import { OblivionBrandMark, OblivionBrandName } from './Brand.js';
-import { BrandSettingsPanel } from './BrandSettingsPanel.js';
+import { createBrandSettingsPanel } from './BrandSettingsPanel.js';
 import {
-  MARKET_PANEL_ID,
-  MARKET_PANEL_ORDER,
-  MarketPanelIcon,
-  createMarketPanel,
-  type MarketControl,
-} from './market.js';
+  PANEL_ORDER_BASE,
+  PanelIcon,
+  createEmbeddedPanel,
+  discoverPanelProviders,
+  panelEntryId,
+  providerLabel,
+} from './panels.js';
+import { brandSettings, subscribeBrandSettings } from './settings.js';
 
 /** 必需服务：UI 槽位注册表。 */
 export const inject = ['slots'];
@@ -53,34 +58,138 @@ interface ClientCtx {
     register(options: Record<string, unknown>, component: unknown): unknown;
   };
   get(name: string): unknown;
+  reflect?: { store?: Record<PropertyKey, unknown> } | undefined;
+  effect?(callback: () => unknown, label?: string): void;
+  logger?(name: string): { warn(message: string): void };
+}
+
+/** 已声明就位的槽位。 */
+interface Ready {
+  mark: boolean;
+  name: boolean;
+  hero: boolean;
+  panellist: boolean;
+  main: boolean;
 }
 
 /**
- * 把品牌槽位注册成一组声明感知的事务。
- *
- * 侧栏的两个槽嵌套 inject，保证 mark 与 name 同进同退；
- * Hero 的图形单独一组（由 ui-conversation 声明，与侧栏不同生命周期）。
+ * 把品牌槽位与侧栏面板注册成一条可反复对账的账本。
  *
  * @param ctx - Client root context.
  */
 export function apply(ctx: ClientCtx): void {
-  // 侧栏组：mark + name
-  ctx.slots.inject('sidebar.brand.mark', () =>
-    ctx.slots.inject('sidebar.brand.name', function* () {
-      yield ctx.slots.register({ name: 'sidebar.brand.mark', priority: BRAND_PRIORITY }, OblivionBrandMark);
-      yield ctx.slots.register({ name: 'sidebar.brand.name', priority: BRAND_PRIORITY }, OblivionBrandName);
-    }),
-  );
+  const ready: Ready = { mark: false, name: false, hero: false, panellist: false, main: false };
+  const disposers = new Map<string, () => void>();
+  const panelKeys = new Set<string>();
+  const warn = (message: string): void => {
+    ctx.logger?.('@oblivion/brand').warn(message);
+  };
 
-  // 会话 Hero 组的图形
-  ctx.slots.inject('conversation.hero.brand.mark', () =>
-    ctx.slots.register(
-      { name: 'conversation.hero.brand.mark', priority: BRAND_PRIORITY },
-      OblivionBrandMark,
-    ),
-  );
+  /** 打开一条注册；失败只记日志，不影响其它槽位。 */
+  const open = (key: string, create: () => unknown): void => {
+    try {
+      const result = create();
+      if (typeof result === 'function') disposers.set(key, result as () => void);
+    } catch (error) {
+      warn(`槽位注册失败 ${key}：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
-  // 设置分节：自定义品牌名文字
+  /** 关闭并移除一条注册。 */
+  const close = (key: string): void => {
+    const dispose = disposers.get(key);
+    if (dispose === undefined) return;
+    disposers.delete(key);
+    try {
+      dispose();
+    } catch (error) {
+      warn(`槽位释放失败 ${key}：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  /** 按期望状态对账一条注册。 */
+  const reconcile = (key: string, wanted: boolean, create: () => unknown): void => {
+    const has = disposers.has(key);
+    if (wanted && !has) open(key, create);
+    else if (!wanted && has) close(key);
+  };
+
+  const settingsPanel = createBrandSettingsPanel(() => discoverPanelProviders(ctx));
+
+  /** 依据当前设置与槽位就绪情况，把账本对齐。 */
+  const sync = (): void => {
+    const settings = brandSettings();
+    const override = settings.overrideEnabled;
+
+    reconcile('brand.mark', override && ready.mark, () =>
+      ctx.slots.register({ name: 'sidebar.brand.mark', priority: BRAND_PRIORITY }, OblivionBrandMark),
+    );
+    reconcile('brand.name', override && ready.name, () =>
+      ctx.slots.register({ name: 'sidebar.brand.name', priority: BRAND_PRIORITY }, OblivionBrandName),
+    );
+    reconcile('brand.hero', override && ready.hero, () =>
+      ctx.slots.register({ name: 'conversation.hero.brand.mark', priority: BRAND_PRIORITY }, OblivionBrandMark),
+    );
+
+    // ---- 侧栏面板 ----
+    const wanted = new Set(settings.sidebarPanels);
+    const available = new Map(discoverPanelProviders(ctx).map((provider) => [provider.key, provider]));
+
+    for (const key of [...panelKeys]) {
+      if (!wanted.has(key) || !available.has(key)) {
+        close(`panel.main:${key}`);
+        close(`panel.list:${key}`);
+        panelKeys.delete(key);
+      }
+    }
+
+    let order = PANEL_ORDER_BASE;
+    for (const key of wanted) {
+      const provider = available.get(key);
+      if (provider === undefined) {
+        order += 1;
+        continue;
+      }
+      const id = panelEntryId(key);
+      const label = providerLabel(key);
+      // main 必须先于 panellist 注册：`layout.selectPanel` 对未注册的 key 会抛错。
+      reconcile(`panel.main:${key}`, ready.main, () =>
+        ctx.slots.register(
+          { name: 'main', key: id },
+          createEmbeddedPanel(() => available.get(key), label),
+        ),
+      );
+      reconcile(`panel.list:${key}`, ready.panellist, () =>
+        ctx.slots.register({ name: 'sidebar.panellist', id, order, label: () => label }, PanelIcon),
+      );
+      panelKeys.add(key);
+      order += 1;
+    }
+  };
+
+  // ---- 等待各槽位声明就位 ----
+  ctx.slots.inject('sidebar.brand.mark', () => {
+    ready.mark = true;
+    sync();
+  });
+  ctx.slots.inject('sidebar.brand.name', () => {
+    ready.name = true;
+    sync();
+  });
+  ctx.slots.inject('conversation.hero.brand.mark', () => {
+    ready.hero = true;
+    sync();
+  });
+  ctx.slots.inject('sidebar.panellist', () => {
+    ready.panellist = true;
+    sync();
+  });
+  ctx.slots.inject('main', () => {
+    ready.main = true;
+    sync();
+  });
+
+  // 设置分节常驻：关掉接管之后仍然要能从这里改回来。
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       {
@@ -89,28 +198,17 @@ export function apply(ctx: ClientCtx): void {
         order: SETTINGS_ORDER,
         label: () => 'Oblivion 品牌',
       },
-      BrandSettingsPanel,
+      settingsPanel,
     ),
   );
 
-  // 左侧栏条目：图标 + 顺序 + 标签
-  ctx.slots.inject('sidebar.panellist', () =>
-    ctx.slots.register(
-      {
-        name: 'sidebar.panellist',
-        id: MARKET_PANEL_ID,
-        order: MARKET_PANEL_ORDER,
-        label: () => '插件市场',
-      },
-      MarketPanelIcon,
-    ),
-  );
+  // 设置变化后重新对账。
+  const unsubscribe = subscribeBrandSettings(sync);
+  const disposeSettings = (): void => {
+    unsubscribe();
+    for (const key of [...disposers.keys()]) close(key);
+  };
+  if (typeof ctx.effect === 'function') ctx.effect(() => disposeSettings, 'oblivion-brand: settings sync');
 
-  // 同 id 寻址的面板正文。市场可能晚于本插件就绪，故惰性查服务。
-  ctx.slots.inject('main', () =>
-    ctx.slots.register(
-      { name: 'main', key: MARKET_PANEL_ID },
-      createMarketPanel(() => ctx.get('market') as MarketControl | undefined),
-    ),
-  );
+  sync();
 }
