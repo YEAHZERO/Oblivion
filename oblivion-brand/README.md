@@ -288,6 +288,51 @@ $startup.ShowWindow = 0
 另外把批处理里的日志改成 `%DATE% %TIME%`：原先是在 PowerShell 侧取一次时间戳写死，
 三行日志显示同一秒，**根本无法回读真实耗时**（我一度据此误判「等待循环没生效」）。
 
+### ⚠️ 一次「优化」反而更慢，已回退
+
+为了压缩祖先遍历，我一度把它从「一次全表枚举」改成「逐级过滤查询」。实测结果相反：
+
+| 方案 | 耗时 |
+| --- | --- |
+| 全表枚举 `Get-CimInstance Win32_Process -Property …` | ~**1.0 s** |
+| 逐级过滤 `Get-CimInstance -Filter "ProcessId = $cursor"` × 4 | ~**2.0 s** |
+
+原因：`Get-CimInstance` **每次调用都付一份固定的会话开销**，分成 4 次反而比 1 次全表更贵。
+已回退到全表枚举（脚本总耗时 3.25s → 2.19s）。
+
+另一处真正有效的压缩在批处理轮询：`ping -n 2 127.0.0.1` 每轮要 ~1.3s（两个 echo 间隔 1 秒），
+换成 `ping -n 1 -w 200 192.0.2.1` —— `192.0.2.0/24` 是 TEST-NET-1，保证不可路由，
+`-w 200` 因此真的只等 ~200ms。
+
+## 版本管理
+
+沿用主仓 `Oblivion_deepseek/scripts/bump-version.ps1` 的做法，语言换成 Node
+（本插件工具链本就是 esbuild + `node scripts/*.mjs`，不引入 PowerShell 依赖）：
+
+**`VERSION` 是单一真源**，`scripts/bump-version.mjs` 读它、递增、再用**正则替换**
+（不是 `JSON.parse` + `stringify` —— 后者会把整个 `package.json` 重排，产生与版本无关的巨大 diff）
+同步到 `package.json`。
+
+```powershell
+npm run version:bump -- patch    # fix / docs / chore
+npm run version:bump -- minor    # feat
+npm run version:bump -- major    # 破坏性改动 / 正式发版
+npm run version:bump -- patch --tag   # 顺便打 git tag v<新版本>
+npm run check:version            # 只校验 VERSION 与 package.json 是否漂移
+```
+
+**客户端（浏览器半边）拿不到 `package.json`**，所以版本由 `scripts/build.mjs` 在打包时
+经 esbuild 的 `define` 注入 —— 因此不需要第三个同步点：
+
+```js
+define: { __OBLIVION_BRAND_VERSION__: JSON.stringify(version) }
+```
+
+两处都显示同一版本：**设置面板标题**（`Oblivion 品牌 v0.1.0`）与 **helper 日志每一行**。
+
+> 日志里带版本号是刚需，不是装饰：`node` 半边只在**应用启动**时加载，刷新页面不会更新它。
+> 这个功能 debug 时最费时间的一环就是「无法判断日志来自哪一版代码」—— 我因此白跑了两轮。
+
 ## 来源
 
 北极星几何与素材来自 `Oblivion_deepseek/assets/brand/`（`polaris-path.ts` / `polaris.svg` 同源）。`src/client/polaris.ts` 是该 path 的副本，两边更新时需同步。

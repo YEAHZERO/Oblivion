@@ -1,6 +1,6 @@
 // src/index.ts
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 var RESTART_PATH = "/obl-brand/restart";
@@ -10,13 +10,14 @@ var RESTART_SCRIPT = String.raw`
 param(
   [Parameter(Mandatory = $true)][int]$HostPid,
   [Parameter(Mandatory = $true)][string]$LogPath,
+  [string]$Version = 'unknown',
   [switch]$DryRun
 )
 $ErrorActionPreference = 'Continue'
 
 function Write-Log([string]$message) {
   try {
-    '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $message |
+    '{0} v{1} {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Version, $message |
       Out-File -LiteralPath $LogPath -Append -Encoding utf8
   } catch { }
 }
@@ -25,6 +26,11 @@ function Write-Log([string]$message) {
 try {
   Write-Log "helper start: host pid=$HostPid"
 
+  # Walk up from the host to the outermost process that carries the app marker.
+  #
+  # One full sweep, not one filtered query per level: measured, the sweep costs
+  # ~1.0 s while four filtered queries cost ~2.0 s, because every
+  # Get-CimInstance call pays a fixed session overhead.
   $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, ExecutablePath
   $byId = @{}
   foreach ($item in $all) { $byId[[int]$item.ProcessId] = $item }
@@ -95,7 +101,10 @@ try {
     'if errorlevel 1 goto go',
     'set /a N+=1',
     'if %N% GEQ 60 goto go',
-    'ping -n 2 127.0.0.1 >nul',
+    # Poll fast. "ping -n 2 127.0.0.1" took ~1.3 s per round (two echo requests a
+    # second apart), which dominated the remaining latency. 192.0.2.0/24 is
+    # TEST-NET-1: guaranteed unroutable, so -w 200 actually waits ~200 ms.
+    'ping -n 1 -w 200 192.0.2.1 >nul',
     'goto wait',
     ':go',
     '>>"%LOG%" echo %DATE% %TIME% relauncher: previous processes gone',
@@ -162,9 +171,18 @@ function isTrustedCaller(request) {
     return false;
   }
 }
+function pluginVersion() {
+  try {
+    const text = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+    const parsed = JSON.parse(text);
+    return typeof parsed.version === "string" ? parsed.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 function appendLog(line) {
   try {
-    appendFileSync(LOG_PATH, `${(/* @__PURE__ */ new Date()).toISOString()} [host] ${line}
+    appendFileSync(LOG_PATH, `${(/* @__PURE__ */ new Date()).toISOString()} [host] v${pluginVersion()} ${line}
 `, "utf8");
   } catch {
   }
@@ -202,7 +220,9 @@ function spawnRestartHelper() {
         "-HostPid",
         String(process.pid),
         "-LogPath",
-        LOG_PATH
+        LOG_PATH,
+        "-Version",
+        pluginVersion()
       ],
       // ⚠️ `detached` 必须是 **false**，这是实测隔离出来的结论：
       //

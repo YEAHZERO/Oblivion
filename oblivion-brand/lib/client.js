@@ -318,6 +318,9 @@ function createEmbeddedPanel(getProvider, label) {
   };
 }
 
+// src/client/version.ts
+var PLUGIN_VERSION = true ? "0.1.0" : "dev";
+
 // src/client/BrandSettingsPanel.tsx
 var import_jsx_runtime3 = require("react/jsx-runtime");
 var LABEL = "var(--dsw-alias-label-primary, currentColor)";
@@ -473,7 +476,13 @@ function createBrandSettingsPanel(listProviders) {
         },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("h2", { style: { margin: "0 0 4px", fontSize: "16px", fontWeight: 500, color: LABEL }, children: "Oblivion \u54C1\u724C" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("h2", { style: { margin: "0 0 4px", fontSize: "16px", fontWeight: 500, color: LABEL }, children: [
+              "Oblivion \u54C1\u724C",
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { marginLeft: "8px", fontSize: "12px", fontWeight: 400, color: MUTED }, children: [
+                "v",
+                PLUGIN_VERSION
+              ] })
+            ] }),
             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u4FA7\u680F\u4E0E\u4F1A\u8BDD Hero \u533A\u7684\u54C1\u724C\u5448\u73B0\u3002\u5173\u95ED\u300C\u63A5\u7BA1 DSH \u54C1\u724C\u300D\u540E\uFF0CDeepSeek Harness \u7684\u9CB8\u9C7C\u5916\u89C2\u4F1A\u7ACB\u5373\u6062\u590D\u3002" })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { style: cardStyle, children: [

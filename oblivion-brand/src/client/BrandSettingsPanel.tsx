@@ -22,6 +22,7 @@ import {
   useBrandSettings,
 } from './settings.js';
 import { providerLabel, type EmbeddableProvider } from './panels.js';
+import { PLUGIN_VERSION } from './version.js';
 
 const LABEL = 'var(--dsw-alias-label-primary, currentColor)';
 const MUTED = 'var(--dsw-alias-label-tertiary, #8b93a1)';
@@ -214,7 +215,12 @@ export function createBrandSettingsPanel(
         }}
       >
         <div>
-          <h2 style={{ margin: '0 0 4px', fontSize: '16px', fontWeight: 500, color: LABEL }}>Oblivion 品牌</h2>
+          <h2 style={{ margin: '0 0 4px', fontSize: '16px', fontWeight: 500, color: LABEL }}>
+            Oblivion 品牌
+            <span style={{ marginLeft: '8px', fontSize: '12px', fontWeight: 400, color: MUTED }}>
+              v{PLUGIN_VERSION}
+            </span>
+          </h2>
           <p style={hintStyle}>
             侧栏与会话 Hero 区的品牌呈现。关闭「接管 DSH 品牌」后，DeepSeek Harness 的鲸鱼外观会立即恢复。
           </p>

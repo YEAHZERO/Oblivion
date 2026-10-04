@@ -11,7 +11,7 @@
  * 它们由宿主的客户端模块表提供（官方品牌插件同样是 `require("react/jsx-runtime")`）。
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -42,6 +42,10 @@ await build({
 });
 
 // ---- 浏览器半边 ----
+// 客户端拿不到 package.json，版本在打包时注入。单一真源是仓库根的 VERSION，
+// 由 scripts/bump-version.mjs 同步到 package.json，因此这里读到的就是权威版本。
+const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+
 const result = await build({
   entryPoints: [join(ROOT, 'src', 'client', 'index.ts')],
   bundle: true,
@@ -52,6 +56,7 @@ const result = await build({
   jsx: 'automatic',
   external: CLIENT_EXTERNAL,
   legalComments: 'none',
+  define: { __OBLIVION_BRAND_VERSION__: JSON.stringify(version) },
   logLevel: 'warning',
 });
 

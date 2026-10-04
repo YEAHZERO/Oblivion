@@ -29,7 +29,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -62,13 +62,14 @@ const RESTART_SCRIPT = String.raw`
 param(
   [Parameter(Mandatory = $true)][int]$HostPid,
   [Parameter(Mandatory = $true)][string]$LogPath,
+  [string]$Version = 'unknown',
   [switch]$DryRun
 )
 $ErrorActionPreference = 'Continue'
 
 function Write-Log([string]$message) {
   try {
-    '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $message |
+    '{0} v{1} {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Version, $message |
       Out-File -LiteralPath $LogPath -Append -Encoding utf8
   } catch { }
 }
@@ -77,6 +78,11 @@ function Write-Log([string]$message) {
 try {
   Write-Log "helper start: host pid=$HostPid"
 
+  # Walk up from the host to the outermost process that carries the app marker.
+  #
+  # One full sweep, not one filtered query per level: measured, the sweep costs
+  # ~1.0 s while four filtered queries cost ~2.0 s, because every
+  # Get-CimInstance call pays a fixed session overhead.
   $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, ExecutablePath
   $byId = @{}
   foreach ($item in $all) { $byId[[int]$item.ProcessId] = $item }
@@ -147,7 +153,10 @@ try {
     'if errorlevel 1 goto go',
     'set /a N+=1',
     'if %N% GEQ 60 goto go',
-    'ping -n 2 127.0.0.1 >nul',
+    # Poll fast. "ping -n 2 127.0.0.1" took ~1.3 s per round (two echo requests a
+    # second apart), which dominated the remaining latency. 192.0.2.0/24 is
+    # TEST-NET-1: guaranteed unroutable, so -w 200 actually waits ~200 ms.
+    'ping -n 1 -w 200 192.0.2.1 >nul',
     'goto wait',
     ':go',
     '>>"%LOG%" echo %DATE% %TIME% relauncher: previous processes gone',
@@ -269,15 +278,35 @@ function isTrustedCaller(request: HostRequest): boolean {
 }
 
 /**
+ * 本插件的版本号。
+ *
+ * 单一真源是仓库根的 `VERSION`（由 `scripts/bump-version.mjs` 同步到
+ * `package.json`）。这里在**运行时读 package.json**，因此不会出现
+ * 「常量忘了同步」这类漂移 —— 日志里印的就是磁盘上真实加载的那一版。
+ */
+function pluginVersion(): string {
+  try {
+    const text = readFileSync(new URL('../package.json', import.meta.url), 'utf8');
+    const parsed = JSON.parse(text) as { version?: unknown };
+    return typeof parsed.version === 'string' ? parsed.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * 向 helper 日志追加一行宿主侧诊断。
  *
  * 宿主与 helper 共用一个日志文件：helper 若不执行（例如根本没起来），
  * 日志里至少会留下「宿主请求过派生」的痕迹，从而把「路由没通」与
  * 「helper 起不来」两类故障区分开。
+ *
+ * 每行都带版本号：这个功能debug 时最费时间的一环就是**无法从日志判断
+ * 跑的是哪一版代码** —— node 半边只在应用启动时加载，刷新页面不会更新它。
  */
 function appendLog(line: string): void {
   try {
-    appendFileSync(LOG_PATH, `${new Date().toISOString()} [host] ${line}\n`, 'utf8');
+    appendFileSync(LOG_PATH, `${new Date().toISOString()} [host] v${pluginVersion()} ${line}\n`, 'utf8');
   } catch {
     /* 诊断失败不能影响主流程 */
   }
@@ -340,6 +369,8 @@ function spawnRestartHelper(): string | null {
         String(process.pid),
         '-LogPath',
         LOG_PATH,
+        '-Version',
+        pluginVersion(),
       ],
       // ⚠️ `detached` 必须是 **false**，这是实测隔离出来的结论：
       //
