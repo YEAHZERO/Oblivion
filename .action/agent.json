@@ -1,0 +1,147 @@
+{
+  "name": "alphα",
+  "version": "1.0.0",
+  "description": "AI Agent 协作开发模板项目",
+  "author": "abcxyzNone",
+  "created_at": "2026-09-08",
+  "updated_at": "2026-09-08",
+  
+  "agents": {
+    "supported": [
+      {
+        "name": "Codex",
+        "type": "code-generation",
+        "strengths": ["代码生成", "重构", "理解能力强"],
+        "best_for": ["新功能开发", "代码重构", "复杂逻辑实现"]
+      },
+      {
+        "name": "Trae",
+        "type": "code-completion",
+        "strengths": ["响应快", "上下文理解好"],
+        "best_for": ["代码补全", "调试", "快速修复"]
+      },
+      {
+        "name": "CodeBuddy",
+        "type": "code-review",
+        "strengths": ["安全意识强", "性能优化"],
+        "best_for": ["代码审查", "安全检查", "性能优化"]
+      },
+      {
+        "name": "Cursor",
+        "type": "complex-refactor",
+        "strengths": ["全局理解能力强"],
+        "best_for": ["复杂重构", "架构设计", "大规模修改"]
+      },
+      {
+        "name": "Claude",
+        "type": "design-docs",
+        "strengths": ["创造力强", "文档质量高"],
+        "best_for": ["设计文档", "用户手册", "架构设计"]
+      },
+      {
+        "name": "OpenCode",
+        "type": "general-purpose",
+        "strengths": ["灵活性高", "多语言支持"],
+        "best_for": ["通用开发", "多语言项目", "快速原型"]
+      }
+    ],
+    "default": "OpenCode"
+  },
+  
+  "skills": {
+    "directory": ".skills",
+    "auto_load": true,
+    "priority_order": [
+      "project-init",
+      "doc-generator",
+      "test-generator",
+      "code-review",
+      "deploy-automation",
+      "performance-optimizer",
+      "security-audit",
+      "yeahzero-thought-design",
+      "yeahzero-review-final",
+      "yeahzero-deliver-go",
+      "yeahzero-extract-exp",
+      "yeahzero-note-consolidate",
+      "yeahzero-skill-creator"
+    ]
+  },
+  
+  "memory": {
+    "directory": ".memory",
+    "structure": {
+      "daily": "每日工作日志",
+      "review": "Code Review 日志",
+      "design": "设计文档",
+      "specs": "需求规格说明书"
+    },
+    "auto_create": true,
+    "template_enabled": true
+  },
+  
+  "workflow": {
+    "file": ".action/workflow.md",
+    "auto_follow": true,
+    "steps": [
+      "接收任务",
+      "检查记忆",
+      "执行任务",
+      "记录过程",
+      "提交审查",
+      "更新文档"
+    ]
+  },
+  
+  "rules": {
+    "file": ".action/rules.md",
+    "strict_mode": false,
+    "auto_check": true
+  },
+  
+  "git": {
+    "branch_strategy": "feature-branch",
+    "commit_convention": "conventional-commits",
+    "require_review": true,
+    "auto_push": false
+  },
+  
+  "testing": {
+    "framework": "pytest",
+    "coverage_target": 80,
+    "auto_generate": true,
+    "test_directory": ".test"
+  },
+  
+  "documentation": {
+    "auto_generate": true,
+    "format": "markdown",
+    "directory": "docs",
+    "templates": {
+      "api": "docs/templates/api-template.md",
+      "user_manual": "docs/templates/user-manual-template.md",
+      "changelog": ".changelog/CHANGELOG.md"
+    }
+  },
+  
+  "deployment": {
+    "containerize": true,
+    "ci_cd": "github-actions",
+    "environments": ["dev", "test", "staging", "prod"],
+    "auto_deploy": false
+  },
+  
+  "security": {
+    "scan_dependencies": true,
+    "scan_code": true,
+    "check_secrets": true,
+    "audit_log": true
+  },
+  
+  "performance": {
+    "monitor": true,
+    "profile": true,
+    "optimize": true,
+    "benchmark": true
+  }
+}
