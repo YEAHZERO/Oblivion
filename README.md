@@ -94,3 +94,40 @@ Windows 上没有支持 `-o`/`-axo` 的 `ps`，`lsof` 也不存在，因此 `dis
 
 两者都是插件自身的跨平台缺陷，与本仓库无关，建议反馈上游
 （`dsh-creator-mode-plus` 0.3.12 为 npm 最新版，尚未修复）。
+
+## 应用图标：只能改快捷方式，改不了窗口/任务栏
+
+DSH 桌面端有三处「图标」，来源各不相同（依据 `app.asar/lib/main.js`）：
+
+| 界面位置 | 图标来源 | 代码 |
+| --- | --- | --- |
+| **窗口 / 任务栏 / Alt-Tab / 开始菜单** | **exe 内嵌 PE 资源** | `main.js:11075` 创建主窗口时**未传 `icon`** → Electron 回退到可执行文件图标 |
+| 「关于」面板 | `resources\icon.png` | `main.js:11845` → `setAboutPanelOptions` |
+| 系统托盘 / 退出确认框 | `resources\tray.ico` | `main.js:11937` / `:11967` |
+
+**窗口与任务栏图标无法替换**：它编译在 `DeepSeek Harness.exe` 的 PE 资源里。
+客户端插件跑在渲染进程（`dsh-client-modules` 里零处触达 `electron`/`ipcRenderer`），
+`dsh-desktop-host` 也没有暴露任何图标 API（`setIcon`/`nativeImage`/`icon:` 一处都没有）；
+而且主窗口创建时压根没传 `icon`。后两者虽是普通文件，但位于官方安装目录，
+属于随发行版附带的产物，**不改**。
+
+可以合法替换的是**用户自己的快捷方式**（`.lnk` 的 `IconLocation`），
+它决定桌面与开始菜单的显示：
+
+```powershell
+# 换成你自己的 .ico（默认用 %LOCALAPPDATA%\Oblivion\polaris.ico）
+pwsh -File tools\set-shortcut-icon.ps1 -Icon 'C:\path\to\your.ico'
+
+# 还原成 exe 自带图标
+pwsh -File tools\set-shortcut-icon.ps1 -Restore
+```
+
+首次运行会把现有 `.lnk` 备份到 `%LOCALAPPDATA%\Oblivion\shortcut-backup\`。
+
+> ⚠️ 备份**必须按来源命名**（`desktop-` / `startmenu-` 前缀）。两个快捷方式同名，
+> 不带前缀时第二个会命中「已备份」而跳过，而第一份如果是在改动**之后**才拷的，
+> 备份里记录的就是**已改动**的状态 —— `-Restore` 会还原不回原样。
+> 脚本已按来源命名；若手工操作请照此办理。
+
+换完如果资源管理器仍显示旧图标，那是图标缓存：注销重登，或运行 `ie4uinit.exe -show`。
+已固定到任务栏的项、以及运行中的窗口，用的仍是 exe 内嵌图标，不受影响。
