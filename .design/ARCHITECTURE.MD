@@ -1,379 +1,303 @@
 # Oblivion（遗忘）知识库系统 — 设计书
 
-## v4.0-baseline（事实校准版 · 完整版）
+## v4.1-baseline（DSH 宿主化决策版）
 
 > **✅ BASELINE / 基线声明**
-> 本文档于 **2026-10-02** 由用户显式批准转为 **Baseline（v4.0）**，作为实施与验收的权威依据。
-> v3.9 → v4.0 为**事实性矛盾修正 + 证据升级 + 结构补全 + 命名一致性校准**。
-> 本轮修订依据：2026-10-02 当日对话的修订建议，对全文做了一次**"文档断言 vs 磁盘事实"的硬核对**。
-> 此后的设计变更走变更控制（§28）：修订需留痕并递增 Baseline 版本（v4.1、v4.2…）。
+> 本文档于 **2026-10-02** 由用户显式批准转为 **Baseline（v4.0）**；**v4.1 为宿主化范式重构**：基于 2026-10-04 的深度分析，明确 **Oblivion 不 Fork DSH，而是作为 DSH 的插件生态存在**。这是自 v3.0 以来最重要的一次范式修正。
+> 此后的设计变更走变更控制（§28）：修订需留痕并递增 Baseline 版本。
 
-| 字段       | 值                                                                                                                                 |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 文档版本   | **v4.0.3-baseline（需求体系补全版）**                                                                                                    |
-| 成熟度     | **`Baseline`**                                                                                                                     |
-| 最近更新   | 2026-10-02（v4.0.3：新增 §21.0 需求定义补全 REQ 体系；Docker 相关 6 处标注作废；右栏内容清单上移为 OPEN-111。v4.0.2：并入 ERRATA-22~28、32 —— 五/六层计数统一、补 Phase 0.5、修 `updaterCacheDirName` 拼写、AC 计数、证据等级、插件名统一、`dsh-ref` 路径统一、插件数量 26） |
-| 设计负责人 | 用户（单人多角色，Owner = Self-review）                                                                                            |
-| 参考架构   | @deepseek-ai/dsh v0.2.0-rc.2（Cordis 插件系统）                                                                                    |
-| 桌面框架   | **Electron**                                                                                                                       |
-| 品牌图标   | **北极星（Polaris / North Star）图案**                                                                                             |
-| 项目起点   | **新分支起点（不继承既有代码）**；已提交根提交 `e6289d525`（alpha-init 分支）                                                      |
-| 证据基线   | `C:\Users\liveu\dev\dsh-ref\versions\0.2.0-rc.2\`（287 包 / 183 行组合树 / 14 组合层 / 1967 `.d.ts` / 391 实现文件 / ~14 MB 文本） |
+| 字段 | 值 |
+|---|---|
+| 文档版本 | **v4.1-baseline（DSH 宿主化决策版）** |
+| 成熟度 | **`Baseline`** |
+| 最近更新 | 2026-10-04（范式修正：明确"Oblivion = DSH 宿主 + `@oblivion/*` 插件生态"） |
+| 设计负责人 | 用户（单人多角色，Owner = Self-review） |
+| **宿主** | **`@deepseek-ai/dsh`（源码或 npm 安装，上游版本）** |
+| 本项目 | `@oblivion/*` 插件生态（8 个插件） |
+| 品牌图标 | **北极星（Polaris / North Star）图案** |
+| 项目起点 | **新分支起点（不继承既有代码）**；已提交根提交 `e6289d525`（alpha-init 分支） |
+| 证据基线 | `C:\Users\liveu\dev\dsh-ref\versions\0.2.0-rc.2\` |
+| **DSH 源码基线** | `C:\Projects\deepseek-harness @ 0.2.1-alpha.1`（tag `dsh-v0.2.1-alpha.1`） |
+
 
 ## 0. 项目定位
 
 ### 0.0 命名约定
 
 > **本文命名约定**：
->
-> - `DSH` / `@deepseek-ai/*` / `dsh-ref` / `dsh-*` = **参考架构**（已存在，证据来源）
-> - `Oblivion` / `@oblivion/*` / `oblivion-ref` = **本项目**（规划名，尚未创建）
-> - §13~§17 中的 `@oblivion/*` 示例**沿用 DSH 同名结构**，仅作占位
-> - 全文证据路径指向**真实存在的** `dsh-ref/`（`C:\Users\liveu\dev\dsh-ref`），非 `oblivion-ref/`
+> - `DSH` / `@deepseek-ai/*` / `dsh-ref` / `dsh-*` = **参考架构/宿主**（已存在，证据来源）
+> - `Oblivion` / `@oblivion/*` / `oblivion-ref` = **本项目**（DSH 插件生态）
+> - 全文证据路径指向**真实存在的** `dsh-ref/`（`C:\Users\liveu\dev\dsh-ref`）
 
 ### 0.1 北极星
 
-> **「Oblivion（遗忘）」是一个能自动沉淀问答为结构化文档、具备自学习能力的本地知识库系统。**
+> **「Oblivion（遗忘）」是一个基于 DeepSeek Harness 宿主构建的、具备自学习能力的本地知识库插件生态。**
 
 ### 0.2 "自学习"的范围界定（DEC-005）
 
-| 组件         | 作用                   | 需求条目          |
-| ------------ | ---------------------- | ----------------- |
-| 问答闭环     | 问答沉淀为新知识       | REQ-004 ~ REQ-006 |
-| **思维激荡** | 在回答中主动提供新视角 | REQ-014           |
-| **图谱生长** | 问答频次强化知识关联   | REQ-015           |
+| 组件 | 作用 | 插件形态 |
+|---|---|---|
+| 问答闭环 | 问答沉淀为新知识 | `@oblivion/qa-loop` |
+| **思维激荡** | 在回答中主动提供新视角 | `@oblivion/perspective` |
+| **图谱生长** | 问答频次强化知识关联 | `@oblivion/graph-growth` |
+| **反馈画像** | 点赞/点踩/中性信号，累积后微调用户画像 | `@oblivion/feedback` |
+| **MD 沉淀** | 知识自动落盘为分类 Markdown | `@oblivion/knowledge` |
 
 **明确不纳入**：检索排序优化（DEC-008，Deferred）。
 
 ### 0.3 架构愿景
 
-> **Oblivion 不只是一个知识库应用，而是一个「可编程的认知运行环境」。**
+> **Oblivion 不是一个独立应用，而是 DSH 的一个"认知增强插件组"。**
 
-用户可以通过 YAML 声明式地组合自己的 Oblivion：
+用户通过 DSH 宿主启动，加载 `@oblivion/*` 插件组后，即获得"遗忘"的完整认知能力：
 
 ```yaml
-# 纯问答机器人
-- oblivion-core
-- oblivion-llm-deepseek
-- oblivion-web-ui
+# DSH 宿主原生
+- @deepseek-ai/dsh-base
+- @deepseek-ai/dsh-web-app
 
-# 完整认知陪伴体验
-- oblivion-core
-- oblivion-llm-deepseek
-- oblivion-qa-loop
-- oblivion-perspective
-- oblivion-graph-growth
-- oblivion-content-creator
-- oblivion-web-ui
+# + Oblivion 认知插件组
+- @oblivion/knowledge
+- @oblivion/qa-loop
+- @oblivion/perspective
+- @oblivion/graph-growth
+- @oblivion/feedback
+- @oblivion/content-creator
+- @oblivion/adapter-obsidian
+- @oblivion/brand
 ```
 
-### 0.4 代码起点（✅ 修正 A1）
+### 0.4 代码起点
 
 > **新分支起点，不继承既有代码。**
 
 **事实澄清**：
 
-| 项             | 事实                                                                                                                                   |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 仓库           | `C:\Projects\Oblivion` 是 git 仓库                                                                                                     |
-| origin         | `YEAHZERO/Oblivion`                                                                                                                    |
-| weknora remote | `Tencent/WeKnora`                                                                                                                      |
-| 分支           | 5 个：`main`（release: 0.1.1 Lite desktop）/ `feature/desktop-wails` / `feature/md-sync` / `feature/sync-md` / `feature/upstream-sync` |
-| HEAD 树        | Go + Wails 知识引擎，3388 个已跟踪文件                                                                                                 |
-| **关键发现**   | HEAD 里已有 `packages/dsh-weknora/` —— **一个现成的 DSH Cordis 插件**                                                                  |
-| 新分支起点     | 新根提交 `e6289d525`（alpha-init 分支）                                                                                                |
-| 原分支处理     | 5 个分支**完整保留、未做任何破坏**                                                                                                     |
+| 项 | 事实 |
+|---|---|
+| 仓库 | `C:\Projects\Oblivion` 是 git 仓库 |
+| origin | `YEAHZERO/Oblivion` |
+| weknora remote | `Tencent/WeKnora` |
+| 分支 | 5 个：`main` / `feature/desktop-wails` / `feature/md-sync` / `feature/sync-md` / `feature/upstream-sync` |
+| HEAD 树 | Go + Wails 知识引擎，3388 个已跟踪文件 |
+| **关键发现** | HEAD 里已有 `packages/dsh-weknora/` —— **一个现成的 DSH Cordis 插件** |
+| 新分支起点 | 新根提交 `e6289d525`（alpha-init 分支） |
+| 原分支处理 | 5 个分支**完整保留、未做任何破坏** |
 
 **DEC-013（孤儿分支决策）**：
 
-> **决策**：Oblivion v4.0 从**新根提交 `e6289d525`** 开始构建，原 5 分支完整保留。
-> **理由**：新架构（Electron + Cordis）与原分支（Go + Wails）在技术栈和组织范式上完全不同，孤儿分支避免继承债务。
-> **可复用成果**：原分支的 `packages/dsh-weknora/` 是现成的 DSH 插件先例，其 `test/e2e/run-in-dsh.mjs` 是**"插件在真 DSH 中跑通"的现成验证范式**——§实施路线图的插件体系应**引用而非重造**。
+> **决策**：Oblivion v4.1 从**新根提交 `e6289d525`** 开始构建，原 5 分支完整保留。
+> **理由**：新架构（DSH 宿主 + `@oblivion/*` 插件）与原分支（Go + Wails）在技术栈和组织范式上完全不同，孤儿分支避免继承债务。
+> **可复用成果**：原分支的 `packages/dsh-weknora/` 是现成的 DSH 插件先例，其 `test/e2e/run-in-dsh.mjs` 是**"插件在真 DSH 中跑通"的现成验证范式**。
 
-### 0.5 单机自用假设（OPEN-014 裁定 + 补 C3）
+### 0.5 单机自用假设
 
 > **首版范围 = 单机自用。** 多租户/企业级特性全部 Deferred。
 > **复评条件**：≥3 名独立用户或团队共用诉求时重开。
->
-> **首版不承诺网络部署**：Docker 章节按 **headless / host 网络 / 仅回环** 三种形态给出，**`0.0.0.0` 公网暴露与反代 TLS 均列为 Deferred**，与 OPEN-014 同批复评。
 
 ### 0.6 证据基线
 
-本设计书的所有技术决策均基于 `C:\Users\liveu\dev\dsh-ref\versions\0.2.0-rc.2\` 的**逐字取证**。
+本设计书的所有技术决策均基于 `C:\Users\liveu\dev\dsh-ref\versions\0.2.0-rc.2\` 与 `C:\Projects\deepseek-harness @ 0.2.1-alpha.1` 的**逐字取证**。
 
-### 0.7 证据清单（PF 编号体系，PF-01~PF-35）
+### 0.7 证据清单（PF-01~PF-42）
 
-| 编号  | 事实                                                                                                                       | 验证等级                    | 影响                     |
-| ----- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------ |
-| PF-01 | `dsh-ref/versions/0.2.0-rc.2/` 完整快照已建立                                                                              | ✅ 逐字取证                 | 所有技术决策可追溯       |
-| PF-02 | `api/cordis/*.d.ts` 9 个类型定义文件                                                                                       | ✅ 逐字取证                 | RISK-101 应对依据        |
-| PF-03 | `*reflect.d.ts`（8.3 KB）是反射 API                                                                                        | ✅ 逐字取证                 | `--dump-config` 实现地基 |
-| PF-04 | `dump-config-web.yaml` 完整组合树（183 行）                                                                                | ✅ 逐字取证                 | 架构事实来源             |
-| PF-05 | `dump-config-schema-web.json`（850 KB）                                                                                    | ✅ 逐字取证                 | 配置 schema 自动生成     |
-| PF-06 | `ui-tokens.md`（427 令牌逐值表）                                                                                           | ✅ 逐字取证                 | UI 设计系统依据          |
-| PF-07 | `manifest.json`（287 包清单）                                                                                              | ✅ 逐字取证                 | 双形态一致性证明         |
-| PF-08 | DSH 桌面版 = npm 版源码 + Electron 壳 + `dsh-desktop-host`                                                                 | ✅ 逐字取证                 | 双形态架构依据           |
-| PF-09 | `desktop-runtime.json`（2.8 MB sha256 清单）                                                                               | ✅ 逐字取证                 | 增量更新依据             |
-| PF-10 | `app-update.yml`（306 B）4 道锁                                                                                            | ✅ 逐字取证                 | 供应链安全依据           |
-| PF-11 | `immediately` 标记不存在                                                                                                   | ✅ 逐字取证                 | RISK-103 前提纠正        |
-| PF-12 | `openAt` 枚举是真正的延迟激活机制                                                                                          | ✅ 逐字取证                 | 启动优化依据             |
-| PF-13 | 287 包 3005 文件 SHA256 完全一致                                                                                           | ✅ 逐字取证（**DSH 主体**） | RISK-107 已证明          |
-| PF-14 | 244 处差异仅 package.json 键序                                                                                             | ✅ 逐字取证（**DSH 主体**） | RISK-107 已证明          |
-| PF-15 | 唯一真差异：libreoffice-kit 版本号（0.1.2 vs 0.1.5）                                                                       | ✅ 逐字取证（**DSH 主体**） | RISK-107 已证明          |
-| PF-16 | `setEnvironmentData` 是 Worker 上下文传递的统一做法                                                                        | ✅ 逐字取证                 | RISK-104 依据            |
-| PF-17 | 破坏性变更只在 rc.1「其他变更」章节                                                                                        | ✅ 逐字取证                 | 发布工程学依据           |
-| PF-18 | `resolveBundleDir()` 先锚定 install，再回退 profile                                                                        | ✅ 逐字取证                 | 双形态共享机制           |
-| PF-19 | `--host 0.0.0.0` 被 CLI 显式拒绝，但 schema 层允许                                                                         | ✅ 逐字取证                 | RISK-118 依据            |
-| PF-20 | `--profile desktop` 被 CLI 显式拒绝                                                                                        | ✅ 逐字取证                 | 入口白名单               |
-| PF-21 | `dump-config-schema` 退出码 1（3 处 Loader tree carrier）                                                                  | ✅ 逐字取证                 | RISK-109 实证            |
-| PF-22 | web 层禁用 22 行（Host/Agent 平面边界）                                                                                    | ✅ 逐字取证                 | 平面分离依据             |
-| PF-23 | 四套 preset（standard/minimal/ptc/cordis）                                                                                 | ✅ 逐字取证                 | Preset 机制依据          |
-| PF-24 | `alias` 层 107 个语义别名                                                                                                  | ✅ 逐字取证                 | UI 令牌架构依据          |
-| PF-25 | 用户可调 UI 参数只有 2 个（preference + fontSize）                                                                         | ✅ 逐字取证                 | 极简设计依据             |
-| PF-26 | 既有仓库含可复用 DSH 插件 `packages/dsh-weknora/`（`cordis.patch.yml` + `test/e2e/run-in-dsh.mjs`）及 `dsh-plugin.yml` CI  | ✅ 逐字取证                 | A1 / 实施路线图          |
-| PF-27 | DSH_HOME 优先级：显式配置 > `$DSH_HOME` > `$HOME/.dsh`（`dsh-home-paths:15,50,74`）                                        | ✅ 逐字取证                 | Docker 持久化            |
-| PF-28 | 唯一原生模块 `node-pty`（唯一 `binding.gyp`）                                                                              | ✅ 逐字取证                 | Docker 构建链            |
-| PF-29 | `engines: null`；Desktop 内嵌 Node 24.18.1；装机 453 MB / 26616 文件                                                       | ✅ 逐字取证                 | 基础镜像选型             |
-| PF-30 | 无官方 Dockerfile / compose（5 层深度扫描为空）                                                                            | ✅ 逐字取证                 | 自建镜像                 |
-| PF-31 | `resolveLanTrust()` 绑 `0.0.0.0` 时自动收 LAN IPv4 进 `trustedHosts`                                                       | ✅ 逐字取证                 | §14.4 网络围栏第 ④ 层    |
-| PF-32 | DSH 包形态：`main=lib/index.js`、`types=lib/types/index.d.ts`、`files=[lib/**]`、`exports` 含 `./src/*`；285/287 有 `lib/` | ✅ 逐字取证                 | Oblivion 包骨架          |
-| PF-33 | 孤儿分支 `alpha-init` 根提交 `e6289d525`（173 文件）；原 5 分支完好                                                        | ✅ 逐字取证                 | A1 DEC 依据              |
-| PF-34 | alphα 模板 5 个缺陷（见 §22.6）                                                                                            | ✅ 逐字取证                 | 风险登记                 |
-| PF-35 | `docker-compose` 的 `context: ..` 时 `.dockerignore` 必须在仓库根，模板放在 `docker/` 不生效                               | ✅ 逐字取证                 | 部署章节                 |
+| 编号 | 事实 | 验证等级 |
+|---|---|---|
+| PF-01 | `dsh-ref/versions/0.2.0-rc.2/` 完整快照已建立 | ✅ 逐字取证 |
+| PF-02 | `api/cordis/*.d.ts` 9 个类型定义文件 | ✅ 逐字取证 |
+| PF-03 | `*reflect.d.ts`（8.3 KB）是反射 API | ✅ 逐字取证 |
+| PF-04 | `dump-config-web.yaml` 完整组合树（183 行） | ✅ 逐字取证 |
+| PF-05 | `dump-config-schema-web.json`（850 KB） | ✅ 逐字取证 |
+| PF-06 | `ui-tokens.md`（427 令牌逐值表） | ✅ 逐字取证 |
+| PF-07 | `manifest.json`（287 包清单） | ✅ 逐字取证 |
+| PF-08 | DSH 桌面版 = npm 版源码 + Electron 壳 + `dsh-desktop-host` | ✅ 逐字取证 |
+| PF-09 | `desktop-runtime.json`（2.8 MB sha256 清单） | ✅ 逐字取证 |
+| PF-10 | `app-update.yml`（306 B）4 道锁 | ✅ 逐字取证 |
+| PF-11 | `immediately` 标记不存在 | ✅ 逐字取证 |
+| PF-12 | `openAt` 枚举是真正的延迟激活机制 | ✅ 逐字取证 |
+| PF-13 | 287 包 3005 文件 SHA256 完全一致 | ✅ 逐字取证（DSH 主体） |
+| PF-14 | 244 处差异仅 package.json 键序 | ✅ 逐字取证（DSH 主体） |
+| PF-15 | 唯一真差异：libreoffice-kit 版本号 | ✅ 逐字取证（DSH 主体） |
+| PF-16 | `setEnvironmentData` 是 Worker 上下文传递的统一做法 | ✅ 逐字取证 |
+| PF-17 | 破坏性变更只在 rc.1「其他变更」章节 | ✅ 逐字取证 |
+| PF-18 | `resolveBundleDir()` 先锚定 install，再回退 profile | ✅ 逐字取证 |
+| PF-19 | `--host 0.0.0.0` 被 CLI 显式拒绝，但 schema 层允许 | ✅ 逐字取证 |
+| PF-20 | `--profile desktop` 被 CLI 显式拒绝 | ✅ 逐字取证 |
+| PF-21 | `dump-config-schema` 退出码 1 | ✅ 逐字取证 |
+| PF-22 | web 层禁用 22 行（Host/Agent 平面边界） | ✅ 逐字取证 |
+| PF-23 | 四套 preset（standard/minimal/ptc/cordis） | ✅ 逐字取证 |
+| PF-24 | `alias` 层 107 个语义别名 | ✅ 逐字取证 |
+| PF-25 | 用户可调 UI 参数只有 2 个 | ✅ 逐字取证 |
+| PF-26 | 既有仓库含可复用 DSH 插件 `packages/dsh-weknora/` | ✅ 逐字取证 |
+| PF-27 | DSH_HOME 优先级：显式配置 > `$DSH_HOME` > `$HOME/.dsh` | ✅ 逐字取证 |
+| PF-28 | 唯一原生模块 `node-pty` | ✅ 逐字取证 |
+| PF-29 | `engines: null`；Desktop 内嵌 Node 24.18.1 | ✅ 逐字取证 |
+| PF-30 | 无官方 Dockerfile / compose | ✅ 逐字取证 |
+| PF-31 | `resolveLanTrust()` 绑 `0.0.0.0` 时自动收 LAN IPv4 | ✅ 逐字取证 |
+| PF-32 | DSH 包形态：`main=lib/index.js`、`types=lib/types/index.d.ts` | ✅ 逐字取证 |
+| PF-33 | 孤儿分支 `alpha-init` 根提交 `e6289d525`（173 文件） | ✅ 逐字取证 |
+| PF-34 | alphα 模板 5 个缺陷 | ✅ 逐字取证 |
+| PF-35 | `docker-compose` 的 `context: ..` 时 `.dockerignore` 必须在仓库根 | ✅ 逐字取证 |
+| **PF-36** | DSH 有官方品牌槽位：`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` | ✅ 逐字取证 |
+| **PF-37** | `ui-brand-official/src/client/index.ts:17` 有 `DSH_CLIENT_BUILD_PROFILE !== 'official'` 门卫 | ✅ 逐字取证 |
+| **PF-38** | `packages/bundle/web-app/package.json:75` 声明了官方品牌包，可通过 profile patch 摘除 | ✅ 逐字取证 |
+| **PF-39** | DSH **没有** md 沉淀能力：`knowledge` / `notes` / `wiki` / `obsidian` / `vault` / `graph` / `rag` / `vector` 0 个包 | ✅ 逐字取证 |
+| **PF-40** | `dsh-plugin-create` 脚手架与 `dshloader` 兼容层**均不存在** | ✅ 逐字取证 |
+| **PF-41** | 包名被 `cordis.patch.yml` 的 `name:` 字段和 profile 的 `bundles` 引用；真正绑定"插件↔宿主"的是**服务名** | ✅ 逐字取证 |
+| **PF-42** | 品牌字符串 ≥25 个文件命中；`system-prompt:429` 是 **agent 身份声明**，不是 UI 文案 | ✅ 逐字取证 |
+| **PF-43** | `@oblivion/brand` 已装入 DSH Desktop 并生效：`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` 三槽位实测接管成功（补于 2026-10-04） | ✅ **本机实测** |
+
 
 ## 1. 品牌与图标
 
 ### 1.1 品牌定案
 
-| 项     | 值                        |
-| ------ | ------------------------- |
-| 英文名 | **Oblivion**              |
-| 中文名 | **遗忘**                  |
-| 图标   | **北极星（Polaris）图案** |
-| 定位   | 可编程的认知运行环境      |
+| 项 | 值 |
+|---|---|
+| 英文名 | **Oblivion** |
+| 中文名 | **遗忘** |
+| 图标 | **北极星（Polaris）图案** |
+| 定位 | 基于 DSH 的认知增强插件生态 |
 
 ### 1.2 图标设计规范（DSH 实证校准）
 
 **核心隐喻**：北极星是航海者的**导航锚点**——在知识的海洋中，Oblivion 是用户**认知方向的指引**。
 
-**DSH 的图标实现方式（照搬）**：**不用图片文件，图标是导出常量 + React 组件**。
+**DSH 的图标实现方式**：**不用图片文件，图标是导出常量 + React 组件**。
 
 ```typescript
-// 图形本身是一个导出的字符串常量
 export declare const POLARIS_VIEWBOX: { width: number; height: number };
 export declare const POLARIS_PATH = 'M22.9168 1.43018C22.6713 ...';
 
-/** Render the polaris logo.
- *  @param props.size - width in px (default 24; height keeps ratio)
- *  @returns the logo svg (aria-hidden; pair with the wordmark)
- */
 export declare function PolarisLogo({ size, className }: IconProps): JSX.Element;
 ```
 
-**三层结构**（照搬 DSH）：
+**三层结构**：
 
-| 层                                                                   | 形态          | 职责                                         |
-| -------------------------------------------------------------------- | ------------- | -------------------------------------------- |
-| `POLARIS_PATH`                                                       | SVG path 常量 | 几何唯一真源，供 mask / entrance effect 复用 |
-| `PolarisLogo` / `OfficialBrandMark`                                  | React 组件    | 只处理渲染（size 保持比例、aria-hidden）     |
-| `ctx.slots.register({name:"sidebar.brand.mark"}, OfficialBrandMark)` | 槽位注入      | 宿主面决定放哪、放多大                       |
+| 层 | 形态 | 职责 |
+|---|---|---|
+| `POLARIS_PATH` | SVG path 常量 | 几何唯一真源，供 mask / entrance effect 复用 |
+| `PolarisLogo` / `OfficialBrandMark` | React 组件 | 只处理渲染（size 保持比例、aria-hidden） |
+| `ctx.slots.register({name:"sidebar.brand.mark"}, OfficialBrandMark)` | 槽位注入 | 宿主面决定放哪、放多大 |
 
-**槽位注入示例**：
+**动画分工原则**：
 
-```typescript
-ctx.slots.inject('sidebar.brand.mark', () =>
-  ctx.slots.inject('sidebar.brand.name', function* () {
-    yield ctx.slots.register({ name: 'sidebar.brand.mark' }, OfficialBrandMark);
-    yield ctx.slots.register({ name: 'sidebar.brand.name' }, OfficialBrandName);
-  })
-);
-```
+| 位置 | 形态 | 谁决定 |
+|---|---|---|
+| 侧栏品牌位 | **静态** `OfficialBrandMark` | 官方包 `slots.register` |
+| 对话页 hero | **动画**（animated polaris fallback） | 保留声明包的回退，官方不注册 |
+| 加载/重连指示器 | **动画** | 组件内自带 |
 
-**动画分工原则**（照搬 DSH）：
-
-| 位置            | 形态                                  | 谁决定                       |
-| --------------- | ------------------------------------- | ---------------------------- |
-| 侧栏品牌位      | **静态** `OfficialBrandMark`          | 官方包 `slots.register`      |
-| 对话页 hero     | **动画**（animated polaris fallback） | 保留声明包的回退，官方不注册 |
-| 加载/重连指示器 | **动画**                              | 组件内自带                   |
-
-**关键原则**：**动画属于宿主面，静态属于品牌位**。两者共享同一个 `POLARIS_PATH` 常量——**不要用不同素材源**。
-
-**仍保留的部分**：`dsh-app-boot` 里有 `[".svg", "image/svg+xml"]` MIME 映射，说明文件形态仍存在（favicon / PWA manifest）。
+**关键原则**：**动画属于宿主面，静态属于品牌位**。两者共享同一个 `POLARIS_PATH` 常量。
 
 **视觉规范**：
 
-| 规范         | 值                                  |
-| ------------ | ----------------------------------- |
-| 源文件尺寸   | 1024×1024 px                        |
-| 图标主体占比 | 70-80%                              |
-| 导出尺寸     | macOS 512 / Windows 256 / Linux 256 |
-| 对比度       | ≥ 4.5:1（深色背景）                 |
-| 圆角         | 22%（macOS 标准圆角）               |
+| 规范 | 值 |
+|---|---|
+| 源文件尺寸 | 1024×1024 px |
+| 图标主体占比 | 70-80% |
+| 导出尺寸 | macOS 512 / Windows 256 / Linux 256 |
+| 对比度 | ≥ 4.5:1（深色背景） |
+| 圆角 | 22%（macOS 标准圆角） |
 
 **组合方案**：
 
-| 方案          | 内容                         | 场景                                |
-| ------------- | ---------------------------- | ----------------------------------- |
-| A（完整标识） | 北极星图标 + "OBLIVION" 文字 | 启动页、关于页                      |
-| B（纯图形）   | 仅北极星图标                 | 桌面 dock、浏览器 favicon、托盘图标 |
-| C（极简徽标） | 仅八芒星中心，无光晕         | 通知栏、状态栏、加载动画            |
+| 方案 | 内容 | 场景 |
+|---|---|---|
+| A（完整标识） | 北极星图标 + "OBLIVION" 文字 | 启动页、关于页 |
+| B（纯图形） | 仅北极星图标 | 桌面 dock、浏览器 favicon、托盘图标 |
+| C（极简徽标） | 仅八芒星中心，无光晕 | 通知栏、状态栏、加载动画 |
 
-**生成提示词（AI 绘图工具参考）**：
+**生成提示词**：
 
-> Minimalist logo of a polar star (eight-pointed octagram) for an AI knowledge base called "Oblivion". Center is a small bright dot. Four faint diamond-shaped halos radiate outward. Color: deep space blue (#0A1628) background with starlight gold (#E8D5A3) and aurora cyan (#7EC8E3) accents. Style: modern, tech-oriented, calm and guiding. Square format, dark background, professional brand identity.
+> Minimalist logo of a polar star (eight-pointed octagram) for an AI knowledge base called "Oblivion". Center is a small bright dot. Four faint diamond-shaped halos radiate outward. Color: deep space blue (#0A1628) background with starlight gold (#E8D5A3) and aurora cyan (#7EC8E3) accents. Style: modern, tech-oriented, calm and guiding.
 
-> **⚠️ 实现偏离（ERRATA-05）**：提示词里的「Four faint diamond-shaped halos」**未照做**。
-> 菱形完整包住星体需半对角线 ≥ 半径 × √2；要同时满足「主体占比 70–80%」，星体须缩到约 52%，
-> 违反本节占比规范。故改用**径向光晕**表达同一意图，详见 `assets/brand/brand-guidelines.md` §四。
+> **⚠️ 实现偏离（ERRATA-05）**：提示词里的「Four faint diamond-shaped halos」**未照做**。菱形完整包住星体需半对角线 ≥ 半径 × √2；要同时满足「主体占比 70–80%」，星体须缩到约 52%，违反本节占比规范。故改用**径向光晕**表达同一意图。
+
+**渐变与几何常量（v4.1 落地事实）**：
+
+| 常量 | 值 | 用途 |
+|---|---|---|
+| `POLARIS_VIEWBOX` | `1024 × 1024` | 几何坐标空间 |
+| `POLARIS_CENTER_DOT_RADIUS` | `33.792` | 中心亮点半径 |
+| `POLARIS_GRADIENT_FROM` | `#E8D5A3` | 星光金（渐变起点） |
+| `POLARIS_GRADIENT_TO` | `#7EC8E3` | 极光青（渐变终点） |
 
 ### 1.3 图标在多端的应用
 
-| 端            | 尺寸                             | 场景                       |
-| ------------- | -------------------------------- | -------------------------- |
-| Electron 窗口 | 256×256                          | 窗口图标、任务栏           |
-| 系统托盘      | 32×32（macOS）/ 16×16（Windows） | 托盘常驻                   |
-| 安装包        | 512×512                          | macOS .icns / Windows .ico |
-| Web UI        | 128×128                          | 登录页、侧边栏             |
-| favicon       | 32×32                            | 浏览器标签页               |
+| 端 | 尺寸 | 场景 |
+|---|---|---|
+| Electron 窗口 | 256×256 | 窗口图标、任务栏 |
+| 系统托盘 | 32×32（macOS）/ 16×16（Windows） | 托盘常驻 |
+| 安装包 | 512×512 | macOS `.icns` / Windows `.ico` |
+| Web UI | 128×128 | 登录页、侧边栏 |
+| favicon | 32×32 | 浏览器标签页 |
+
+> **⚠️ 宿主边界（v4.1 实测补充）**：窗口图标与任务栏图标来自 **exe 的 PE 资源**，插件**无法**接管。
+> `resources/icon.png` 只喂 `setAboutPanelOptions`，`resources/tray.ico` 只喂托盘与退出对话框。
+> 因此 `@oblivion/brand` 能接管的是**界面内槽位**（侧栏 + Hero），**不是**桌面图标。
+> 桌面图标的可行替代是改快捷方式（`.lnk`）的 `IconLocation`，见 `tools/set-shortcut-icon.ps1`。
+
 
 ## 2. 功能总览
 
 ### 2.1 功能统计
 
-| 子系统          | 数量          |
-| --------------- | ------------- |
-| A. 内核与架构   | 8             |
-| B. LLM 适配     | 3             |
-| C. 会话管理     | 2             |
-| D. 知识库       | 3             |
-| E. 工具集       | 3             |
-| F. 核心认知功能 | 5             |
-| G. 内容创作     | 1             |
-| H. 界面         | 2             |
-| I. 插件管理     | 1             |
-| J. 插件适配层   | 2             |
-| K. 品牌与部署   | 4             |
-| L. 遥测         | 1             |
-| M. 源码沉淀     | 1             |
-| N. UI 设计系统  | 1             |
-| O. 发布工程学   | 1             |
-| **合计**        | **38 项功能** |
+| 类别 | 数量 |
+|---|---:|
+| **DSH 宿主提供（不重复造）** | 20 项 |
+| **Oblivion 独特领域能力（需新写插件）** | 8 项 |
+| **品牌化定制（走槽位）** | 2 项 |
+| **合计** | **30 项** |
 
 ### 2.2 功能清单
 
-#### A. 内核与架构（8 项）
+#### A. DSH 宿主提供的功能（不重复造）
 
-| #   | 功能                 | 说明                                                                        |
-| --- | -------------------- | --------------------------------------------------------------------------- |
-| A1  | Cordis 依赖注入容器  | 插件注册、依赖解析、生命周期管理                                            |
-| A2  | YAML Patch 组合引擎  | 6 层叠加（空根/Bundle/用户/Home/CLI/项目）                                    |
-| A3  | 插件加载器           | 按声明顺序加载，支持运行时热插拔                                            |
-| A4  | 副作用生命周期管理   | `ctx.effect()` 保证插件卸载时自动清理                                       |
-| A5  | **双部署形态支持**   | CLI（npm）+ Desktop（Electron），共享同一套插件包                           |
-| A6  | **配置导出命令**     | `oblivion --dump-config` / `--dump-config-schema` / `--dump-config-default` |
-| A7  | **双形态共享根目录** | `~/.oblivion` 作为 OBLIVION_HOME，凭据/会话/工作区互通                      |
-| A8  | **Profile 平级隔离** | web / desktop 配置各自独立，数据共享                                        |
+| # | 功能 | 提供方 |
+|---|---|---|
+| A1 | Cordis 依赖注入容器 | DSH `@deepseek-ai/cordis` |
+| A2 | YAML Patch 组合引擎 | DSH `boot` |
+| A3 | 插件加载器 | DSH `boot` |
+| A4 | 副作用生命周期管理 | DSH `boot` |
+| A5 | 双部署形态支持 | DSH `apps/desktop` |
+| A6 | 配置导出命令 | DSH `dsh --dump-config` |
+| A7 | 共享根目录 | DSH `~/.dsh` |
+| A8 | Profile 平级隔离 | DSH `profiles/` |
+| B1 | DeepSeek 适配器 | DSH `llm` |
+| B2 | OpenAI 兼容适配器 | DSH `llm` |
+| B3 | Ollama 本地适配器 | DSH `llm` |
+| C1 | 会话核心服务 | DSH `session` |
+| C2 | SQLite 持久化 | DSH `storage-sqlite` |
+| E1 | 网络搜索工具 | DSH `tools/web` |
+| E2 | 文件读写工具 | DSH `tools/fs` |
+| H1 | React Web UI | DSH 56 个 `ui-*` 包 |
+| H2 | 系统托盘 | DSH `apps/desktop` |
+| I1 | 插件清单 + 安装器 | DSH `plugin-manager` |
+| L1 | 遥测 | DSH `telemetry` |
+| S1-S5 | 安全沙箱 / 审批 / 权限 / 网络围栏 | DSH `sandbox-*` |
 
-#### B. LLM 适配（3 项）
+#### F. Oblivion 独特领域能力（DSH 没有的，需新写插件）
 
-| #   | 功能              | 说明                             |
-| --- | ----------------- | -------------------------------- |
-| B1  | DeepSeek 适配器   | 官方 API，支持流式响应           |
-| B2  | OpenAI 兼容适配器 | 支持所有 OpenAI 格式的第三方服务 |
-| B3  | Ollama 本地适配器 | 本地模型推理，无需联网           |
+| # | 功能 | 插件形态 | 依据 |
+|---|---|---|---|
+| F1 | **问答闭环** | `@oblivion/qa-loop` | PF-39 |
+| F2 | **思维激荡** | `@oblivion/perspective` | PF-39 |
+| F3 | **图谱生长** | `@oblivion/graph-growth` | PF-39 |
+| F4 | **反馈画像** | `@oblivion/feedback` | PF-39 |
+| F5 | **知识库** | `@oblivion/knowledge` | PF-39 |
+| D1 | **文档解析** | `@oblivion/knowledge`（含） | PF-39 |
+| D2 | **向量检索** | `@oblivion/knowledge`（含） | PF-39 |
+| G1 | **内容创作** | `@oblivion/content-creator` | PF-39 |
+| J1 | **Obsidian 适配** | `@oblivion/adapter-obsidian` | PF-39 |
 
-#### C. 会话管理（2 项）
+#### K. 品牌化定制（走槽位，不 Fork）
 
-| #   | 功能          | 说明                           |
-| --- | ------------- | ------------------------------ |
-| C1  | 会话核心服务  | 会话创建、消息管理、上下文维护 |
-| C2  | SQLite 持久化 | 会话历史持久化到本地数据库     |
+| # | 功能 | 实现方式 | 依据 |
+|---|---|---|---|
+| K1 | 北极星图标 + 品牌名"遗忘" | `@oblivion/brand` 插件占用 3 个品牌槽位 | PF-36 |
+| K2 | 让官方品牌让位 | 路 A：`DSH_CLIENT_BUILD_PROFILE=local`；路 B：profile patch `disabled: true` | PF-37、PF-38 |
 
-#### D. 知识库（3 项）
-
-| #   | 功能           | 说明                                |
-| --- | -------------- | ----------------------------------- |
-| D1  | 知识库核心服务 | 知识的增删改查                      |
-| D2  | SQLite 存储    | 知识的持久化                        |
-| D3  | 向量检索       | 语义检索（sqlite-vec 或纯 JS 实现） |
-
-#### E. 工具集（3 项）
-
-| #   | 功能         | 说明                                          |
-| --- | ------------ | --------------------------------------------- |
-| E1  | 网络搜索工具 | 支持 SearXNG / DuckDuckGo / Bing 等           |
-| E2  | 文件读写工具 | 本地文件系统操作                              |
-| E3  | 文档解析工具 | anydoc WASM，支持 PDF/Word/Markdown/HTML/EPUB |
-
-#### F. 核心认知功能（5 项）
-
-| #   | 功能                     | 说明                                   |
-| --- | ------------------------ | -------------------------------------- |
-| F1  | **问答闭环**             | 捕获问答 → 四层筛选 → 注入知识库       |
-| F2  | **思维激荡（主动触发）** | 单次提问后自动附加 1 个相关新视角      |
-| F3  | **思维激荡（深度触发）** | 连续 ≥3 次追问同维度后生成 ≥3 候选视角 |
-| F4  | **图谱生长**             | 问答共现建边、权重累积、双链写回 MD    |
-| F5  | **反馈画像**             | 点赞/点踩/中性信号，累积后微调用户画像 |
-
-#### G. 内容创作（1 项，默认不加载）
-
-| #   | 功能     | 说明                                 |
-| --- | -------- | ------------------------------------ |
-| G1  | 内容创作 | 播客脚本 / 学习指南 / FAQ / 摘要生成 |
-
-#### H. 界面（2 项）
-
-| #   | 功能         | 说明                              |
-| --- | ------------ | --------------------------------- |
-| H1  | React Web UI | 问答界面、知识库管理、MD 沉淀查看 |
-| H2  | 系统托盘     | 最小化到托盘、快速访问、退出      |
-
-#### I. 插件管理（1 项）
-
-| #   | 功能              | 说明                                            |
-| --- | ----------------- | ----------------------------------------------- |
-| I1  | 插件清单 + 安装器 | npm 内嵌清单 + `oblivion plugin add <pkg>` 命令 |
-
-#### J. 插件适配层（2 项）
-
-| #   | 功能                | 说明                                 |
-| --- | ------------------- | ------------------------------------ |
-| J1  | Obsidian 插件适配器 | 将 Obsidian API 映射为 Oblivion 服务 |
-| J2  | DSH 插件适配器      | 将 DSH 命名空间映射到 Oblivion 服务  |
-
-#### K. 品牌与部署（4 项）
-
-| #   | 功能           | 说明                                                  |
-| --- | -------------- | ----------------------------------------------------- |
-| K1  | 北极星图标     | 八芒星，多端适配（path 常量 + React 组件 + 槽位注入） |
-| K2  | Profile 系统   | minimal / standard / research 三套预置                |
-| K3  | Electron 打包  | macOS / Windows / Linux 安装包                        |
-| K4  | 源码沉淀流水线 | `dsh-ref/` 参考仓库 + 四段流水线                 |
-
-#### L. 遥测（1 项，默认关闭）
-
-| #   | 功能 | 说明                                 |
-| --- | ---- | ------------------------------------ |
-| L1  | 遥测 | 默认关闭；显式启用后上报匿名使用数据 |
-
-#### M. 源码沉淀（1 项）
-
-| #   | 功能         | 说明                                             |
-| --- | ------------ | ------------------------------------------------ |
-| M1  | 配置导出能力 | `--dump-config` 系列命令，随版本自动更新架构事实 |
-
-#### N. UI 设计系统（1 项）
-
-| #   | 功能         | 说明                                     |
-| --- | ------------ | ---------------------------------------- |
-| N1  | 三层令牌架构 | static / alias / 其余（427 令牌，11 组） |
-
-#### O. 发布工程学（1 项）
-
-| #   | 功能         | 说明                                       |
-| --- | ------------ | ------------------------------------------ |
-| O1  | 三级版本分层 | alpha（增量）/ rc（汇总）/ rc 补丁（热修） |
 
 ## 3. 总体架构
 
@@ -381,39 +305,37 @@ ctx.slots.inject('sidebar.brand.mark', () =>
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     L1: Electron 宿主层                             │
+│                     L1: DSH 宿主层（不 Fork）                        │
 │  ┌─────────────────────────────────────────────────────────────────┐│
-│  │  Electron Main Process                                          ││
+│  │  DSH Desktop（Electron）/ DSH Web（CLI）                        ││
 │  │  • 窗口管理 / 系统托盘 / 原生菜单                              ││
-│  │  • 启动 Cordis 内核                                             ││
-│  │  • 加载 Profile 配置                                            ││
+│  │  • Cordis 内核（官方）                                          ││
+│  │  • Profile 配置（官方）                                         ││
 │  └─────────────────────────────────────────────────────────────────┘│
 │                              │                                      │
 │                              ▼                                      │
 │  ┌─────────────────────────────────────────────────────────────────┐│
-│  │  Renderer Process（React UI）                                   ││
-│  │  • 由 oblivion-web-ui 插件经本地 web 服务提供（§5.3）           ││
-│  │  • 经 HTTP /api + WS /api/remote.mux 与内核通信                 ││
+│  │  DSH Web UI（56 个官方 ui-* 包）                                ││
+│  │  • 三栏框架（sidebar / main / rightbar）                        ││
+│  │  • 品牌槽位（sidebar.brand.mark / name + hero）                 ││
+│  │  • 由 @oblivion/brand 插件占用（覆盖官方）                      ││
 │  └─────────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     L2: Cordis 插件内核层                           │
+│                     L2: Oblivion 插件层（新增）                     │
 │  ┌─────────────────────────────────────────────────────────────────┐│
-│  │  oblivion-core（内核，~50KB）                                   ││
-│  │  • Cordis DI 容器                                               ││
-│  │  • YAML Patch 解析器                                            ││
-│  │  • 插件生命周期管理                                             ││
-│  │  • 5 层 Patch 叠加引擎                                          ││
-│  └─────────────────────────────────────────────────────────────────┘│
-│                              │                                      │
-│                              ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────────┐│
-│  │  插件树（由 YAML 声明组合）                                     ││
+│  │  @oblivion/* 插件生态（8 个插件）                               ││
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          ││
-│  │  │ llm-*    │ │ qa-loop  │ │perspective│ │graph-*   │          ││
+│  │  │knowledge │ │ qa-loop  │ │perspective│ │graph-*   │          ││
 │  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘          ││
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────────────────────────┐   ││
+│  │  │feedback  │ │content-* │ │adapter-obsidian              │   ││
+│  │  └──────────┘ └──────────┘ └──────────────────────────────┘   ││
+│  │  ┌─────────────────────────────────────────────────────────────┐││
+│  │  │brand（品牌槽位占用）                                        │││
+│  │  └─────────────────────────────────────────────────────────────┘││
 │  └─────────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────┘
                               │
@@ -421,8 +343,8 @@ ctx.slots.inject('sidebar.brand.mark', () =>
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     L3: 数据与外部资源层                            │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐│
-│  │ SQLite       │  │ 向量存储     │  │  外部 API                ││
-│  │ (会话/知识)  │  │ (sqlite-vec) │  │ (LLM/搜索)               ││
+│  │ DSH SQLite   │  │ Oblivion     │  │  外部 API                ││
+│  │ (会话)       │  │ 向量存储     │  │ (LLM/搜索)               ││
 │  └──────────────┘  └──────────────┘  └──────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -430,13 +352,17 @@ ctx.slots.inject('sidebar.brand.mark', () =>
 ### 3.2 启动链
 
 ```
-oblivion (bin.js, commander 解析)
-  └─ profile-boot.ts: runProfile()
-       ├─ composeProfile()  ← 叠加 6 层 patch
+dsh（DSH 官方 CLI）
+  └─ profile-boot: runProfile()
+       ├─ composeProfile()  ← 叠加 DSH 官方 6 层 patch
        ├─ boot()            ← 挂载 Cordis 插件树
-       ├─ provideCmdline()  ← 应用自己的参数
-       └─ createProcessShutdown() ← SIGINT/SIGTERM 有界退出（5s 超时强制）
+       │                       ├─ DSH 原生插件
+       │                       └─ @oblivion/* 插件（通过 profile bundles 声明）
+       └─ createProcessShutdown()
 ```
+
+**关键变化**：Oblivion **不接管启动链**，而是作为 DSH 的插件被加载。
+
 
 ## 4. `ctx` 概念说明
 
@@ -447,7 +373,6 @@ oblivion (bin.js, commander 解析)
 ### 4.2 通俗理解
 
 把 Cordis 想象成一个**国家**：
-
 - 每个插件是**一个公民**
 - `ctx` 是这个公民的**身份证 + 通讯录 + 工具箱**
 - 公民想用电力系统，不是自己去发电，而是通过 `ctx.电力` 拿到服务
@@ -463,30 +388,26 @@ export function apply(ctx: Context) {
 
 `ctx` 是一个**代理对象**（Proxy），具有以下特性：
 
-| 特性           | 说明                                                  | 示例                                                                               |
-| -------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| **服务访问**   | 通过属性名访问已注册的服务                            | `ctx.llm`、`ctx.knowledge`、`ctx.tools`                                            |
-| **依赖声明**   | 通过 `inject` 声明需要哪些服务，Cordis 会等待它们就绪 | `export const inject = ['llm', 'knowledge']`                                       |
-| **事件系统**   | `ctx.on()` 订阅、`ctx.emit()` 发布                    | `ctx.on('session:complete', handler)`                                              |
-| **副作用管理** | `ctx.effect()` 注册清理函数，插件卸载时自动执行       | `ctx.effect(() => { const t = setInterval(...); return () => clearInterval(t); })` |
-| **服务注册**   | 插件通过 `ctx.provide()` 对外暴露能力                 | `ctx.provide('knowledge', knowledgeService)`                                       |
-| **子上下文**   | `ctx.isolate()` 创建隔离作用域                        | 用于多会话隔离                                                                     |
-| **反射 API**   | `ctx.get(name, strict)` / `ctx.set(name, value)`      | **可绕过 inject 要求读服务**（RISK-109 地基）                                      |
+| 特性 | 说明 | 示例 |
+|---|---|---|
+| **服务访问** | 通过属性名访问已注册的服务 | `ctx.llm`、`ctx.knowledge`、`ctx.tools` |
+| **依赖声明** | 通过 `inject` 声明需要哪些服务 | `export const inject = ['llm', 'knowledge']` |
+| **事件系统** | `ctx.on()` 订阅、`ctx.emit()` 发布 | `ctx.on('session:complete', handler)` |
+| **副作用管理** | `ctx.effect()` 注册清理函数 | `ctx.effect(() => { const t = setInterval(...); return () => clearInterval(t); })` |
+| **服务注册** | 插件通过 `ctx.provide()` 对外暴露能力 | `ctx.provide('knowledge', knowledgeService)` |
+| **子上下文** | `ctx.isolate()` 创建隔离作用域 | 用于多会话隔离 |
+| **反射 API** | `ctx.get(name, strict)` / `ctx.set(name, value)` | **可绕过 inject 要求读服务** |
 
 ### 4.4 反射 API（DSH 实证）
 
-**`*reflect.d.ts`（8.3 KB）是反射 API 的核心**：
-
 ```typescript
-// ctx.get(name, strict) 可"绕过 inject 要求读服务"
-// strict = false 时，服务不存在返回 undefined 而非崩溃
 const service = ctx.get('some-service', false);
 if (service) {
   // 使用 service
 }
 ```
 
-这正是 **RISK-109（配置导出命令的维护）** 的地基——`--dump-config` 无需启动服务即可遍历容器。
+`strict = false` 时，服务不存在返回 undefined 而非崩溃。这是 **`--dump-config` 实现的地基**——无需启动服务即可遍历容器。
 
 ### 4.5 具体到 `ctx.tools`
 
@@ -497,9 +418,7 @@ export function apply(ctx: Context) {
   tools.register({
     name: 'web_search',
     description: 'Search the web',
-    handler: async (query) => {
-      /* ... */
-    },
+    handler: async (query) => { /* ... */ },
   });
 }
 ```
@@ -512,77 +431,60 @@ export function apply(ctx: Context) {
 - **可替换**：`ctx.llm` 背后是 DeepSeek 还是 OpenAI，调用方不关心
 - **可测试**：测试时注入 mock 的 `ctx.tools`，无需启动整个应用
 
-**一句话**：`ctx` 是插件在 Cordis 世界里的一切——它是插件的"操作系统 API"。
 
 ## 5. 双部署形态
 
 ### 5.1 两种形态对比
 
-| 维度         | Oblivion CLI（npm 形态）           | Oblivion Desktop（Electron 形态）                          |
-| ------------ | ---------------------------------- | ---------------------------------------------------------- |
-| **形态**     | 纯 CLI 启动器 + 进程内 profile     | Electron 壳 + 内嵌完整运行时                               |
-| **代码载体** | npm 全局目录（所有插件包）         | asar 内 `oblivion/node_modules`（同包，字节相同）          |
-| **运行时**   | 系统 PATH 上的 Node                | 内嵌 Node（锁版本）+ pnpm                                  |
-| **体积**     | 较小                               | 较大（含 Electron + 内嵌运行时）                           |
-| **Profile**  | `~/.oblivion/profiles/web/`        | `~/.oblivion/profiles/desktop/`                            |
-| **Bundles**  | `oblivion-base → oblivion-web-app` | `oblivion-base → oblivion-web-app → oblivion-desktop-host` |
-| **入口约束** | CLI 直接进入                       | **CLI 显式拒绝 `--profile desktop`**                       |
-| **更新**     | `npm i -g`                         | `electron-updater` 下载完整安装包                          |
-| **UI 来源**  | `oblivion-web-ui` 插件             | 同左（renderer 仅欢迎页）                                  |
+| 维度 | DSH Web（npm 形态） | DSH Desktop（Electron 形态） |
+|---|---|---|
+| **宿主** | DSH 官方 | DSH 官方 |
+| **Oblivion 的角色** | 插件生态 | 插件生态 |
+| **插件安装** | `dsh plugin --profile web add` | 同上 |
+| **Profile** | `~/.dsh/profiles/web/` | `~/.dsh/profiles/desktop/` |
+| **UI 来源** | DSH 56 个 `ui-*` 包 + `@oblivion/brand` | 同左 |
 
 ### 5.2 两种形态共享什么
 
 ```
-                    ┌── Oblivion CLI ──┐        ┌── Desktop ──┐
-插件代码来源:        npm 全局目录              asar 内 oblivion/node_modules
-                    (所有插件包)              (同包，字节相同)
-                          └────────┬───────────────┘
-                                   ▼
-                      OBLIVION_HOME = ~/.oblivion (完全共享)
-              .credentials.yaml · sessions/ · storages/
-              profiles/desktop · profiles/web  ← 平级隔离
+              DSH Web                DSH Desktop
+插件代码来源   ~/.dsh/profiles/web/    ~/.dsh/profiles/desktop/
+                 node_modules/           node_modules/
+                 └──────────┬──────────────┘
+                            ▼
+                DSH_HOME = ~/.dsh  （完全共享）
+        .credentials.yaml · sessions/ · storages/
+        profiles/web · profiles/desktop  ← 平级隔离
 ```
-
-**DSH 实证数据**（RISK-107 已证明）：
-
-- 共享包 287 个，3005 文件 SHA256 完全一致
-- 244 处差异仅 package.json 键序
-- 46 处差异仅 CSS-module hash salt
-- 0 npm 侧缺失
-- 唯一真差异：libreoffice-kit 版本号 0.1.2 vs 0.1.5
-
-**装配链证据**：`resolveBundleDir()` 先锚定 oblivion install，所以 web dependencies 为空、desktop 有 0 个 profile node_modules —— 两条链路共用同一个插件源。
 
 ### 5.3 Desktop 独有部分
 
-| 组件                    | 说明                                                 |
-| ----------------------- | ---------------------------------------------------- |
-| `oblivion-desktop-host` | Desktop 独有桥接包（`runProfile` + `registerHooks`） |
-| Electron 壳             | `main.js`（窗口管理 + 自动更新 + profile 定位）      |
-| `renderer/`             | 仅欢迎页 + 更新对话框——**业务 UI 不在 renderer**     |
-| `resources/runtime/`    | 自带 Node + pnpm + 原生模块                          |
-| `oblivion-runtime.json` | sha256 清单，用于增量更新校验                        |
+| 组件 | 提供方 |
+|---|---|
+| `dsh-desktop-host` | DSH 官方 |
+| Electron 壳 | DSH 官方 |
+| `renderer/` | DSH 官方（仅欢迎页 + 更新对话框） |
+| `resources/runtime/` | DSH 官方 |
+| `dsh-runtime.json` | DSH 官方 |
 
-**关键原则**：**renderer 不承载业务 UI**。主界面由 `oblivion-web-ui` 插件经本地 web 服务提供。
+**Oblivion 不提供 Desktop 独有部分**——这是 DSH 宿主的职责。
 
 ### 5.4 更新机制
 
-|               | Oblivion CLI                 | Oblivion Desktop                           |
-| ------------- | ---------------------------- | ------------------------------------------ |
-| **升级动作**  | `npm i -g @oblivion/cli@x`   | `electron-updater` 下载完整安装包          |
-| **Profile**   | 不动（路径寻址，零重建）     | 不动（同上）                               |
-| **运行时**    | 跟随系统 Node                | 切换到新内嵌 Node                          |
-| **凭据/会话** | 不动                         | 不动                                       |
-| **风险点**    | 系统 Node 版本兼容由用户负责 | `oblivion-runtime.json` 校验不过则整体回滚 |
+| | DSH Web | DSH Desktop |
+|---|---|---|
+| **升级动作** | `npm i -g @deepseek-ai/dsh@x` | `electron-updater` |
+| **Oblivion 插件** | **不动**（在 `~/.dsh/`） | **不动** |
+| **Profile** | 不动 | 不动 |
 
-**路径寻址机制**：Junction 是路径寻址（目标不含版本号），profile 的 bundle 声明也不锁版本。这意味着原地 `npm i -g` 升级后，profile 零重建。
+**关键**：DSH 更新只替换程序本体，`~/.dsh/` 数据目录不受影响。**Oblivion 插件自动保留。**
 
 ### 5.5 双形态数据共享
 
 #### 5.5.1 共享根目录设计
 
 ```
-~/.oblivion/                              # OBLIVION_HOME（两形态共享）
+~/.dsh/                                   # DSH_HOME（两形态共享）
 ├── cordis.patch.yml                      # Home 层配置（机器级）
 ├── .credentials.yaml                     # 凭据（权限 0600）
 ├── profiles/                             # Profile 层（平级隔离）
@@ -596,38 +498,31 @@ export function apply(ctx: Context) {
 │       └── package.json
 ├── sessions/                             # 会话（两形态共享）
 ├── storages/                             # 工作区（两形态共享）
-│   ├── workspace-<hash>/
-│   │   ├── knowledge.db
-│   │   └── vectors/
-│   └── session_projcache/
 ├── data/
-│   ├── oblivion.db
-│   └── vectors/
 ├── logs/
-│   └── startup-*.log                     # 0600 权限
 └── plugins/
-    └── node_modules/                     # Junction → npm 全局
+    └── node_modules/                     # 插件安装位置
 ```
 
 **环境变量解析**：
 
 ```
-OBLIVION_HOME 未设置 → 默认 ~/.oblivion
-OBLIVION_HOME 已设置 → 使用指定路径（用于测试/多实例）
+DSH_HOME 未设置 → 默认 ~/.dsh
+DSH_HOME 已设置 → 使用指定路径（用于测试/多实例）
 ```
 
 #### 5.5.2 凭据共享
 
-**存储位置**：`~/.oblivion/.credentials.yaml`（权限 0600）
+**存储位置**：`~/.dsh/.credentials.yaml`（权限 0600）
 
 **共享机制**：
 
-| 特性                 | 说明                                        |
-| -------------------- | ------------------------------------------- |
-| **两形态共用**       | CLI 与 Desktop 读取同一个凭据文件           |
-| **逐请求解析**       | 每次 API 调用时从文件读取，不缓存在进程环境 |
-| **永不写入环境变量** | 避免凭据泄漏到子进程                        |
-| **权限保护**         | 文件权限 0600；启动日志顶部警告可能含凭据   |
+| 特性 | 说明 |
+|---|---|
+| **两形态共用** | CLI 与 Desktop 读取同一个凭据文件 |
+| **逐请求解析** | 每次 API 调用时从文件读取，不缓存在进程环境 |
+| **永不写入环境变量** | 避免凭据泄漏到子进程 |
+| **权限保护** | 文件权限 0600 |
 
 #### 5.5.3 会话共享
 
@@ -642,12 +537,12 @@ sessions/
 
 **共享机制**：
 
-| 特性             | 说明                                                        |
-| ---------------- | ----------------------------------------------------------- |
-| **两形态共用**   | 同一份会话文件被 CLI 与 Desktop 读取                        |
-| **平级视图**     | 任一形态的会话列表都显示全部会话                            |
-| **Profile 标记** | `meta.json` 的 `profile` 字段记录来源，但不阻止另一形态访问 |
-| **冲突处理**     | last-write-wins（`updatedAt` 较晚者为准）                   |
+| 特性 | 说明 |
+|---|---|
+| **两形态共用** | 同一份会话文件被 CLI 与 Desktop 读取 |
+| **平级视图** | 任一形态的会话列表都显示全部会话 |
+| **Profile 标记** | `meta.json` 的 `profile` 字段记录来源 |
+| **冲突处理** | last-write-wins |
 
 #### 5.5.4 工作区共享
 
@@ -670,12 +565,12 @@ workspace 名 = "--" + 路径中所有非字母数字字符替换为 "-" + "--"
 
 **共享机制**：
 
-| 特性           | 说明                                           |
-| -------------- | ---------------------------------------------- |
-| **两形态共用** | 同一工作区的知识库被两形态访问                 |
-| **路径寻址**   | 工作区按**物理路径**哈希，与形态无关           |
-| **增量写入**   | SQLite WAL 模式保证并发写入安全                |
-| **互斥锁**     | 同一工作区同时被两形态写入时，通过文件锁串行化 |
+| 特性 | 说明 |
+|---|---|
+| **两形态共用** | 同一工作区的知识库被两形态访问 |
+| **路径寻址** | 工作区按**物理路径**哈希，与形态无关 |
+| **增量写入** | SQLite WAL 模式保证并发写入安全 |
+| **互斥锁** | 同一工作区同时被两形态写入时，通过文件锁串行化 |
 
 #### 5.5.5 Profile 平级隔离
 
@@ -691,10 +586,10 @@ const RESERVED_PROFILES = ['desktop'];
 export function runProfile(profileName: string) {
   if (RESERVED_PROFILES.includes(profileName)) {
     throw new Error(
-      `Profile "${profileName}" is reserved for Electron. ` + `Please use the desktop application instead.`
+      `Profile "${profileName}" is reserved for Electron. ` +
+      `Please use the desktop application instead.`
     );
   }
-  // ... 正常启动
 }
 ```
 
@@ -702,7 +597,7 @@ export function runProfile(profileName: string) {
 
 ```typescript
 export function bootDesktop() {
-  const home = resolveOblivionHome();
+  const home = resolveDshHome();
   const profile = path.join(home, 'profiles', 'desktop');
   registerHooks();
   return runProfile('desktop');
@@ -713,130 +608,165 @@ export function bootDesktop() {
 
 **DSH 用 `dsh-app://` 协议 + MessageChannel port，不开监听端口**：
 
-| 机制                 | 实现                                                                                                                         |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **自定义协议**       | `event.origin !== 'dsh-app://app'` 直接丢弃                                                                                  |
-| **进程边界**         | 嵌入页只通过 MessageChannel port 与 preload 通信，绝不直接拿 IPC                                                             |
-| **一次性 port 移交** | `window.parent !== window` + `event.isTrusted` + 一次性 port 移交                                                            |
-| **IPC 白名单**       | "Reject IPC outside the allowed Desktop document origins" + `session.setPermissionCheckHandler` 按 origin / isMainFrame 放行 |
+| 机制 | 实现 |
+|---|---|
+| **自定义协议** | `event.origin !== 'dsh-app://app'` 直接丢弃 |
+| **进程边界** | 嵌入页只通过 MessageChannel port 与 preload 通信 |
+| **一次性 port 移交** | `window.parent !== window` + `event.isTrusted` + 一次性 port 移交 |
+| **IPC 白名单** | 按 origin / isMainFrame 放行 |
 
-**Oblivion 照搬这一模式**：
-
-- 自定义协议：`oblivion-app://app`
-- 强制更新 iframe 完全无法发起任意 IPC
-- 不开监听端口
-
-### 5.7 Web 通道的落地顺序（DEC-017，2026-10-03 审查）
+### 5.7 Web 通道的落地顺序（DEC-017）
 
 **先补 HTTP `/api` 单元 RPC（覆盖面约 80%），再补唯一 WS `/api/remote.mux`。**
 
 三条理由：
 
-1. **不退回 SSE。** 已在 `src/webserver/index.ts` 的 upgrade 路径上调了 `fence.admit()`，
-   Origin 同源校验也在 —— 这套正是为 WS 准备的。改用 SSE 等于把 upgrade 席位与围栏一起闲置。
-   上游自己也只在 HMR（推图重建帧）与出站 LLM 调用用 SSE，UI 主通道是 mux。
-2. **顺序不能反。** mux 的 `streamInboxBytes`（默认 262144）上行缓冲与双向流语义
-   是第二阶段的事（`gateway/uplink-overflow` 是它的溢出码）；先做 mux 会把复杂度提前。
-3. **当前最大的洞不是安全，是「有壳无信道」。** 实测：`register()` 生产环境只被调用 3 次
-   （`/healthz` / `/metrics` / static fallback），`registerUpgrade()` 生产调用 **0** 次，
-   UI 侧 `fetch` / WebSocket / EventSource 全为 **0**，`/api` 探测 404。
-   三席位、围栏、profile 行、`--dump-config` 全齐，但**没有任何业务流量穿过它们**。
+1. **不退回 SSE。** 已在 `src/webserver/index.ts` 的 upgrade 路径上调了 `fence.admit()`，Origin 同源校验也在。改用 SSE 等于把 upgrade 席位与围栏一起闲置。
+2. **顺序不能反。** mux 的 `streamInboxBytes`（默认 262144）上行缓冲与双向流语义是第二阶段的事；先做 mux 会把复杂度提前。
+3. **当前最大的洞不是安全，是「有壳无信道」。** 三席位、围栏、profile 行、`--dump-config` 全齐，但**没有任何业务流量穿过它们**。
 
-所以下一步的判据不是「又加了一个包」，而是：**一条 `/api` 业务路由 + UI 一次 `fetch` 打通，
-让已有围栏真的拦到真实流量。**
+### 5.8 HTTP `/api` 一元面的形状提案（R1）
 
-> 与上游的一处对照：`registerUpgrade` 在 DSH 全仓**也只有 1 个调用方**
-> （`dsh-api-gateway` → `/api/remote.mux`）。这层本就应该薄 —— 但**薄不等于零**。
-
-
-### 5.8 HTTP `/api` 一元面的形状提案（R1，2026-10-03）
-
-> 依据：上游 `dsh-api-gateway/lib/index.js:623-625` 的挂载点 ——
-> `connection.rpc.intercept("/api", (endpoint) => this.claimsEndpoint(endpoint), (endpoint, payload, signal, peer) => this.dispatchRpc(...))`。
-> **不是**一条路由一个功能，而是**单端点 + 端点名在载荷里**。
+> 依据：上游 `dsh-api-gateway/lib/index.js:623-625` 的挂载点——**不是**一条路由一个功能，而是**单端点 + 端点名在载荷里**。
 
 #### 与上游一致的三条
 
-1. **路径只有 `/api` 一条**（一元请求/响应信封）；实时流将来走唯一的 `/api/remote.mux`（DEC-014/017）。
+1. **路径只有 `/api` 一条**（一元请求/响应信封）；实时流将来走唯一的 `/api/remote.mux`。
 2. **信封**：请求 `{ id, endpoint, payload }` → 响应 `{ ok: true, value }` 或 `{ ok: false, error: { code, message } }`。
-3. **强制 `content-type: application/json`，否则 415**（上游 `dsh-client-connection/lib/index.js:679`）。
-   这一条**不只是规范洁癖**：它同时挡掉 `<form>` 跨站提交那类**不需要预检**的简单请求 —— 是围栏的第二道。
+3. **强制 `content-type: application/json`，否则 415**。
 
-#### `claimsEndpoint` 的判定（上游 `:698-705`）
-
-- `$events/result` 恒真（它由 `/api` 承载，见 §5.7 的混合路径）
-- 否则必须**恰好 2 段**且命中注册表；未命中 → `404` 而不是静默 200
-
-#### R1 的最小端点集（只做能立刻验证信道的）
+#### R1 的最小端点集
 
 | 端点 | 载荷 | 响应 |
-| --- | --- | --- |
+|---|---|---|
 | `core/status` | `{}` | `{ profile, version, rows: { loaded, pending, skipped, failed }, fence: { trustedHosts, rejections }, web: { port, uptimeMs } }` |
-
-#### UI 侧（R1 的验收动作）
-
-外壳启动时**一次** `fetch('/api', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, endpoint: 'core/status', payload: {} }) })`，
-把结果显示在侧栏底部（替换现在写死的「内核已连接」）。这一步的意义**不是功能**，而是：
-**让已有的三席位与围栏第一次拦到真实业务流量。**
 
 #### 测试口径（DEC-022：同批带 e2e）
 
 | 层 | 用例 |
-| --- | --- |
-| 单元 | 信封形状 · 非 JSON → 415 · `claimsEndpoint`（1 段 / 3 段 / 未命中） · 未知端点 → 404 错误码 |
-| 围栏 | 同一组 Host / Origin / **Sec-Fetch-Site** 用例对 `/api` 再跑一遍 |
-| **端到端** | 起服务 → UI 发一次真实 `fetch` → 断言返回的 `profile` 与 `--dump-config` 一致（**这是 R1 的验收证据**）|
+|---|---|
+| 单元 | 信封形状 · 非 JSON → 415 · `claimsEndpoint` · 未知端点 → 404 错误码 |
+| 围栏 | 同一组 Host / Origin / `Sec-Fetch-Site` 用例对 `/api` 再跑一遍 |
+| **端到端** | 起服务 → UI 发一次真实 `fetch` → 断言返回的 `profile` 与 `--dump-config` 一致 |
+
+### 5.9 品牌化走槽位（v4.1 关键决策）
+
+> **决策：Oblivion 品牌化走 DSH 官方槽位，不 Fork DSH 源码。**
+
+**依据**：DSH 官方 README 明文（`ui-brand-official/README.md`）：
+
+> A deployment with its own identity leaves this package out and composes another package that occupies the sidebar slots — and the hero slot, which this package leaves on its fallback. **Occupying a slot is the only composition route; there is no brand configuration surface here.**
+
+**三个品牌槽位**（PF-36）：
+
+| 槽位 | 声明方 | 契约真源 | 当前占用者 |
+|---|---|---|---|
+| `sidebar.brand.mark` | `ui-sidebar/src/client/index.ts:80` | `contract/slots.ts:25` | `OfficialBrandMark` |
+| `sidebar.brand.name` | `ui-sidebar/src/client/index.ts:81` | `contract/slots.ts:30` | `OfficialBrandName` |
+| `conversation.hero.brand.mark` | `ui-conversation/src/client/apply.ts:318` | `contract/slots.ts:191` | **空**（官方故意不占） |
+
+**`@oblivion/brand` 插件的形态**：
+
+```typescript
+// packages/brand-oblivion/src/client/index.ts
+export const inject = ['slots']
+
+export function apply(ctx) {
+  ctx.slots.inject('sidebar.brand.mark', () =>
+    ctx.slots.inject('sidebar.brand.name', function* () {
+      yield ctx.slots.register({ name: 'sidebar.brand.mark' }, OblivionBrandMark)
+      yield ctx.slots.register({ name: 'sidebar.brand.name' }, OblivionBrandName)
+    }))
+}
+```
+
+**让官方品牌让位的三条路**：
+
+| 路 | 做法 | 优缺点 |
+|---|---|---|
+| **A（推荐）** | 构建时设 `DSH_CLIENT_BUILD_PROFILE=local` → 官方包直接 `return` | ✅ 最干净、零冲突 |
+| B | profile patch `disabled: true` 摘官方包 | ✅ 有效；⚠️ 需维护 profile |
+| C | 优先级选举（`priority?: number`） | ❌ 动态注册 priority 低于 shipped 条目，默认官方会赢 |
+
+**三类例外**（槽位管不到，需单独处理，PF-42）：
+
+| 类别 | 位置 | 处置 |
+|---|---|---|
+| 浏览器标题 | `scripts/client-build-environment.ts:23` `DSH_CLIENT_TITLE` | 构建期设 `DSH_CLIENT_TITLE=遗忘` |
+| 桌面端 locale | `apps/desktop/src/locale.ts`（26 处）+ `main.ts:928` | 单独改；⚠️ git merge 会冲突 |
+| **agent 身份声明** | `system-prompt:429` `'You are an AI agent powered by DeepSeek Harness.'` | **单独决策**——影响模型自我认知，不轻易改 |
+
+### 5.10 槽位遮蔽的实测机制（v4.1 补，实测于 2026-10-04）
+
+> 原 §5.9 只写了「路 C 不可靠」，但**没写清 `ui-slots` 在什么条件下谁渲染**。
+> 2026-10-04 装机实测补齐，`@oblivion/brand` 即按此实现。
+
+`@deepseek-ai/dsh-client-ui-slots` 的槽位有四种 kind：`single` / `list` / `keyed` / `chain`。
+品牌槽位是 **`single`**，其规则为：
+
+```
+同 priority 重复注册 → 抛错
+不同 priority       → 遮蔽，且 lowest renders
+```
+
+**因此 `@oblivion/brand` 用 `priority = -10` 稳定覆盖官方（官方为默认 `0`）。**
+而**关闭接管只需 dispose 本插件的注册**，官方那条立刻重新成为渲染者 ——
+这是槽位系统设计好的机制，**不需要改官方包，也不需要 `disabled: true`**。
+
+> **⚠️ 对 §5.9「路 B」的修正**：实测证明**路 C 描述的「动态注册必然输」是错的** ——
+> `priority` 可以高于 shipped 条目。真正可靠的是 `priority`（路 C 修正后可用），
+> 而 profile patch `disabled: true`（路 B）虽然有效，但代价是维护 profile。
+> **推荐顺序更新为：priority 遮蔽（零侵入） > profile patch > 构建期摘除。**
+
+### 5.11 会话 Hero 标题的边界（v4.1 补，实测于 2026-10-04）
+
+**能改**：`conversation.hero.brand.mark`（槽位，官方故意留空）。
+**改不了**：Hero 下方那行标题「探索未至之境」。
+
+实测结论：
+
+| 项 | 事实 |
+|---|---|
+| 该字符串 | 是 i18n key `hero.headline`，位于 `ui-conversation` 的 locale 资源 |
+| 渲染方式 | `t("hero.headline")`，**没有对应槽位** |
+| 为什么不能覆盖 | locale 服务对**重复的 `ns + locale` 注册直接抛错**，外部无法抢先注册同名 key |
+| 结论 | **这是宿主文案，不是插件扩展点**。要改只能改官方包 —— 违反不 Fork 原则，故不做 |
+
+> 这与 §5.9 的「三类例外」是同一类问题：**槽位之外的文案归宿主所有**。
 
 
 ## 6. Host / Agent 双平面
 
 ### 6.1 平面分离原则
 
-Web patch 把 base 里约 20 个工具行 `disabled: true`，改由 agent preset 按会话挂载。判据：
-
-> **一个被 preset 外部行读取的服务属于 Host plane（如 registry 单例）；只被 agent 消费的才是 preset 行。**
+> **一个被 preset 外部行读取的服务属于 Host plane；只被 agent 消费的才是 preset 行。**
 
 ### 6.2 Oblivion 的平面划分
 
-| 平面            | 职责                   | 示例                                                                     |
-| --------------- | ---------------------- | ------------------------------------------------------------------------ |
-| **Host plane**  | 进程单例、跨会话服务   | `oblivion-session`、`oblivion-knowledge`、`oblivion-core`                |
-| **Agent plane** | 按会话挂载的工具与能力 | `oblivion-tool-web-search`、`oblivion-tool-file`、`oblivion-perspective` |
+| 平面 | 职责 | 示例 |
+|---|---|---|
+| **Host plane** | 进程单例、跨会话服务 | DSH `session`、DSH `llm`、DSH `credentials` |
+| **Agent plane** | 按会话挂载的工具与能力 | `@oblivion/qa-loop`、`@oblivion/perspective`、`@oblivion/knowledge` |
 
 ### 6.3 Agent Presets
 
-| Preset       | 工具集                           | 适用场景 |
-| ------------ | -------------------------------- | -------- |
+| Preset | 工具集 | 适用场景 |
+|---|---|---|
 | **standard** | 完整工具集 + 思维激荡 + 图谱生长 | 日常使用 |
-| **minimal**  | 仅核心问答工具                   | 快速响应 |
+| **minimal** | 仅核心问答工具 | 快速响应 |
 | **research** | 完整工具集 + 内容创作 + 深度分析 | 研究场景 |
 
-**preset 分层示例**（照搬 DSH 的 `preset-standard @ L625`）：
-
-```yaml
-- id: preset-standard
-  config:
-    tools:
-      - tool-bash
-      - tool-fs
-      - tool-fs-search
-      - tool-skill
-      - tool-todo
-      - tool-goal
-      - tool-web
-      - tool-subagent
-```
-
 支持 `cordis:group` 隔离（`isolate: {planMode: true}` 等）。
+
 
 ## 7. 配置导出能力
 
 ### 7.1 命令
 
 ```bash
-oblivion --dump-config              # 导出完整组合树
-oblivion --dump-config-schema       # 导出配置 schema
-oblivion --dump-config-default      # 导出默认配置
+dsh --dump-config              # 导出完整组合树
+dsh --dump-config-schema       # 导出配置 schema
+dsh --dump-config-default      # 导出默认配置
 ```
 
 **核心价值**：**不启动即可导出完整组合树**。这是最有价值的架构事实，且随版本自动更新。
@@ -846,10 +776,8 @@ oblivion --dump-config-default      # 导出默认配置
 通过 Cordis 容器的反射能力（`ctx.get(name, strict)`），遍历已注册插件、依赖关系、配置项，生成结构化输出。
 
 **DSH 实证**：
-
 - `--dump-config` → 46 KB 组合树（无运行服务也能跑）
 - `--dump-config-schema` → 850 KB schema
-- schema 生成注释：_"profiles.yaml merges sibling operations by id before this schema is built"_
 
 ### 7.3 已知坑与应对（DSH 实证）
 
@@ -861,9 +789,10 @@ dump-config-schema-web.json → exit=1
      for native child collection"
 ```
 
-**Oblivion 的应对（必须写进实现）**：
+**Oblivion 的应对**：
 
 > **schema 生成失败时降级到只导出 `dump-config`**
+
 
 ## 8. 源码沉淀流水线
 
@@ -905,43 +834,24 @@ dsh-ref/
 
 1. **notes 不抄源码** —— topic notes 承载设计意图，文件承载事实
 2. **`# == 溯源头`** 从 dump-config 解析出组合图（ground truth）
-3. **diff 必须分类**（composition / api / src / inventory）而不是 git diff
+3. **diff 必须分类**（composition / api / src / inventory）
 4. **先用假版本端到端验证** changes 脚本
 
-**托管建议**：本地 git + skill 注册，暂不上远端；升级后必跑。
 
 ## 9. 插件体系设计
 
-### 9.1 插件清单（首版 26 个）
+### 9.1 插件清单（8 个插件）
 
-| 子系统       | 插件包                      | 职责                              | 依赖           |
-| ------------ | --------------------------- | --------------------------------- | -------------- |
-| **内核**     | `oblivion-core`             | Cordis 容器、Patch 解析、生命周期 | -              |
-| **桌面宿主** | `oblivion-desktop-host`     | Desktop 独有桥接                  | core           |
-| **LLM**      | `oblivion-llm-deepseek`     | DeepSeek 适配器                   | core           |
-|              | `oblivion-llm-openai`       | OpenAI 兼容适配器                 | core           |
-|              | `oblivion-llm-ollama`       | 本地 Ollama 适配器                | core           |
-| **会话**     | `oblivion-session`          | 会话管理                          | core           |
-|              | `oblivion-session-sqlite`   | SQLite 持久化                     | session        |
-| **知识**     | `oblivion-knowledge`        | 知识库核心                        | core           |
-|              | `oblivion-knowledge-sqlite` | SQLite 存储                       | knowledge      |
-|              | `oblivion-knowledge-vector` | 向量检索                          | knowledge      |
-| **工具**     | `oblivion-tool-web-search`  | 网络搜索                          | core           |
-|              | `oblivion-tool-file`        | 文件读写                          | core           |
-|              | `oblivion-tool-doc-parse`   | 文档解析（anydoc WASM）           | core           |
-| **核心功能** | `oblivion-qa-loop`          | 问答闭环                          | knowledge, llm |
-|              | `oblivion-perspective`      | 思维激荡                          | llm, session   |
-|              | `oblivion-graph-growth`     | 图谱生长                          | knowledge      |
-|              | `oblivion-feedback`         | 反馈画像                          | session        |
-|              | `oblivion-content-creator`  | 内容创作                          | llm            |
-| **界面**     | `oblivion-web-ui`           | React 前端                        | core           |
-|              | `oblivion-tray`             | 系统托盘                          | core           |
-| **插件管理** | `oblivion-plugin-manager`   | 清单 + 安装器                     | core           |
-| **更新**     | `oblivion-updater`          | 自动更新                          | core           |
-| **配置导出** | `oblivion-dump-config`      | `--dump-config` 系列命令          | core           |
-| **适配层**   | `oblivion-adapter-obsidian` | Obsidian 插件适配                 | core           |
-|              | `oblivion-adapter-dsh`      | DSH 插件适配                      | core           |
-| **遥测**     | `oblivion-telemetry`        | 遥测（默认关闭）                  | core           |
+| 子系统 | 插件包 | 职责 | 依赖 |
+|---|---|---|---|
+| **品牌** | `@oblivion/brand` | 占用 3 个品牌槽位 | DSH `slots` |
+| **知识** | `@oblivion/knowledge` | 知识库核心 + 文档解析（anydoc WASM）+ 向量检索 | DSH `session` / `tools` |
+| **核心功能** | `@oblivion/qa-loop` | 问答闭环（四层筛选 + 注入） | `knowledge` / DSH `llm` / `session` |
+| | `@oblivion/perspective` | 思维激荡（双模式触发） | DSH `llm` / `session` |
+| | `@oblivion/graph-growth` | 图谱生长（共现建边 + 双链写回） | `knowledge` |
+| | `@oblivion/feedback` | 反馈画像（👍/👎/⏺） | DSH `session` |
+| **内容** | `@oblivion/content-creator` | 内容创作（播客/学习指南/FAQ） | DSH `llm` / `knowledge` |
+| **适配** | `@oblivion/adapter-obsidian` | Obsidian 插件适配 | DSH `tools` |
 
 ### 9.2 插件契约（基于 Cordis）
 
@@ -951,7 +861,7 @@ dsh-ref/
 import type { Context } from '@deepseek-ai/cordis';
 
 export const name = 'oblivion-qa-loop';
-export const inject = ['llm', 'knowledge', 'session'];
+export const inject = ['llm', 'knowledge', 'session'];  // ← 用 DSH 的服务名
 
 export function apply(ctx: Context) {
   ctx.on('session:complete', async (session) => {
@@ -967,8 +877,8 @@ export function apply(ctx: Context) {
 
 ```json
 {
-  "name": "oblivion-qa-loop",
-  "version": "0.0.1",
+  "name": "@oblivion/qa-loop",
+  "version": "0.1.0",
   "oblivion": {
     "bundle": "cordis.patch.yml"
   },
@@ -982,19 +892,19 @@ export function apply(ctx: Context) {
 }
 ```
 
-**关键**（RISK-105 实证）：
+**关键**（PF-41 修正）：
 
-- 使用 **`~`（patch 级）而非 `^`（minor 级）**
-- 框架 minor 升级即视为不兼容，强制显式适配
-- **跨包（插件间）依赖一律走 `peerDependencies`**；第三方库依赖（如 `zod`）正常写 `dependencies`
-- **`cordis-plugin-loader` 属宿主职责**，插件只需 `devDependencies` 以便本地跑通
+- **不改包名的真正理由**：包名被 `cordis.patch.yml` 的 `name:` 字段和 profile 的 `bundles` 引用（**不是**"服务查找"）。
+- **真正绑定"插件↔宿主"的是服务名**：`super(ctx,'name')` + `inject = ['llm','session']`。
+- 使用 **`~`（patch 级）而非 `^`（minor 级）**。
+- **跨包依赖走 `peerDependencies`**；第三方库依赖（如 `zod`）正常写 `dependencies`。
 
 **③ `cordis.patch.yml` 声明依赖与配置**
 
 ```yaml
 - insert:
     - id: oblivion-qa-loop
-      name: 'oblivion-qa-loop'
+      name: '@oblivion/qa-loop'
       config:
         semanticThreshold: 0.85
         autoInject: true
@@ -1005,9 +915,7 @@ export function apply(ctx: Context) {
 ```typescript
 export function apply(ctx: Context) {
   ctx.effect(() => {
-    const timer = setInterval(() => {
-      /* ... */
-    }, 1000);
+    const timer = setInterval(() => { /* ... */ }, 1000);
     return () => clearInterval(timer);
   });
 
@@ -1021,370 +929,289 @@ export function apply(ctx: Context) {
 
 **DSH 真正的启动优化是这 3 层**：
 
-| 机制                 | 形态                        | 实例                                                                          |
-| -------------------- | --------------------------- | ----------------------------------------------------------------------------- |
-| **① 条件禁用**       | `disabled: !!js <表达式>`   | `!ctx.get('profileContext')` / `process.platform === 'win32'`                 |
-| **② 配置级延迟激活** | `openAt` 枚举（zod schema） | `session-query-sqlite: openAt: z.union([...])`，取值 `never` / `first-search` |
-| **③ preset 分层**    | preset 块内重新列 `tool-*`  | `preset-standard @ L625` → L640 起重列                                        |
+| 机制 | 形态 | 实例 |
+|---|---|---|
+| **① 条件禁用** | `disabled: !!js <表达式>` | `!ctx.get('profileContext')` / `process.platform === 'win32'` |
+| **② 配置级延迟激活** | `openAt` 枚举（zod schema） | `session-query-sqlite: openAt: z.union([...])` |
+| **③ preset 分层** | preset 块内重新列 `tool-*` | `preset-standard @ L625` → L640 起重列 |
 
-**Oblivion 的应对**：
+### 9.5 插件脚手架（v4.1 新增 —— 修正 PF-40）
 
-- 用 `disabled: !!js` 做平台/形态条件（纯表达式求值，µs 级）
-- 用 `openAt: <枚举>` 做首次使用前不 import（**真正省 import 时间的那层**）
-- 用 preset 做能力分层
+> **事实**：`dsh-plugin-create` 与 `dshloader` **均不存在**（PF-40，全仓 0 命中）。
+>
+> **对策**：
+> 1. **通用 npm 脚手架**：`npm create @oblivion/plugin` 或 `pnpm create @oblivion/plugin`。
+> 2. **手动模板**：参考 DSH 的 `ui-brand-official/package.json` 结构，自己建包。
+> 3. **DSH 官方 `dsh plugin` 命令**：只负责安装，不负责创建。
+
+### 9.6 已落地的插件与实测坑（v4.1 补，2026-10-04）
+
+`@oblivion/brand` 是**第一个跑通的插件**，其落地过程暴露了宿主与插件的几条硬边界。
+这些是**插件作者必须知道的事实**，不是实现细节：
+
+| # | 事实 | 后果 |
+|---|---|---|
+| 1 | **node 半边只在应用启动时加载**；client 半边在**页面刷新**时重新读取 | 改 node 半边**必须重启应用**；只刷新页面会表现为「路由 404 / 405」而看不出原因 |
+| 2 | 桌面端页面来源是 `dsh-app://app`，非文档路径经 `forwardWebRequest` 转发给本地 webserver，**转发前会删除 `origin` 头** | 自作主张校验 `Origin` 的插件会**误拒**合法请求 |
+| 3 | preload 的 `createProductApi()` 只暴露 `protocolVersion`/`browser`/`deviceInfo`/`keyboard`/`shortcuts`/`updates` | **没有重启接口**；`app.relaunch()` 只在崩溃恢复路径和开发模式菜单里 |
+| 4 | 插件的 `dsh.client.inject` 必须列全所依赖的客户端包 | 注册未声明的槽位**在加载时抛错**；正确做法是 `ctx.slots.inject(name, cb)` 等声明方就位 |
+| 5 | 外部插件装在 `<profile>/node_modules/` 并写进 `dsh.profile.bundles`；`link:` 安装的路径**必须用正斜杠** | 反斜杠会被目标校验正则拒绝 |
+| 6 | `dsh plugin --profile desktop` 被**普通 CLI 拒绝**（"managed exclusively by the Electron application"） | 必须用桌面自带 CLI（`resources/runtime/cli/bin/dsh.cmd`，以 `manageDesktopProfile: true` 调用） |
+| 7 | 设置页的 `main` 槽位是 `keyed` 且**没有 `children`** 声明 | **任意设置页无法被嵌入**；只有显式 `ctx.provide()` 出 `render()` 的「可嵌入提供方」才行 |
+| 8 | 客户端 bundle 不能用 `window.__ModuleLoader__` 之外的模块格式 | 必须包成 `.load({ id, factory })` 工厂闭包；`react`/`react-dom`/`jsx-runtime`/`ui-primitives` 走宿主模块表（标 external） |
+
 
 ## 10. 项目目录结构
 
 ```
-oblivion/
-├── packages/                        # 所有插件（Monorepo）
-│   ├── oblivion-core/
-│   ├── oblivion-desktop-host/
-│   ├── oblivion-adapter-obsidian/
-│   ├── oblivion-adapter-dsh/
-│   ├── oblivion-llm-deepseek/
-│   ├── oblivion-llm-openai/
-│   ├── oblivion-llm-ollama/
-│   ├── oblivion-session/
-│   ├── oblivion-session-sqlite/
-│   ├── oblivion-knowledge/
-│   ├── oblivion-knowledge-sqlite/
-│   ├── oblivion-knowledge-vector/
-│   ├── oblivion-tool-web-search/
-│   ├── oblivion-tool-file/
-│   ├── oblivion-tool-doc-parse/
-│   ├── oblivion-qa-loop/
-│   ├── oblivion-perspective/
-│   ├── oblivion-graph-growth/
-│   ├── oblivion-feedback/
-│   ├── oblivion-content-creator/
-│   ├── oblivion-web-ui/
-│   ├── oblivion-tray/
-│   ├── oblivion-plugin-manager/
-│   ├── oblivion-updater/
-│   ├── oblivion-dump-config/
-│   └── oblivion-telemetry/
-├── apps/
-│   └── electron/                    # Electron 宿主
-│       ├── src/
-│       │   ├── main.ts
-│       │   ├── preload.ts
-│       │   └── ipc.ts
-│       ├── renderer/               # 仅欢迎页 + 更新对话框
-│       ├── resources/runtime/      # 内嵌 Node + pnpm
-│       ├── package.json
-│       └── electron-builder.yml
-├── profiles/                        # 项目层 patch（随仓库）
-│   ├── web/
+oblivion/                              # Oblivion 插件仓库（独立于 DSH 宿主）
+├── packages/                          # 所有插件
+│   ├── brand/                         # @oblivion/brand
+│   │   ├── src/
+│   │   │   ├── index.ts              # 空 node 半边
+│   │   │   └── client/
+│   │   │       ├── index.ts          # 注册 3 个槽位
+│   │   │       └── Brand.tsx         # OblivionBrandMark / OblivionBrandName
+│   │   ├── package.json
 │   │   └── cordis.patch.yml
-│   ├── desktop/
-│   │   └── cordis.patch.yml
-│   └── docker/
-│       └── cordis.patch.yml
+│   ├── knowledge/                     # @oblivion/knowledge
+│   ├── qa-loop/                       # @oblivion/qa-loop
+│   ├── perspective/                   # @oblivion/perspective
+│   ├── graph-growth/                  # @oblivion/graph-growth
+│   ├── feedback/                      # @oblivion/feedback
+│   ├── content-creator/               # @oblivion/content-creator
+│   └── adapter-obsidian/              # @oblivion/adapter-obsidian
+├── config/
+│   └── oblivion/                      # 业务配置
+│       ├── md_rules.yaml
+│       ├── qa_rules.yaml
+│       ├── perspective_rules.yaml
+│       ├── graph_growth.yaml
+│       └── feedback_rules.yaml
 ├── assets/
 │   └── brand/
-│       ├── polaris-path.ts         # SVG path 常量
-│       ├── PolarisLogo.tsx         # React 组件
-│       ├── polaris.svg             # favicon 用
-│       ├── polaris-1024.png
-│       ├── polaris-512.png
-│       ├── polaris-256.png
-│       ├── polaris-128.png
-│       ├── polaris-32.png
+│       ├── polaris-path.ts
+│       ├── PolarisLogo.tsx
+│       ├── polaris.svg
+│       ├── polaris-*.png
 │       ├── polaris.icns
-│       ├── polaris.ico
-│       └── brand-guidelines.md
-├── docker/                          # Docker 部署
-│   ├── Dockerfile
-│   ├── docker-compose.yml
-│   └── .dockerignore               # ⚠️ 必须在仓库根才生效（PF-35）
-├── registry.json                    # 插件清单（npm 内嵌）
-├── .alpha/                          # alphα 模板
-│   ├── tools/
-│   │   └── alpha-init.ps1
-│   ├── sources/
-│   │   └── alpha.*
-│   └── manifest.json
-├── docs/                            # 合并 .doc/ 与 .docs/
-├── tests/                           # 合并 .test/
+│       └── polaris.ico
+├── profiles/                          # 项目层 patch（随仓库）
+│   ├── web/
+│   │   └── cordis.patch.yml
+│   └── desktop/
+│       └── cordis.patch.yml
+├── scripts/
+│   └── init_oblivion.sh
+├── tests/
 │   ├── unit/
 │   ├── integration/
 │   ├── e2e/
 │   └── fixtures/
-├── logs/                            # 原 log/
 ├── pnpm-workspace.yaml
 └── README.md
 ```
 
-**⚠️ 目录权威性声明**：
+**关键变化**：
+- **不包含** `apps/electron/`、`packages/core/`、`packages/session/` 等 DSH 宿主组件。
+- **不包含** `packages/*/ui-*`（DSH 宿主提供）。
+- **新增** `packages/brand/`（品牌槽位插件）。
 
-> **目录结构的权威真源是已提交的 `e6289d525` 与 `.alpha/manifest.json`；本章若与之不符，以提交为准。**
+### 10.1 落地形态的偏离（v4.1 实测补录，2026-10-04）
+
+> **⚠️ 事实**：`@oblivion/brand` 首版**没有**落在上面的 `packages/brand/` 布局，
+> 而是以**单包仓库**形态落地在 `C:\Projects\Oblivion\oblivion-brand\`。
+
+| 项 | §10 规划 | 实际落地 | 理由 |
+|---|---|---|---|
+| 仓库根 | 插件 monorepo | **产品仓**（设计书 + 协作框架 + 插件） | 本仓同时承载设计与实现 |
+| 插件位置 | `packages/brand/` | `oblivion-brand/` | 首版只有一个插件，`packages/` 分层暂不引入 |
+| 工作区 | `pnpm-workspace.yaml` | 无（单包 `npm`） | 同上 |
+| 版本真源 | 根 `VERSION` | 根 `VERSION`（产品） + `oblivion-brand/VERSION`（插件） | **两条版本轴**，见 §28.2 |
+
+**何时回到 `packages/` 布局**：当第 2 个插件（预计 `@oblivion/knowledge`）落地时启用，
+届时用 `pnpm-workspace.yaml` 收敛，并按本节的路径迁移。
+
+### 10.2 本仓库实际结构（v4.1，2026-10-04）
+
+```
+Oblivion/
+├── .action/                 # Agent 协作框架（规则 / 工作流 / 技能）
+├── .memory/                 # 记忆库：规则与模板入库，逐日记录不入库
+├── .design/                 # 设计书 ARCHITECTURE.MD + 设计笔记
+├── oblivion-brand/          # @oblivion/brand（第一个落地的插件）
+│   ├── VERSION              #   插件版本单一真源
+│   ├── src/ lib/ scripts/
+│   └── README.md
+├── tools/                   # 本机运维脚本（如快捷方式图标）
+├── CHANGELOG.md             # 对外版本说明
+├── CONTRIBUTING.md          # 贡献指南 + 第三方复用登记
+├── LICENSE · SECURITY.md
+├── VERSION                  # 产品版本单一真源
+├── WORKSPACE.md             # DSH 插件工作区操作细节
+└── README.md
+```
+
 
 ## 11. Profile 组合设计
 
-### 11.1 六层 Patch 叠加（本版补"项目层"）
+### 11.1 六层 Patch 叠加
 
-| 层                    | 位置                                                  | 入库?                            |
-| --------------------- | ----------------------------------------------------- | -------------------------------- |
-| ① 空根                | `cordis.yml = []`（每次启动重写为空）                 | —                                |
-| ② Bundle 层           | `package.json` 的 `oblivion.profile.bundles` 顺序声明 | ✅ 随仓库                        |
-| ③ 用户层              | `~/.oblivion/profiles/<name>/cordis.patch.yml`        | ❌ 机器级                        |
-| ④ Home 层             | `~/.oblivion/cordis.patch.yml`（机器级，跨 profile）  | ❌ 机器级                        |
-| ⑤ `--patch` 覆盖      | 命令行额外指定，可重复                                | —                                |
-| **⑤′ 项目层（新增）** | **`<repo>/profiles/<name>/cordis.patch.yml`**         | **✅ 随仓库，经 `--patch` 叠加** |
-
-**用法**：
-
-```bash
-oblivion --patch profiles/web/cordis.patch.yml --profile web --dump-config
-```
+| 层 | 位置 | 入库? |
+|---|---|---|
+| ① 空根 | `cordis.yml = []`（每次启动重写为空） | — |
+| ② Bundle 层 | `package.json` 的 `dsh.profile.bundles` 顺序声明 | ✅ 随仓库 |
+| ③ 用户层 | `~/.dsh/profiles/<name>/cordis.patch.yml` | ❌ 机器级 |
+| ④ Home 层 | `~/.dsh/cordis.patch.yml`（机器级，跨 profile） | ❌ 机器级 |
+| ⑤ `--patch` 覆盖 | 命令行额外指定，可重复 | — |
+| **⑤′ 项目层** | **`<repo>/profiles/<name>/cordis.patch.yml`** | **✅ 随仓库** |
 
 ### 11.2 预置 Profile
 
-**minimal（纯问答）**：
+**minimal（DSH + 品牌）**：
 
 ```yaml
+# DSH 原生
 - insert:
     - id: core
-      name: 'oblivion-core'
+      name: '@deepseek-ai/dsh-base'
 - insert:
     - id: llm
-      name: 'oblivion-llm-deepseek'
+      name: '@deepseek-ai/dsh-llm-deepseek'
       config:
         apiKey: '${env:DEEPSEEK_API_KEY}'
 - insert:
     - id: session
-      name: 'oblivion-session-sqlite'
+      name: '@deepseek-ai/dsh-session'
+# Oblivion 插件
 - insert:
-    - id: ui
-      name: 'oblivion-web-ui'
+    - id: oblivion-brand
+      name: '@oblivion/brand'
 ```
 
 **standard（完整认知陪伴）**：
 
 ```yaml
+# DSH 原生（继承 minimal）
+# + Oblivion 认知插件组
 - insert:
-    - id: core
-      name: 'oblivion-core'
+    - id: oblivion-knowledge
+      name: '@oblivion/knowledge'
 - insert:
-    - id: llm
-      name: 'oblivion-llm-deepseek'
-- insert:
-    - id: session
-      name: 'oblivion-session-sqlite'
-- insert:
-    - id: knowledge
-      name: 'oblivion-knowledge-sqlite'
-- insert:
-    - id: vector
-      name: 'oblivion-knowledge-vector'
-- insert:
-    - id: qa
-      name: 'oblivion-qa-loop'
+    - id: oblivion-qa-loop
+      name: '@oblivion/qa-loop'
       config:
         semanticThreshold: 0.85
 - insert:
-    - id: perspective
-      name: 'oblivion-perspective'
+    - id: oblivion-perspective
+      name: '@oblivion/perspective'
       config:
         autoTriggerEnabled: true
 - insert:
-    - id: graph
-      name: 'oblivion-graph-growth'
+    - id: oblivion-graph-growth
+      name: '@oblivion/graph-growth'
 - insert:
-    - id: feedback
-      name: 'oblivion-feedback'
-- insert:
-    - id: ui
-      name: 'oblivion-web-ui'
+    - id: oblivion-feedback
+      name: '@oblivion/feedback'
 ```
 
-**desktop（Electron 形态）**：
-
-```yaml
-# 继承 standard + Desktop 独有
-- insert:
-    - id: desktop-host
-      name: 'oblivion-desktop-host'
-- insert:
-    - id: tray
-      name: 'oblivion-tray'
-- insert:
-    - id: updater
-      name: 'oblivion-updater'
-- insert:
-    - id: ui-sidebar-browser
-      name: 'oblivion-client-ui-sidebar-browser'
-      disabled: !!js ctx.get('profileContext')?.name !== 'desktop'
-```
-
-### 11.3 条件加载（YAML 内嵌 JS 表达式）
+### 11.3 条件加载
 
 ```yaml
 - insert:
     - id: telemetry
-      name: 'oblivion-telemetry'
+      name: '@oblivion/telemetry'
       disabled: !!js process.env.OBLIVION_TELEMETRY_ENABLED !== 'true'
-```
-
-**DSH 实证的条件表达式**：
-
-```yaml
-disabled: !!js !ctx.get('profileContext')
-disabled: !!js process.platform === 'win32'
-disabled: !!js process.platform !== 'win32'
-disabled: !!js ctx.get('profileContext')?.name !== 'desktop'
 ```
 
 ### 11.4 根配置重写机制
 
 **`cordis.yml` 每次启动都重写为空数组 `[]`**，防止 Loader 的写回把组合结果固化。
 
+
 ## 12. 核心功能插件规格
 
-### 12.1 oblivion-qa-loop（问答闭环）
+### 12.1 `@oblivion/qa-loop`（问答闭环）
 
-| 项   | 内容                                                        |
-| ---- | ----------------------------------------------------------- |
-| 依赖 | `llm`、`knowledge`、`session`                               |
-| 触发 | 订阅 `session:complete` 事件                                |
-| 逻辑 | 捕获问答 → 四层筛选 → 注入知识库                            |
+| 项 | 内容 |
+|---|---|
+| 依赖 | DSH `llm`、`session`、Oblivion `knowledge` |
+| 触发 | 订阅 DSH `session:complete` 事件 |
+| 逻辑 | 捕获问答 → 四层筛选 → 注入知识库 |
 | 配置 | `semanticThreshold`（默认 0.85）、`autoInject`（默认 true） |
 
-### 12.2 oblivion-perspective（思维激荡）
+### 12.2 `@oblivion/perspective`（思维激荡）
 
-| 项   | 内容                                                                                       |
-| ---- | ------------------------------------------------------------------------------------------ |
-| 依赖 | `llm`、`session`                                                                           |
-| 触发 | 主动触发（`session:complete`）+ 深度触发（连续 3 次同维度）                                |
-| 输出 | 通过 `session:thinking` 事件注入 UI                                                        |
+| 项 | 内容 |
+|---|---|
+| 依赖 | DSH `llm`、`session` |
+| 触发 | 主动触发（`session:complete`）+ 深度触发（连续 3 次同维度） |
+| 输出 | 通过 DSH `session:thinking` 事件注入 UI |
 | 配置 | `autoTriggerEnabled`、`maxAutoPerSession`（默认 3）、`maxStimulationsPerSession`（默认 5） |
 
-### 12.3 oblivion-content-creator（内容创作）
+### 12.3 `@oblivion/knowledge`（知识库）
 
-| 项   | 内容                                       |
-| ---- | ------------------------------------------ |
-| 依赖 | `llm`、`knowledge`                         |
-| 能力 | 播客脚本 / 学习指南 / FAQ / 摘要           |
-| 状态 | **默认不加载**（Profile 中显式声明才启用） |
+| 项 | 内容 |
+|---|---|
+| 依赖 | DSH `session`、`tools` |
+| 能力 | 知识库核心 + 文档解析（anydoc WASM）+ 向量检索 |
+| 状态 | **这是 DSH 完全没有的能力**（PF-39） |
 
-### 12.4 oblivion-tool-doc-parse（文档解析）
+### 12.4 `@oblivion/graph-growth`（图谱生长）
 
-| 项          | 内容                                          |
-| ----------- | --------------------------------------------- |
-| 依赖        | 无                                            |
-| 实现        | **anydoc WASM**（本地解析，无需 Python/Rust） |
-| 支持格式    | PDF / Word / Markdown / HTML / EPUB           |
-| Worker 封装 | 参考 `libreoffice-kit` 的 worker 模板         |
+| 项 | 内容 |
+|---|---|
+| 依赖 | `knowledge` |
+| 逻辑 | 问答共现建边、权重累积、双链写回 MD |
+| 权重规则 | 0.3 起步 / +0.05（cap 1.0）/ 30 天 ×0.95 衰减 |
 
-**DSH 实证的 Worker 用法**（RISK-104）：
-
-```typescript
-import { Worker } from 'node:worker_threads';
-// 用 setEnvironmentData 传上下文，别用共享全局
-```
-
-### 12.5 oblivion-adapter-obsidian（Obsidian 插件适配）
+### 12.5 `@oblivion/adapter-obsidian`（Obsidian 适配）
 
 **核心原则**：适配层只做"翻译"，不做"模拟"。
 
-| Obsidian API                       | Oblivion 服务              | 兼容级别    |
-| ---------------------------------- | -------------------------- | ----------- |
-| `this.app.vault.read/write`        | `ctx.knowledge.read/write` | ✅ 完全     |
-| `this.app.workspace.getActiveFile` | `ctx.ui.activeDocument`    | ✅ 完全     |
-| `this.addCommand`                  | `ctx.command.register`     | ✅ 完全     |
-| `this.addRibbonIcon`               | `ctx.ui.ribbonIcon`        | ✅ 完全     |
-| `this.app.metadataCache`           | —                          | ❌ 明确报错 |
-| `this.app.plugins`（插件间调用）   | —                          | ❌ 明确报错 |
+| Obsidian API | Oblivion 服务 | 兼容级别 |
+|---|---|---|
+| `vault.read/write` | `ctx.knowledge.read/write` | ✅ 完全 |
+| `workspace.getActiveFile` | `ctx.ui.activeDocument` | ✅ 完全 |
+| `addCommand` / `addRibbonIcon` | `ctx.command` / `ctx.ui.ribbonIcon` | ✅ 完全 |
+| `metadataCache` | — | ❌ 明确报错 |
+| `app.plugins`（插件间调用） | — | ❌ 明确报错 |
 
-**测试集三层**：
+### 12.6 `@oblivion/feedback`（反馈画像）
 
-| tier         | 定义                                                      | 角色                |
-| ------------ | --------------------------------------------------------- | ------------------- |
-| **core**     | `tool-fs` `tool-fs-search` `tool-skill` `tool-bash`       | 必测集              |
-| **standard** | core + `tool-todo` `tool-goal` `tool-web` `tool-subagent` | 默认开启            |
-| **extended** | base 全量 18 个                                           | nightly，不阻塞发版 |
+| 项 | 内容 |
+|---|---|
+| 依赖 | DSH `session` |
+| 评价入口 | 每个问答后 👍 / 👎 / ⏺ |
+| 不评价即中性 | 中性信号记录但不触发微调 |
+| 触发条件 | 累积 ≥3 条同类型评价 → 触发画像微调 |
+| 保留期 | 90 天 + 定时清理 |
 
-### 12.6 oblivion-adapter-dsh（DSH 插件适配）
+### 12.7 `@oblivion/content-creator`（内容创作）
 
-| DSH 命名空间  | Oblivion 服务         |
-| ------------- | --------------------- |
-| `ctx.tools`   | `ctx.tools`（同名）   |
-| `ctx.llm`     | `ctx.llm`（同名）     |
-| `ctx.session` | `ctx.session`（同名） |
-| `ctx.web`     | `ctx.web`（同名）     |
+| 项 | 内容 |
+|---|---|
+| 依赖 | DSH `llm` / `knowledge` |
+| 能力 | 播客脚本 / 学习指南 / FAQ / 摘要 |
+| 状态 | **默认不加载**（Profile 中显式声明才启用） |
 
-**关键**：适配层**只翻译接口，不翻译语义**。
+### 12.8 `@oblivion/brand`（品牌槽位）
 
-### 12.7 oblivion-plugin-manager（插件清单 + 安装器）
+见 §5.9、§5.10、§5.11。**这是当前唯一已实现的插件**（PF-43）。
 
-**npm 内嵌**（DSH 实证）
+**已实现的完整能力**（v4.1 补，2026-10-04）：
 
-**⚠️ DSH 没有 `registry.json` —— npm 就是 registry**。
+| 能力 | 说明 |
+|---|---|
+| 三槽位品牌接管 | `sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` |
+| 品牌名可自定义 | 设置面板内编辑，持久化到 `localStorage` |
+| 品牌图形可替换 | 支持上传图片（多格式），自动缩到 256px 边、限 512 KB |
+| **可完全关闭接管** | 关闭后 dispose 本插件注册，官方鲸鱼外观**立即恢复**（§5.10） |
+| 侧栏嵌入面板 | 把「可嵌入提供方」挂到侧栏「插件」下方，可多选，顺序从 `order: 5` 起递增 |
+| 面板居中开关 | 进入侧栏后的界面观感与设置页对齐 |
+| **直接重启 DSH** | 设置页一键重启（含游离 helper 与 WMI 派生的重新拉起） |
 
-**Oblivion 的做法**：
-
-- 托管 `@oblivion/plugin-inventory` 包，内容即清单 → **零托管成本、版本天然随升级、离线可用**
-- 只有当你需要第三方插件时才加 GitHub Pages
-- **"独立域名"不必考虑**
-
-### 12.8 oblivion-dump-config（配置导出）
-
-| 命令                             | 输出        |
-| -------------------------------- | ----------- |
-| `oblivion --dump-config`         | 完整组合树  |
-| `oblivion --dump-config-schema`  | 配置 schema |
-| `oblivion --dump-config-default` | 默认配置    |
-
-**必须实现降级**：schema 生成失败时降级到只导出 `dump-config`（DSH 自己 exit=1）。
-
-### 12.9 oblivion-updater（自动更新）
-
-**全开 4 道锁**（DSH 实证）
-
-**DSH 的 `app-update.yml`（306 B，逐字）**：
-
-```yaml
-provider: generic
-url: https://download.deepseek.com/dsh-desk/feeds/win-x64/
-channel: nightly
-updaterCacheDirName: '@deepseek-ai/dsh-desktop-updater'
-publisherName:
-  - CN=Hangzhou DeepSeek Artificial Intelligence Co., Ltd.,...
-```
-
-**4 道锁**：
-
-| 锁                | 实现                                             | 位置                                 |
-| ----------------- | ------------------------------------------------ | ------------------------------------ |
-| **① origin 锁死** | `event.origin !== 'oblivion-app://app'` 直接丢弃 | `renderer/mandatory-update-frame.js` |
-| **② 进程边界**    | 嵌入页只通过 MessageChannel port 与 preload 通信 | 同上                                 |
-| **③ 发布者锁定**  | `publisherName` = authenticode 证书主体          | `app-update.yml`                     |
-| **④ 不自动下载**  | `this.updater.autoDownload = false`              | `main.js` L7000                      |
-
-**强制更新的对外 API 只有 3 个方法**：
-
-```typescript
-window.oblivionMandatoryUpdate = {
-  status:   () => state ? Promise.resolve(state) : initial.promise,
-  subscribe: (listener) => ...,
-  action:   (action, version, revision) => ...
-}
-```
-
-### 12.10 文档解析：anydoc WASM vs Python docreader
-
-| 维度         | anydoc WASM         | Python docreader        |
-| ------------ | ------------------- | ----------------------- |
-| **形态**     | 前端库（WASM）      | 独立 gRPC 微服务        |
-| **依赖**     | 无（纯浏览器/Node） | Python 3.10+ + 大量依赖 |
-| **部署**     | 随前端打包          | 需独立进程/容器         |
-| **桌面支持** | ✅ 完全支持         | ❌ 不支持               |
-| **适用场景** | Electron 桌面端     | Docker 后端             |
-
-**Oblivion 的定案**：**桌面端用 anydoc WASM**。
-
-### 12.11 业务配置目录
+### 12.9 业务配置目录
 
 > **Cordis 配置（`cordis.patch.yml`）与业务配置（`config/oblivion/*.yaml`）分离。**
 
@@ -1397,7 +1224,7 @@ config/oblivion/                  # 业务配置（独立于 Cordis）
 └── feedback_rules.yaml           # 反馈画像配置
 ```
 
-### 12.12 环境变量模板
+### 12.10 环境变量模板
 
 ```bash
 # .env.oblivion.example
@@ -1412,15 +1239,7 @@ OBLIVION_FEEDBACK_RETENTION_DAYS=90
 OBLIVION_MAX_STIMULATIONS_PER_SESSION=5
 ```
 
-```bash
-# .env.desktop.example
-OBLIVION_DESKTOP_API_URL=http://<NAS_IP>:<APP_PORT>/api/v1
-OBLIVION_DESKTOP_WS_URL=ws://<NAS_IP>:<APP_PORT>/ws
-OBLIVION_DESKTOP_OFFLINE_CACHE=false
-OBLIVION_DESKTOP_AUTO_START=false
-```
-
-### 12.13 初始化脚本
+### 12.11 初始化脚本
 
 ```bash
 # scripts/init_oblivion.sh
@@ -1442,7 +1261,7 @@ oblivion migrate --init
 echo "✅ Oblivion 初始化完成！"
 ```
 
-### 12.14 `oblivion_docs/` 目录结构
+### 12.12 `oblivion_docs/` 目录结构
 
 ```
 oblivion_docs/
@@ -1453,29 +1272,39 @@ oblivion_docs/
 └── 99_其他/                  # 兜底目录
 ```
 
+### 12.13 版本号的两条轴（v4.1 新增）
+
+> **产品版本与插件版本是两条独立轴，不要混。**
+
+| 轴 | 真源 | 递增器 | 记录位置 |
+|---|---|---|---|
+| **产品版本** | 根 `VERSION` | （待补，参考 `scripts/bump-version.mjs`） | `CHANGELOG.md`、`.memory/release/` |
+| **插件版本** | `oblivion-brand/VERSION` | `npm run version:bump -- <patch\|minor\|major>` | 插件 `package.json`、设置面板标题、helper 日志 |
+
+插件的版本同步机制沿用主仓 `bump-version` 的做法：**`VERSION` 单一真源 + 正则替换同步到
+`package.json`**（不用 `JSON.parse` + `stringify`，那会把整个文件重排、产生与版本无关的巨大 diff）。
+客户端拿不到 `package.json`，故由构建期经 esbuild `define` 注入。
+
+> **⚠️ 当前缺口**：根 `VERSION`（产品轴）**尚无递增器** —— 主仓的 `bump-version.ps1` 会同步
+> `packages/*/package.json`、`registry.json`、`oblivion-core/src/version.ts`，这些在本仓**都不存在**。
+> 补一个根级 `scripts/bump-version.mjs` 是待办（§23 OPEN）。
+
+
 ## 13. 分层组合模型
 
 ### 13.1 核心思想
 
 > **插件图不写在代码里，写在 YAML 里。** 代码只负责按层叠加、按 id 覆盖。
 
-### 13.2 六层叠加（补"项目层"）
-
-（见 §11.1 六层 Patch 叠加表）
-
-### 13.3 三条必须记住的语义
+### 13.2 三条必须记住的语义
 
 **① patch 替换整段 config，不是合并**
 
 > A patch replaces the targeted row's whole `config` rather than merging into it.
 
-**Oblivion 的可复用结论**：需要按模式取不同值的行，不要放进共享层。
-
 **② 行顺序不携带加载语义**
 
 > Row order carries no load semantics (activation is service-availability driven).
-
-**激活由服务可用性驱动，不由声明顺序驱动。**
 
 **③ 配置即代码：`!!js` 表达式**
 
@@ -1489,7 +1318,7 @@ oblivion_docs/
 
 **代价**：纯静态校验做不到。**Oblivion 的应对**：提供 `--dump-config` 作为可验证的事实源。
 
-### 13.4 行的来源链
+### 13.3 行的来源链
 
 ```
 # == @oblivion/base
@@ -1501,92 +1330,66 @@ oblivion_docs/
   disabled: true
 ```
 
+
 ## 14. 安全模型
 
 ### 14.1 三个独立插件，不是一个开关
 
-| 行 id                           | 包                                                | 职责             |
-| ------------------------------- | ------------------------------------------------- | ---------------- |
-| `sandbox-local`                 | `oblivion-sandbox-local`                          | 沙箱执行后端     |
-| `sandbox-policy`                | `oblivion-sandbox-policy`                         | **决定沙箱档位** |
-| `approval`                      | `oblivion-user-approval`                          | **决定是否弹窗** |
-| `permission`                    | `oblivion-permission-presets`                     | 把两者绑成预设   |
-| `bash-sandbox` / `pwsh-sandbox` | `oblivion-bash-sandbox` / `oblivion-pwsh-sandbox` | 平台分派         |
+| 行 id | 包 | 职责 |
+|---|---|---|
+| `sandbox-local` | DSH `sandbox-local` | 沙箱执行后端 |
+| `sandbox-policy` | DSH `sandbox-policy` | **决定沙箱档位** |
+| `approval` | DSH `user-approval` | **决定是否弹窗** |
+| `permission` | DSH `permission-presets` | 把两者绑成预设 |
 
-### 14.2 原始配置（照搬结构）
+**Oblivion 不重复实现这些安全能力**——它们由 DSH 宿主提供。
 
-```yaml
-- id: sandbox-policy
-  name: '@oblivion/sandbox-policy'
-  config:
-    mode: !!js process.env.OBLIVION_PERMISSION_MODE ?? 'workspace-write'
-    workspaceRoot: !!js process.cwd()
+### 14.2 值得抄的四个设计
 
-- id: bash-sandbox
-  name: '@oblivion/bash-sandbox'
-  disabled: !!js process.platform === 'win32'
-  config:
-    timeoutMs: 60000
-- id: pwsh-sandbox
-  name: '@oblivion/pwsh-sandbox'
-  disabled: !!js process.platform !== 'win32'
+| # | 设计 | 说明 |
+|---|---|---|
+| 1 | **沙箱档位与审批策略是两条独立表达式** | 各自读同一环境变量，互不调用 |
+| 2 | **`approval` 默认值是 `ask`** | **少权优先，降级必须显式声明** |
+| 3 | **沙箱后端按平台互斥启用** | 新增平台只需加一行 `disabled` |
+| 4 | **预设把二维空间压成一维档位** | 用户面对三个词，底层保持两轴独立 |
 
-- id: approval
-  name: '@oblivion/user-approval'
-  config:
-    policy: !!js >-
-      (process.env.OBLIVION_PERMISSION_MODE ?? 'workspace-write') ===
-      'danger-full-access' ? 'never' : 'ask'
-
-- id: permission
-  name: '@oblivion/permission-presets'
-  config:
-    presets:
-      read-only:
-        sandbox: read-only
-        approval: ask
-      workspace-write:
-        sandbox: workspace-write
-        approval: ask
-      danger-full-access:
-        sandbox: danger-full-access
-        approval: never
-```
-
-### 14.3 值得抄的四个设计
-
-| #   | 设计                                   | 说明                             |
-| --- | -------------------------------------- | -------------------------------- |
-| 1   | **沙箱档位与审批策略是两条独立表达式** | 各自读同一环境变量，互不调用     |
-| 2   | **`approval` 默认值是 `ask`**          | **少权优先，降级必须显式声明**   |
-| 3   | **沙箱后端按平台互斥启用**             | 新增平台只需加一行 `disabled`    |
-| 4   | **预设把二维空间压成一维档位**         | 用户面对三个词，底层保持两轴独立 |
-
-### 14.4 Web profile 的信任围栏（✅ 扩写）
+### 14.3 Web profile 的信任围栏
 
 **DI 可解析性 + 四层网络机制是两个独立维度，缺一不可。**
 
-#### 维度 1：DI 可解析性（配置能否生效）
+| 层 | 机制 | 证据 |
+|---|---|---|
+| ① **绑定字面量白名单** | schema 只收 `127.0.0.1` / `0.0.0.0` | `dsh-host-webserver/lib/index.js:142` |
+| ② **CLI 拒绝 `--host 0.0.0.0`** | CLI 层硬拒全接口（RCE 面） | `dsh-web-app/lib/startup.js:40` |
+| ③ **trustedHosts + `--trusted-host`** | Host 头校验 | `startup.js:6` 旗标族 |
+| ④ **`resolveLanTrust()` 防 DNS rebinding** | 绑 `0.0.0.0` 时自动收集本机全部 LAN IPv4 | `index.js:83`、`:173` |
+| 补充：**canonical URL** | `DSH_WEB_URL` 环境变量 | `index.js:35` |
 
-> **配置能否生效，取决于它能不能注入到特定服务。**
+**⚠️ 注意**：默认是 `127.0.0.1` 而非"只能是"—— `0.0.0.0` 在 **schema 层合法**，被挡在 **CLI 层**。
 
-#### 维度 2：网络侧四层叠加围栏
+### 14.4 插件侧的信任判据（v4.1 补，实测 2026-10-04）
 
-| 层                                         | 机制                                                | 证据                                                                                                            |
-| ------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| ① **绑定字面量白名单**                     | schema 只收 `127.0.0.1` / `0.0.0.0`                 | `dsh-host-webserver/lib/index.js:142`<br>`host: z.union([z.const("127.0.0.1"), z.const("0.0.0.0")]).required()` |
-| ② **CLI 拒绝 `--host 0.0.0.0`**            | CLI 层硬拒全接口（RCE 面）                          | `dsh-web-app/lib/startup.js:40`                                                                                 |
-| ③ **trustedHosts + `--trusted-host`**      | Host 头校验                                         | `startup.js:6` 旗标族；`web-app Config trustedHosts: z.array(String).default([])`                               |
-| ④ **`resolveLanTrust()` 防 DNS rebinding** | 绑 `0.0.0.0` 时自动收集本机全部 LAN IPv4 进信任列表 | `index.js:83 resolveLanTrust(bindHost, extra)`、`:173 resolveLanTrust(ctx.webServer.host, config.trustedHosts)` |
-| 补充：**canonical URL**                    | `DSH_WEB_URL` 环境变量                              | `index.js:35`                                                                                                   |
+`@oblivion/brand` 暴露了一条 HTTP 路由（重启），必须自己判断调用方是否可信。
+**实测得出的判据**（含一条反直觉的）：
 
-**⚠️ 注意**：默认是 `127.0.0.1` 而非"只能是"—— `0.0.0.0` 在 **schema 层合法**，被挡在 **CLI 层**。绕过 CLI 即自行承担该边界。
+| 调用来源 | `Origin` 头 | 处置 |
+|---|---|---|
+| 桌面端页面 `dsh-app://app` | `dsh-app://app` | ✅ 放行 |
+| 桌面端页面经 `forwardWebRequest` 转发 | **被宿主删除，缺失** | ✅ **必须放行** —— 见 §9.6 第 2 条 |
+| 浏览器直连回环 `http://127.0.0.1:<port>` | 存在且为回环 | ✅ 放行 |
+| 其他站点跨源 POST | 存在且非回环 | ❌ 403 |
+
+> **结论**：**「缺 `Origin`」不能当拒绝理由**。宿主转发会删掉它，按常规「无 Origin 即拒绝」
+> 会把自家页面挡在外面。正确做法是：**缺 `Origin` 视为内部调用放行，只拒绝「存在且非本机」的 `Origin`**。
+>
+> 另：浏览器对跨源 POST **一定**会带 `Origin`，所以这条判据对 CSRF 仍然有效。
+
 
 ## 15. Host / Agent 双平面
 
 ### 15.1 判据
 
-> **一个被 preset 外部行读取的服务属于 Host plane（如 registry 单例）；只被 agent 消费的才是 preset 行。**
+> **一个被 preset 外部行读取的服务属于 Host plane；只被 agent 消费的才是 preset 行。**
 
 ### 15.2 结构
 
@@ -1597,92 +1400,72 @@ Host 平面（进程单例，web 层保留）
 Agent 平面（按会话由 preset 挂载）
   tool-bash/pwsh · tool-fs · tool-fs-search · tool-jobs · skill-* ·
   tool-skill · command-goal · plan-mode · compaction-basic · agent-instructions …
-  （共 22 行）
 ```
 
-### 15.3 Preset 是什么
+### 15.3 关键提醒
 
-`composition/oblivion-web-app__presets__*.patch.yml` —— 四套预设：
-`standard` / `minimal` / `ptc` / `cordis`。
+**同一个包在两层有不同 disabled 语义**——"patch 替换整段"的直接后果：**不能指望继承，必须完整重述**。
 
-**三个要点**：
-
-1. **preset 是一个行，不是一个新概念** —— `@oblivion/agent-preset` 只是普通 Cordis 插件。
-2. **`order` 字段**控制多 preset 叠加时的先后。
-3. **平台互斥照旧用 `disabled: !!js`**。
-
-### 15.4 关键提醒
-
-**同一个包在两层有不同 disabled 语义** —— "patch 替换整段"的直接后果：**不能指望继承，必须完整重述**。
-
-### 15.5 可复用清单
-
-- [ ] 进程级能力 vs 会话级能力，先用"谁读它"定平面
-- [ ] preset 用普通插件 + `config.plugins` 实现，别造新 DSL
-- [ ] 每层完整重述自己的 `disabled`
-- [ ] 平台差异统一用条件表达式
 
 ## 16. 部署形态
 
 ### 16.1 一图对比
 
-|          | `oblivion web`                           | Oblivion Desktop                              |
-| -------- | ---------------------------------------- | --------------------------------------------- |
-| 载体     | npm 全局包                               | Electron 安装包                               |
-| Node     | 系统 Node                                | 内嵌 Node + pnpm（锁版本）                    |
-| 体积     | 较小                                     | 较大                                          |
-| 代码载体 | `lib/` 15 文件（启动器）                 | `app.asar` + `app.asar.unpacked`              |
-| profile  | `~/.oblivion/profiles/web`（7 行 patch） | `~/.oblivion/profiles/desktop`（26 行 patch） |
-| 入口     | `oblivion.cmd` → `bin.js web`            | `lib/main.js` → `oblivion-desktop-host`       |
-| 端口     | `127.0.0.1:3080`（loopback）             | 同（内部托管）                                |
-| 更新     | `npm i -g`                               | `electron-updater`                            |
-
-**核心插件代码逐字节相同**。
+| | DSH Web | DSH Desktop |
+|---|---|---|
+| 载体 | npm 全局包 | Electron 安装包 |
+| Node | 系统 Node | 内嵌 Node + pnpm |
+| profile | `~/.dsh/profiles/web` | `~/.dsh/profiles/desktop` |
+| 入口 | `dsh web` | `dsh-desktop` |
+| 端口 | `127.0.0.1:3080` | 同 |
+| **Oblivion** | **插件生态** | **插件生态** |
 
 ### 16.2 共享什么
 
 ```
-              oblivion web            Desktop
-插件来源   npm 全局 node_modules    asar 内 oblivion/node_modules
+              DSH Web                DSH Desktop
+插件来源   ~/.dsh/profiles/web/    ~/.dsh/profiles/desktop/
+                 node_modules/           node_modules/
                  └──────────┬──────────────┘
                             ▼
-                OBLIVION_HOME = ~/.oblivion  （完全共享）
+                DSH_HOME = ~/.dsh  （完全共享）
 ```
 
 ### 16.3 依赖解析：`resolveBundleDir`
 
-**先锚定 oblivion 自己的安装目录，再回退 profile。**
+**先锚定 dsh 自己的安装目录，再回退 profile。**
 
 ### 16.4 Module 解析拦截
 
-Desktop 侧靠 `oblivion-desktop-host/lib/index.js` 的 `registerHooks` 把 Node 的 ESM/CJS resolver 接管。
+Desktop 侧靠 `dsh-desktop-host/lib/index.js` 的 `registerHooks` 把 Node 的 ESM/CJS resolver 接管。
 
 **可复用结论**：**拦截 resolver 比改代码可靠**。
 
 ### 16.5 更新时各发生什么
 
-|                 | `oblivion web`              | Desktop                      |
-| --------------- | --------------------------- | ---------------------------- |
-| profile         | **不动**                    | **不动**                     |
-| Junction / 解析 | 路径寻址 → 下次启动自动生效 | asar 内路径稳定              |
-| Node 版本       | 跟随系统                    | 随包切换                     |
-| 回滚            | `npm i -g` 旧版本           | `oblivion-runtime.json` 校验 |
+| | `dsh web` | Desktop |
+|---|---|---|
+| profile | **不动** | **不动** |
+| Junction / 解析 | 路径寻址 → 下次启动自动生效 | asar 内路径稳定 |
+| Node 版本 | 跟随系统 | 随包切换 |
+| 回滚 | `npm i -g` 旧版本 | `dsh-runtime.json` 校验 |
 
 ### 16.6 入口约束
 
 ```
-$ oblivion --profile desktop --dump-config
+$ dsh --profile desktop --dump-config
 error: profile "desktop" is managed exclusively by the Electron application
 ```
 
 ### 16.7 Desktop 独有组件
 
-| 组件                    | 位置                                    | 作用                       |
-| ----------------------- | --------------------------------------- | -------------------------- |
-| `oblivion-desktop-host` | asar `oblivion/node_modules/@oblivion/` | Node-mode 宿主             |
-| `lib/main.js`           | asar 根                                 | 窗口、更新器、profile 定位 |
-| `oblivion-runtime.json` | asar `oblivion/`                        | 逐文件 sha256              |
-| `renderer/`             | asar 根                                 | 仅欢迎页与更新弹窗         |
+| 组件 | 位置 | 作用 |
+|---|---|---|
+| `dsh-desktop-host` | asar `dsh/node_modules/@deepseek-ai/` | Node-mode 宿主 |
+| `lib/main.js` | asar 根 | 窗口、更新器、profile 定位 |
+| `dsh-runtime.json` | asar `dsh/` | 逐文件 sha256 |
+| `renderer/` | asar 根 | 仅欢迎页与更新弹窗 |
+
 
 ## 17. UI 设计系统
 
@@ -1692,7 +1475,7 @@ error: profile "desktop" is managed exclusively by the Electron application
 ① obl-static-*   77 个   原始调色板，明暗主题完全相同
 ② obl-alias-*   107 个   语义别名 → 指向 static，按主题切换
 ③ obl-*         243 个   字体/圆角/阴影/焦点/渐变/组件专用
-    obl-*         8 个   组件级（**③ 的子集，不是额外一层**；DSH 用第二前缀 `dsh-*`，见 §2.4）
+    obl-*         8 个   组件级（**③ 的子集，不是额外一层**）
 ```
 
 ### 17.2 用户可调的 UI 参数（**只有 2 个**）
@@ -1722,16 +1505,16 @@ body {
 
 ### 17.4 排版刻度（8 档）
 
-| token                | weight    | size / line-height |
-| -------------------- | --------- | ------------------ |
-| `--obl-font-xxxs-11` | 400 / 500 | 11px / 14px        |
-| `--obl-font-xxs-12`  | 400 / 500 | 12px / 18px        |
-| `--obl-font-xs-13`   | 400 / 500 | 13px / 20px        |
-| `--obl-font-s-14`    | 400 / 500 | 14px / 22px        |
-| `--obl-font-base-16` | 400 / 500 | 16px / 24px        |
-| `--obl-font-m-18`    | 500       | 16px / 28px        |
-| `--obl-font-l-20`    | 500       | 20px / 28px        |
-| `--obl-font-xl-24`   | 600       | 24px / 32px        |
+| token | weight | size / line-height |
+|---|---|---|
+| `--obl-font-xxxs-11` | 400 / 500 | 11px / 14px |
+| `--obl-font-xxs-12` | 400 / 500 | 12px / 18px |
+| `--obl-font-xs-13` | 400 / 500 | 13px / 20px |
+| `--obl-font-s-14` | 400 / 500 | 14px / 22px |
+| `--obl-font-base-16` | 400 / 500 | 16px / 24px |
+| `--obl-font-m-18` | 500 | 16px / 28px |
+| `--obl-font-l-20` | 500 | 20px / 28px |
+| `--obl-font-xl-24` | 600 | 24px / 32px |
 
 ### 17.5 焦点与平台差异
 
@@ -1744,36 +1527,72 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
 }
 ```
 
-### 17.6 UI 插件清单（56 个 `oblivion-client-ui-*`）
+### 17.6 UI 插件清单
 
-**⚠️ 唯一带 `disabled` 的 UI 行**：
+> **Oblivion 不重复实现 DSH 的 56 个 `ui-*` 包**，而是：
+> - 使用 DSH 的 56 个 UI 包作为基础
+> - `@oblivion/brand` 插件占用 3 个品牌槽位
+> - 未来如需扩展 UI，写 `@oblivion/ui-*` 插件占用 DSH 的槽位
 
-```yaml
-- id: ui-sidebar-browser
-  name: 'oblivion-client-ui-sidebar-browser'
-  disabled: !!js ctx.get('profileContext')?.name !== 'desktop'
-```
+### 17.7 插件可用样式的边界（v4.1 补，实测 2026-10-04）
+
+> 插件在客户端渲染时**能依赖什么、不能依赖什么**，实测结论如下。
+
+| 能依赖 | 说明 |
+|---|---|
+| `--dsw-*` CSS 令牌 | DSH 的令牌层，随主题自动切换 |
+| React / react-dom / jsx-runtime | 由宿主客户端模块表提供（须标 external） |
+| `ui-primitives` | 宿主提供的原语组件 |
+
+| 不能依赖 | 后果 |
+|---|---|
+| 宿主内部 CSS class 名 | 版本间不稳定，随时改名 |
+| 其他插件提供的组件 | 无跨插件组件契约，只有**槽位**与**服务**两种连接方式 |
+| 官方包的源码路径 | 升级即失效 |
+
+> **`@oblivion/brand` 的实践**：设置面板的样式**全部内联**（`style={{...}}`），
+> 只用令牌取色，不引入任何样式表 —— 这样在任何主题下都不会长出分支。
+
 
 ## 18. 实施路线图
 
-| 阶段                 | 任务                                                                                          | 产出                       | 工时       |
-| -------------------- | --------------------------------------------------------------------------------------------- | -------------------------- | ---------- |
-| **Phase 0**          | 项目骨架 + 图标资产                                                                           | 可启动空壳 + 品牌资产      | 2 天       |
-| **Phase 0.5** | 阶段实测清单（§27.4：反射 API / `openAt` / `!!js` / `ctx.slots` / Worker / Electron 协议 / 4 道锁 / Bubblewrap） | 实测结论 + OPEN 关闭依据 | — |
-| **Phase 1**          | `oblivion-core`：Cordis 容器 + Patch 引擎                                                     | 可加载插件的内核           | 3 天       |
-| **Phase 2**          | `oblivion-llm-*` + `oblivion-session-*` + 凭据/会话共享                                       | 基础对话能力 + 共享根目录  | 4 天       |
-| **Phase 3**          | `oblivion-knowledge-*` + `oblivion-tool-doc-parse` + 工作区共享                               | **最小可用闭环**           | 5 天       |
-| **Phase 4**          | `oblivion-web-ui`：React 界面 + UI 令牌系统                                                   | 完整 UI                    | 5 天       |
-| **Phase 5**          | `oblivion-qa-loop` + `oblivion-perspective`                                                   | 核心认知功能               | 4 天       |
-| **Phase 6**          | `oblivion-graph-growth` + `oblivion-feedback`                                                 | 增强功能                   | 3 天       |
-| **Phase 7**          | `oblivion-plugin-manager` + Profile + 打包                                                    | **可交付的 Electron 应用** | 3 天       |
-| **Phase 8**          | `oblivion-adapter-obsidian` + `oblivion-adapter-dsh`                                          | 插件生态扩展               | 3 天       |
-| **Phase 9**          | `oblivion-desktop-host` + `oblivion-updater` + `oblivion-dump-config` + 双形态支持 + 源码沉淀 | **DSH 特性完整融合**       | 4 天       |
-| **Phase 10**         | 发布工程学：三级版本分层 + 破坏性变更契约 + 迁移工具 + 镜像三级兜底                           | **可发布的产品**           | 3 天       |
-| **Phase 11（新增）** | Docker 部署（路径 A/B）+ 卷持久化 + 无 TLS 反代                                               | **Docker 部署能力**        | 3 天       |<br>❌ **已作废（2026-10-02）**：Docker 支持已整体移除（`docker/` `.dockerignore` `profiles/docker/` 与 CI docker job 均已删除）。**保留此行仅为历史追溯，不删除**（§28.1 第 2 条）
-| **合计**             |                                                                                               |                            | **~42 天** |
+> **v4.1 重写**：路线图从「26 个能力包、42 天」收敛为「8 个插件、~16 天」，
+> 因为宿主已经提供了 20 项基础能力（§2.2 A 组），**不再重复造**。
 
-**关键原则**：**Phase 3 完成后（约 14 天）**，应该有一个**能跑通"上传文档 → 问答 → 沉淀"的 Electron 应用**。
+| 阶段 | 任务 | 产出 | 工时 |
+|---|---|---|---|
+| **Phase 0** | **DSH 宿主准备**：安装 pnpm + `pnpm install` + `pnpm build:lib` | 可运行的 DSH 宿主 | 0.5 天 |
+| **Phase 0.5** | **阶段实测**：反射 API / `openAt` / `!!js` / `ctx.slots` / Worker / Electron 协议 / 4 道锁 | 实测结论 + OPEN 关闭依据 | 0.5 天 |
+| **Phase 1** | **`@oblivion/brand`**：写品牌插件占用 3 个槽位；验证 `DSH_CLIENT_BUILD_PROFILE=local` 或 profile patch | 品牌化生效，零 Fork | 1 天 |
+| **Phase 2** | **`@oblivion/knowledge`**：知识库核心 + anydoc WASM 文档解析 + 向量检索 | **最小可用知识底座** | 3 天 |
+| **Phase 3** | **`@oblivion/qa-loop`**：四层筛选 + `session:complete` 链路 + 防回灌 | 知识自动生长 | 2 天 |
+| **Phase 4** | **`@oblivion/perspective`**：主动/深度双模式 + 闸门 + 静默开关 | 主动视角 | 2 天 |
+| **Phase 5** | **`@oblivion/graph-growth`**：共现建边 + 权重衰减 + 双链写回 MD | 知识关联 | 2 天 |
+| **Phase 6** | **`@oblivion/feedback`**：👍/👎/⏺ + 累积触发画像微调 + 90 天清理 | 画像闭环 | 2 天 |
+| **Phase 7** | **`@oblivion/content-creator`**：播客脚本 / 学习指南 / FAQ / 摘要 | 创作能力（默认不加载） | 2 天 |
+| **Phase 8** | **`@oblivion/adapter-obsidian`**：只翻译不模拟 + 明确报错边界 | 外部生态接入 | 2 天 |
+| **Phase 9** | 发布工程学：三级版本分层 + 破坏性变更契约 + 迁移工具 | **可发布的产品** | 2 天 |
+| **合计** | | | **~19.5 天** |
+
+**关键原则**：**Phase 3 完成后（约 7 天）**，应该有一条**能跑通「问答 → 筛选 → 落盘 MD → 下次问答引用」的最小闭环**。
+Phase 1 已提前完成（PF-43），实际进度快于计划。
+
+### 18.1 已完成（v4.1，2026-10-04）
+
+| 阶段 | 状态 | 证据 |
+|---|---|---|
+| Phase 1 `@oblivion/brand` | ✅ **已落地并装机** | PF-43；三槽位接管、品牌名/图形可配、可关闭接管、侧栏嵌入面板、一键重启 |
+| 超出计划的能力 | ✅ 侧栏嵌入面板 + 面板居中 + 直接重启 DSH | §12.8 |
+
+### 18.2 相对 v4.0 路线图的收敛
+
+| 项 | v4.0 | v4.1 | 原因 |
+|---|---|---|---|
+| 插件数 | 26 个能力包 | **8 个插件** | 20 项基础能力由宿主提供，不再重造（§2.2 A 组） |
+| 工时 | ~42 天 | **~19.5 天** | 同上；且 Phase 1 已提前完成 |
+| 内置 UI | 57 组件 + 188 图标自建 | **复用宿主 56 个 `ui-*` 包** | 宿主已有完整 UI，自建等于重复劳动 |
+| 内核 / 会话 / LLM | 自建 `oblivion-core` / `session` / `llm` | **全部用 DSH 宿主的** | v4.1 的核心决策：**不 Fork，只做插件** |
+| Docker | Phase 11 | **已作废** | 无官方 Dockerfile；单机自用不需要 |
 
 ## 19. 风险登记
 
@@ -1803,6 +1622,12 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
 | **RISK-122** | Python 段 `lib/` 无锚点            | 连带忽略 `packages/<pkg>/lib/`             | 修正 alphα 模板                                                                                                                   | ✅ 已修（v0.0.1）           |
 | **RISK-123** | manifest 与实际目录不一致          | `src/` required 但不存在                   | 修正 alphα 模板                                                                                                                   | ✅ 已修（v0.0.1） + 需持续回归           |
 | **RISK-124** | `.gitattributes` 多 pattern 同行   | 6 行 `*.tgz is not a valid attribute name` | 修正 alphα 模板                                                                                                                   | ✅ 已修（v0.0.1）           |
+| **RISK-126** | **插件 node 半边与 client 半边加载时机不对称** | 改 node 半边后只刷新页面 → 路由 404/405，**看不出原因**（v4.1 实测踩中） | ① 文档化「改 node 半边必须重启应用」（§9.6 第 1 条）；② 日志每行带**插件版本号**，一眼可辨跑的是哪版；③ 客户端设置面板也显示版本 | ✅ 已解（v4.1） |
+| **RISK-127** | **宿主转发删除 `origin` 头** | 按常规「无 Origin 即拒绝」会**误拒自家页面**（v4.1 实测踩中） | 缺 `Origin` **视为内部调用放行**，只拒绝「存在且非本机」的 Origin；浏览器跨源 POST 必带 Origin，故对 CSRF 仍有效（§14.4） | ✅ 已解（v4.1） |
+| **RISK-128** | **品牌接管依赖 `priority` 遮蔽语义** | 上游若改变槽位 kind 或优先级规则，品牌可能不生效或双重渲染 | ① §5.10 把规则写成文档而非口头知识；② **关闭接管 = dispose 本插件注册**，可立即回退，不依赖上游；③ 官方包升级时优先复测三槽位 | Open |
+| **RISK-129** | **桌面图标无法由插件接管** | 用户预期「换掉应用图标」落空（v4.1 实测确认） | ① §1.3 明确边界：窗口/任务栏图标来自 exe 的 PE 资源，`resources/icon.png` 只喂关于面板；② 提供快捷方式 `IconLocation` 替代方案（`tools/set-shortcut-icon.ps1`，可 `-Restore`）；③ **拒绝**改写官方安装目录内的资源 | 已知边界（有替代） |
+| **RISK-130** | **产品版本轴（根 `VERSION`）无递增器** | 产品版本靠手改 → 与 `CHANGELOG.md` 漂移 | 补根级 `scripts/bump-version.mjs`（照插件版做法：`VERSION` 真源 + 正则同步）；见 §12.13 与 §23 OPEN | Open |
+| **RISK-131** | **`main` 设置槽位无 `children`** | 「把任意设置页嵌进侧栏」做不到，只能嵌显式 `provide()` 出 `render()` 的提供方 | ① 只支持「可嵌入提供方」，UI 上明确候选范围；② 用严格形状判据排除 `@Remote` RPC（如 `officeToPdf.render` 的假阳性），避免列出不可嵌对象（§9.6 第 7 条） | ✅ 已夹紧（v4.1） |
 
 ## 20. 变更日志
 
@@ -1824,6 +1649,7 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
 | **v4.0.2** | **2026-10-02** | **内部一致性校准：并入 ERRATA-22~28、32（五/六层统一为六层、§18 补 Phase 0.5、`updaterCacheDirName` 拼写、§20 AC 计数、§22.1 证据等级、插件名去 scope 统一、证据路径统一 `dsh-ref`、§9.1 插件数 26）** |
 | **v4.0.4** | **2026-10-03** | **Web 交付通道裁定 + 内部矛盾修正：`§3.1` 图称 React UI「通过 IPC 与 Main Process 通信」，与 `§5.3`「主界面由 `oblivion-web-ui` 经本地 web 服务提供」冲突 → 改为双通道事实（HTTP `/api` unary + 单条 WS `/api/remote.mux`）；新增 DEC-014/015/016 与 ERRATA-48；`notes/04` 与 DSH `host-webserver` 头注释证明「桌面也走 web 服务、仅壳页用 IPC」** |
 | **v4.0.5** | **2026-10-03** | **宿主服务接线审查：新增 §5.7 通道落地顺序（DEC-017：先 HTTP `/api` 单元 → 再唯一 WS mux，**不退回 SSE**）；并入 ERRATA-49/50（`SERVICE_NAME` 是死常量且文档承诺与事实不符；profile↔registry 不一致被测试白名单豁免）；新增 DEC-018~022（六类服务各定最小 provider 让 pending 归零、例外从测试挪进 registry 当数据、**停止按 DSH 粒度铺新包**、CSP 与上游一致降级但抄一行到静态响应、通道落地同批带 e2e）、OPEN-112（index 注入形状）、RISK-125（账本维护成本超过它防住的 bug）** |
+| **v4.1** | **2026-10-04** | **🔴 宿主化范式重构（自 v3.0 以来最重要的一次修正）：明确「Oblivion = DSH 宿主 + `@oblivion/*` 插件生态」，8 个插件、不 Fork 宿主。① §0.1/§0.3 北极星与架构愿景改写为「DSH 上的认知增强插件组」；② §2.1 功能统计由「26 个能力包」改为「宿主 20 + 独特 8 + 品牌 2 = 30 项」，**明确不重造宿主已有的 20 项**；③ §3.1 三层结构改为「宿主层 / 插件层 / 数据层」，删除自建内核；④ **新增 §5.9 品牌化走槽位**（DEC-023 类决策：只占槽位、不 Fork）；⑤ **新增 §5.10 槽位遮蔽实测机制** —— 修正原「路 C 不可靠」的判断：`single` 槽的规则是「同 priority 抛错、不同 priority 遮蔽、lowest renders」，故 `priority=-10` **可靠**，且关闭接管只需 dispose；⑥ **新增 §5.11 Hero 标题边界** —— `hero.headline` 是 i18n 字符串、无槽位、locale 重复注册抛错，**归宿主所有**；⑦ §9.1 插件清单 26 → **8**；⑧ **新增 §9.5 插件脚手架**（修正 PF-40：`dsh-plugin-create` 不存在）；⑨ **新增 §9.6 已落地插件与实测坑（8 条硬边界）**；⑩ §10 拆出 §10.1 落地形态偏离与 §10.2 本仓库实际结构；⑪ **新增 §12.8 品牌插件完整能力表**、**§12.13 版本号两条轴**；⑫ **新增 §14.4 插件侧信任判据**（缺 Origin 必须放行）；⑬ **新增 §17.7 插件可用样式的边界**；⑭ §18 路线图 42 天 → **19.5 天**并新增 §18.1 已完成 / §18.2 与 v4.0 的收敛对照；⑮ 新增 **PF-43**（品牌插件装机实测）、**RISK-126~131**、**OPEN-113**、**DEC-024~027**、**AC-032~035**、**§32 v4.0→v4.1 汇总** |
 
 ## 21. 验收标准
 
@@ -1910,6 +1736,10 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
 | **AC-029** | **卷挂载生效**：`~/.oblivion` 挂载到宿主机，容器重启后凭据/会话/工作区保留                                                                                        | REQ-023          | **Not applicable** | Not run | Not requested    | -        |
 | **AC-030** | **结构基线可验证**：26 个能力包与 §9.1/§10 清单一一对应；`registry.json` 的 `pluginCount` 与实际目录数一致；`npm run typecheck` / `npm run lint` 通过 | REQ-001 | Not started | Not run | Not requested | - |
 | **AC-031** | **结构契约不脱节**：结构契约声明的每个 `required` 模块都在磁盘上存在（RISK-123 回归检查） | REQ-001 | Not started | Not run | Not requested | - |
+| **AC-032** | **品牌接管可开可关（v4.1）**：开启时侧栏品牌位与 Hero 品牌位渲染北极星；**关闭后官方鲸鱼外观立即恢复**（dispose 本插件注册即可，不重启、不改官方包） | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | PF-43、§5.10 |
+| **AC-033** | **品牌可自定义（v4.1）**：① 品牌名文字可改成任意文本（持久化，重启后保留）；② 可上传图片替换图形（多格式，超限自动缩放或拒绝）；③ 可一键恢复北极星默认 | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | §12.8 |
+| **AC-034** | **侧栏可嵌入面板（v4.1）**：① 自动发现「可嵌入提供方」并列出；② 可多选挂到侧栏「插件」下方；③ **不把 `@Remote` RPC 误判为提供方**（`officeToPdf` 反例）；④ 面板正文与设置页观感一致，可选居中 | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | §9.6 第 7 条、RISK-131 |
+| **AC-035** | **一键重启 DSH（v4.1）**：① 从设置页触发，应用**自动关闭并重新拉起**（无需手动）；② 全流程**不弹控制台窗口**；③ 失败时日志能定位到具体阶段（版本号 + 阶段行） | REQ-001 | ✅ Implemented | ✅ Run | ✅ Passed | §12.8、RISK-126 |
 
 ## 22. Docker 部署能力（实证章节）—— ❌ **历史章节，已作废**
 
@@ -2023,6 +1853,7 @@ CMD ["node", "dist/bin.js", "web", "--host", "127.0.0.1"]
 | **OPEN-023** | **是否迁移到 `@oblivion/` scope** | **裁定：暂不迁移**，发布公共 npm 前再整体迁 |
 | **OPEN-024** | **lockfile 何时入库** | **关闭**：v0.0.1 已提交 `package-lock.json`，CI 已恢复 `npm ci` |
 | **OPEN-111** | **Oblivion 右栏放什么**（tab 内容清单） | **未裁定** —— 由 `LAYOUT.MD` §12 `OPEN-LAYOUT-03` **上移**而来（2026-10-02）。<br>理由：`LAYOUT.MD` 只管「怎么摆」，已完整给出右栏的**扩展机制**（`sidebar.right.pane.tab` 按类型注册）；「放什么」是**产品决策**。<br>⚠️ 该裁定会反向影响 `RIGHTBAR_DEFAULT_RATIO = 0.45`（现为**暂定**）|
+| **OPEN-113** | **产品版本轴缺递增器** | **未裁定（v4.1 新增）** —— 根 `VERSION` 是真源，但主仓 `bump-version.ps1` 的同步目标（`packages/*/package.json`、`registry.json`、`oblivion-core/src/version.ts`）**在本仓都不存在**。<br>**待定**：① 只同步根 `VERSION` + 自动补一行 `CHANGELOG.md`？② 还是让产品轴跟随插件轴一起递增？<br>**倾向**：方案 ① —— 两条轴独立（§12.13），产品轴管「整个仓库的对外版本」，插件轴管「单个插件包」。<br>**临时对策**：手改 `VERSION` + `CHANGELOG.md`，并在提交信息里注明。 |
 
 ## 24. 图例
 
@@ -2312,10 +2143,28 @@ git branch -d feature/xxx
 
 ### 28.2 版本递增规则
 
+**设计书版本**（本文档的 `vX.Y[-baseline]`）：
+
 | 版本变化 | 触发条件                         |
 | -------- | -------------------------------- |
 | v4.x     | 增量更新（补回、澄清、修正）     |
 | v5.0     | 架构范式级改判（需用户显式批准） |
+
+> v4.1 属于 **v4.x 增量**，但它是一次**范式修正**（宿主化）：按本表仍走 v4.x，
+> 因为「Oblivion 是插件生态」这一结论在 v4.0 已隐含（§2.2 已列 A 组「宿主提供」），
+> v4.1 只是把它**明确化并贯彻到底**（收敛插件数、取消自建内核）。真正的范式改判在 v3.0（Electron + Cordis 插件化）。
+
+**产品与插件的版本轴**（§12.13 的规则在此登记，二者独立递增）：
+
+| 轴 | 真源 | 递增命令 | 记录位置 | 递增器状态 |
+|---|---|---|---|---|
+| **产品版本** | 根 `VERSION` | （待补） | `CHANGELOG.md`、`.memory/release/` | ❌ **缺**（OPEN-113） |
+| **插件版本** | `oblivion-brand/VERSION` | `npm run version:bump -- <patch\|minor\|major>` | 该插件 `package.json`、设置面板标题、helper 日志 | ✅ 已有 |
+
+**递增级别与提交类型的映射**（两轴通用）：`fix/docs/chore → patch`；`feat → minor`；破坏性变更或首个正式版 → `major`；0.x 阶段视为不稳定。
+
+**触发点**：每批改动完成验收并写入 changelog 后，执行改动的 agent **必须**运行对应轴的递增命令。
+**真源判定顺序**：有 `VERSION` 用 `VERSION`；没有但有 `package.json.version` 则以其为源并补建 `VERSION` 镜像。
 
 ## 29. 升级参考工作流
 
@@ -2468,6 +2317,10 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | DEC-021     | CSP                           | Confirmed（与上游一致：**不做文档级 CSP**；但把静态/媒体响应那条 `default-src 'self'` 顺手加到 `static.ts`，不扩成安全专项） —— **已落实 2026-10-03** |
 | DEC-022     | 通道落地的测试要求            | Confirmed（通道落地那一批**必须同批带端到端**，覆盖 upgrades 表「单 socket 单协议独占」这类只在单测里活着的不变量） |
 | DEC-023 | web 默认端口 | Confirmed（**42081**）—— 与上游 DSH 的 `3080` **刻意区分**：DSH 默认 3080 是其生态事实标准，本项目同机共存时不应沿用；`引用/证据` 里的 3080 一律仍指上游 |
+| **DEC-024** | **是否 Fork DSH** | **Confirmed：不 Fork**（2026-10-04，v4.1 核心决策）。Oblivion 只做 `@oblivion/*` 插件，宿主用上游 `@deepseek-ai/dsh`。**理由**：① 宿主已提供 20 项基础能力（§2.2 A 组），Fork 等于接下全部维护成本；② 品牌化有官方槽位（PF-36）；③ Fork 会在每次上游升级时产生不可控的 merge 冲突。<br>**推论**：自建内核 / `oblivion-core` / `session` / `llm` / `ui-*` 全部**取消**（§18.2） |
+| **DEC-025** | **品牌接管的让位机制选哪条路** | **Confirmed：`priority` 遮蔽（路 C 修正后）**（2026-10-04）。实测 `ui-slots` 的 `single` 槽规则是「同 priority 重复注册抛错 / 不同 priority 遮蔽 / **lowest renders**」，故 `priority = -10` 稳定覆盖官方（默认 0）。<br>**并且**：关闭接管只需 **dispose 本插件注册**，官方那条立刻重新成为渲染者 —— 零侵入、不重启、不改官方包。<br>**修正**：§5.9 原判断「动态注册 priority 低于 shipped 条目、默认官方会赢」**是错的**（见 §5.10）。推荐顺序更新为 priority 遮蔽 > profile patch > 构建期摘除 |
+| **DEC-026** | **插件如何给用户可见的版本凭据** | **Confirmed：日志每行 + 设置面板标题都带版本号**（2026-10-04）。<br>**理由（代价换来的）**：node 半边**只在应用启动时加载**，刷新页面不更新它。v4.1 开发中因此**连续误判两轮**（以为代码没生效，实为旧版仍在跑）。<br>**配套**：`VERSION` 单一真源 + `bump-version.mjs` 正则同步到 `package.json`；客户端由构建期 esbuild `define` 注入（§12.13） |
+| **DEC-027** | **插件能否接管桌面图标** | **Confirmed：不能，且不做替身**（2026-10-04）。窗口/任务栏图标来自 **exe 的 PE 资源**，`resources/icon.png` 只喂 `setAboutPanelOptions`、`resources/tray.ico` 只喂托盘。**拒绝**改写官方安装目录内的资源（越界且升级即失效）。<br>**替代**：改快捷方式 `.lnk` 的 `IconLocation`（`tools/set-shortcut-icon.ps1`，支持 `-Restore`）——明确告知这是**壳层替代**，不是应用图标接管（RISK-129） |
 
 ### 31.3 变更日志 delta 类型
 
@@ -2501,4 +2354,62 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 
 ---
 
-_本文件由 YEAHZERO-Thought-Design 维护；2026-10-02 经用户显式批准转为 Baseline v4.0（事实校准版 · 完整版）。_
+_本文件由 YEAHZERO-Thought-Design 维护；2026-10-02 经用户显式批准转为 Baseline v4.0（事实校准版 · 完整版）；2026-10-04 修订为 Baseline v4.1（DSH 宿主化决策版）。_
+
+---
+
+## 33. 本版修订汇总（v4.0 → v4.1）
+
+> **v4.1 是一次范式修正**：把「Oblivion 自建一切」改为「Oblivion 是 DSH 的插件生态」。
+> 下表是这次修订的全部落点，供追溯。
+
+### 33.1 范式级修正（🔴）
+
+| # | 修订项 | 位置 | 类型 |
+|---|---|---|---|
+| **E1** | 北极星由「独立应用」改为「**DSH 上的认知增强插件生态**」 | §0.1 + §0.3 + 基线声明 | 🔴 范式修正 |
+| **E2** | 架构由「三层 = 壳/核心/数据」改为「**宿主层 / 插件层 / 数据层**」，**删除自建内核** | §3.1 + §3.2 | 🔴 范式修正 |
+| **E3** | 功能统计由「26 个能力包」改为「**宿主 20 + 独特 8 + 品牌 2 = 30 项**」，明确**不重造宿主已有的 20 项** | §2.1 + §2.2 | 🔴 范式修正 |
+| **E4** | 插件清单 26 → **8** | §9.1 | 🔴 范围收敛 |
+| **E5** | 内置 UI 由「自建 57 组件 + 188 图标」改为「**复用宿主 56 个 `ui-*` 包**」 | §17.6 | 🔴 范围收敛 |
+| **E6** | 路线图由「42 天」改为「**19.5 天**」并补完成情况 | §18 + §18.1 + §18.2 | 🔴 范围收敛 |
+| **E7** | **不 Fork DSH** 写成正式决策 | DEC-024 | 🔴 决策登记 |
+
+### 33.2 证据与机制升级（🟠）
+
+| # | 修订项 | 位置 | 类型 |
+|---|---|---|---|
+| **F1** | 新增 PF-43（品牌插件装机实测） | §0.7 | 🟠 证据升级 |
+| **F2** | 新增 §5.10 **槽位遮蔽实测机制**，并**修正**原「路 C 不可靠」的误判 | §5.10 + DEC-025 | 🟠 判断修正 |
+| **F3** | 新增 §5.11 **Hero 标题边界**（i18n 无槽位、locale 重复注册抛错） | §5.11 | 🟠 边界补全 |
+| **F4** | 新增 §14.4 **插件侧信任判据**（缺 `Origin` 必须放行） | §14.4 | 🟠 边界补全 |
+| **F5** | 新增 §9.6 **已落地插件的 8 条硬边界** | §9.6 | 🟠 证据升级 |
+| **F6** | 新增 §1.3 桌面图标边界（PE 资源不可接管） | §1.3 + DEC-027 | 🟠 边界补全 |
+| **F7** | 新增 §17.7 插件可用样式的边界 | §17.7 | 🟠 边界补全 |
+| **F8** | 新增 §10.1 落地形态偏离 + §10.2 本仓库实际结构 | §10.1 + §10.2 | 🟠 事实校准 |
+
+### 33.3 结构补全（🟡）与账本（⚪）
+
+| # | 修订项 | 位置 | 类型 |
+|---|---|---|---|
+| **G1** | 新增 §12.8 品牌插件完整能力表 | §12.8 | 🟡 结构补全 |
+| **G2** | 新增 §12.13 **版本号两条轴** | §12.13 | 🟡 结构补全 |
+| **G3** | §28.2 补「产品轴 / 插件轴」两轴规则与触发点 | §28.2 | 🟡 结构补全 |
+| **G4** | 新增 RISK-126~131 | §19 | ⚪ 账本 |
+| **G5** | 新增 OPEN-113 | §23 | ⚪ 账本 |
+| **G6** | 新增 DEC-024~027 | §31.2 | ⚪ 账本 |
+| **G7** | 新增 AC-032~035（均已 Passed，有实测依据） | §21.1 | ⚪ 账本 |
+| **G8** | §20 变更日志补 v4.1 行 | §20 | ⚪ 账本 |
+
+### 33.4 本版**未**处理（诚实登记）
+
+| 项 | 现状 | 为什么留 |
+|---|---|---|
+| **§21.1 的 AC-001~031 仍挂在旧 26 包计划上** | AC-030/031 明确写「26 个能力包与 §9.1/§10 一一对应」，与 v4.1 的 8 插件矛盾 | **需要一次专门的 AC 重写**（涉及 REQ-001~023 的重新映射），不是 v4.1 能顺手带过的范围。**已在此登记为已知不一致**，避免读者被误导 |
+| **§9.1 的 7 个未落地插件规格** | 只有 `@oblivion/brand` 落地（PF-43） | 其余按 §18 路线图推进 |
+| **§22 Docker 章节** | 已整体作废，保留作历史追溯 | 按 §28.1「勘误不删」 |
+| **根 `VERSION` 递增器** | 缺 | OPEN-113 |
+| **`config/oblivion/*.yaml` 业务配置** | 尚未创建（插件已落地的部分是 `localStorage` 持久化） | 属 Phase 2+ |
+
+> **⚠️ 给后续修订者**：§21.1 的 AC 表与 §9.1 的插件清单目前**不一致**。
+> 改 §9.1 或 AC 时必须同时改另一处，否则追溯链再次断裂（这正是 §21.0 当初为修 `ERRATA-29` 而补的体系）。
