@@ -92,11 +92,14 @@ try {
   exit 1
 }
 `;
-function fromLoopback(request) {
+function isTrustedCaller(request) {
   const origin = request.headers["origin"];
-  if (typeof origin !== "string" || origin === "") return false;
+  if (origin === void 0 || origin === "") return true;
+  if (typeof origin !== "string") return false;
+  if (origin === "dsh-app://app") return true;
   try {
-    const { hostname } = new URL(origin);
+    const { hostname, protocol } = new URL(origin);
+    if (protocol !== "http:" && protocol !== "https:") return false;
     return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
   } catch {
     return false;
@@ -150,7 +153,7 @@ function installRestartRoute(ctx, warn) {
           response.end();
           return;
         }
-        if (!fromLoopback(request)) {
+        if (!isTrustedCaller(request)) {
           response.writeHead(403, { "content-type": "application/json" });
           response.end(JSON.stringify({ ok: false, error: "untrusted origin" }));
           return;
@@ -166,6 +169,7 @@ function installRestartRoute(ctx, warn) {
       }
     });
     ctx.effect?.(() => dispose, "oblivion-brand: restart route");
+    ctx.logger?.("@oblivion/brand").info(`\u91CD\u542F\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${RESTART_PATH}`);
   });
 }
 function apply(ctx) {

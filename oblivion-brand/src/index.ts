@@ -165,12 +165,37 @@ interface HostResponse {
   end(body?: string): void;
 }
 
-/** 只接受来自本机回环页面的请求，挡掉跨站页面发起的重启。 */
-function fromLoopback(request: HostRequest): boolean {
+/**
+ * 判断调用方是否可信。
+ *
+ * ## 为什么不能要求「Origin 必须是回环」
+ *
+ * 桌面端有两条实测事实（`app.asar/lib/main.js`）：
+ *
+ *   1. 窗口页面的来源是 `dsh-app://app`，不是 `http://127.0.0.1`；
+ *   2. 非文档路径经 `forwardWebRequest` 转发给本地 webserver，而它在转发前
+ *      **删除了 `origin` 头**：`headers.delete("origin")`。
+ *
+ * 所以请求到达本路由时 Origin 通常是**缺失**的。若按「必须等于回环来源」判，
+ * 会被自己的校验挡在门外 —— 这正是第一次实测拿到 403/405 的原因之一。
+ *
+ * ## 真正的风险是跨站 CSRF
+ *
+ * webserver 只绑回环，外部主机够不到；危险的是**浏览器里的恶意页面**向
+ * `http://127.0.0.1:<port>` 发 POST 触发重启。浏览器对跨源 POST **一定**会带
+ * `Origin`，所以只要拒绝「存在且非本机」的 Origin 就够了。
+ *
+ * 缺失 Origin 只可能来自非浏览器调用方；本地进程本就能直接结束应用进程，
+ * 因此不构成额外暴露面。
+ */
+function isTrustedCaller(request: HostRequest): boolean {
   const origin = request.headers['origin'];
-  if (typeof origin !== 'string' || origin === '') return false;
+  if (origin === undefined || origin === '') return true;
+  if (typeof origin !== 'string') return false;
+  if (origin === 'dsh-app://app') return true;
   try {
-    const { hostname } = new URL(origin);
+    const { hostname, protocol } = new URL(origin);
+    if (protocol !== 'http:' && protocol !== 'https:') return false;
     return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1' || hostname === '[::1]';
   } catch {
     return false;
@@ -236,7 +261,7 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
           response.end();
           return;
         }
-        if (!fromLoopback(request)) {
+        if (!isTrustedCaller(request)) {
           response.writeHead(403, { 'content-type': 'application/json' });
           response.end(JSON.stringify({ ok: false, error: 'untrusted origin' }));
           return;
@@ -255,6 +280,7 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
     });
 
     ctx.effect?.(() => dispose, 'oblivion-brand: restart route');
+    ctx.logger?.('@oblivion/brand').info(`重启路由已挂载：POST ${RESTART_PATH}`);
   });
 }
 
