@@ -76,29 +76,33 @@ try {
 
   # Build the relauncher batch. Kept as a file (not an inline command) so the
   # quoting stays readable and the wait loop can use goto.
+  #
+  # Log lines use %DATE% %TIME% rather than a stamp baked in here: the earlier
+  # version froze one timestamp at generation time, so all three lines read the
+  # same second and the real elapsed time was impossible to read back.
   $batPath = Join-Path (Split-Path -Parent $LogPath) 'obl-brand-relaunch.cmd'
-  $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
   $batLines = @(
     '@echo off',
     'setlocal',
     ('set "APP={0}"' -f $exe),
     ('set "IMG={0}"' -f (Split-Path -Leaf $exe)),
     ('set "LOG={0}"' -f $LogPath),
-    ('>>"%LOG%" echo {0} relauncher start' -f $stamp),
+    '>>"%LOG%" echo %DATE% %TIME% relauncher start',
     'set /a N=0',
     ':wait',
     # The timeout command needs a console, so sleep with ping instead.
     'tasklist /FI "IMAGENAME eq %IMG%" 2>nul | find /I "%IMG%" >nul',
     'if errorlevel 1 goto go',
     'set /a N+=1',
-    'if %N% GEQ 40 goto go',
+    'if %N% GEQ 60 goto go',
     'ping -n 2 127.0.0.1 >nul',
     'goto wait',
     ':go',
-    ('>>"%LOG%" echo {0} relauncher: previous processes gone' -f $stamp),
-    'ping -n 2 127.0.0.1 >nul',
+    '>>"%LOG%" echo %DATE% %TIME% relauncher: previous processes gone',
+    # No settle delay: the loop already waited for every process of that image to
+    # disappear, which is also when the port and the single-instance lock are free.
     'start "" "%APP%"',
-    ('>>"%LOG%" echo {0} relaunched' -f $stamp)
+    '>>"%LOG%" echo %DATE% %TIME% relaunched'
   )
   Set-Content -LiteralPath $batPath -Value $batLines -Encoding ASCII
   Write-Log "relauncher batch written: $batPath"
@@ -120,16 +124,23 @@ try {
   # A process created through WMI has the WMI provider host as its parent, so it is
   # OUTSIDE that job and survives. It must be cmd.exe, not PowerShell: Windows
   # PowerShell 5.1 needs a console, and a WMI-created process has none -- it exits 0
-  # without running a single line (same root cause as the detached trap).
+  # without running a single line (same root cause as the detached trap). wscript is
+  # no good either: a GUI-subsystem host does not start under WMI at all.
+  #
+  # Win32_ProcessStartup with ShowWindow = 0 hides the console that cmd would
+  # otherwise flash on screen. It has to go through the WMI v1 [wmiclass] call --
+  # Invoke-CimMethod cannot infer a CimType for the embedded startup instance.
   try {
-    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ('cmd.exe /c "{0}"' -f $batPath) }
+    $startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
+    $startup.ShowWindow = 0
+    $created = ([wmiclass]'Win32_Process').Create(('cmd.exe /c "{0}"' -f $batPath), (Split-Path -Parent $batPath), $startup)
     Write-Log ("relauncher armed via WMI: returnValue={0} pid={1}" -f $created.ReturnValue, $created.ProcessId)
   } catch {
     Write-Log ("relauncher arm failed: {0}" -f $_)
   }
 
   # Let the HTTP 202 reach the browser first, otherwise the page drops the response.
-  Start-Sleep -Milliseconds 1200
+  Start-Sleep -Milliseconds 700
 
   Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop
   Write-Log ("stopped pid={0}" -f $target.ProcessId)

@@ -257,11 +257,36 @@ oblivion-brand/
 | `cmd.exe /c <等待批处理>` | ✅ 等待循环 + `start` 全部生效 |
 
 所以**重新拉起改用纯批处理**（`obl-brand-relaunch.cmd`）：轮询 `tasklist` 直到该镜像名的进程全部消失
-（上限 40 次，避免死循环），再用 `start ""` 拉起。批处理里用 `ping -n 2 127.0.0.1` 代替
+（上限 60 次，避免死循环），再用 `start ""` 拉起。批处理里用 `ping -n 2 127.0.0.1` 代替
 `timeout` —— `timeout` 同样需要控制台。
 
 > 另一个陷阱：`RESTART_SCRIPT` 是 `String.raw` 模板，**注释里不能出现反引号** ——
 > 一个 `` `goto` `` 就会提前终止模板，报出一堆莫名其妙的 TS 语法错误。
+
+### 不弹控制台窗口 + 压缩耗时
+
+WMI 创建的 `cmd.exe` 会闪一个控制台窗口。`Win32_ProcessStartup.ShowWindow = 0` 能把它隐藏，
+但**不能走 `Invoke-CimMethod`** —— 它无法为嵌入式实例推断 CimType，会报
+「无法从提供的 .NET 对象推断 CimType」。必须用 WMI v1 的调用形式：
+
+```powershell
+$startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
+$startup.ShowWindow = 0
+([wmiclass]'Win32_Process').Create($cmdLine, $cwd, $startup)
+```
+
+`wscript` + VBS 这条常见的「无窗口」路子在这里**行不通**：`wscript.exe` 是 GUI 子系统程序，
+经 WMI 创建时根本不启动（实测 VBS 直接跑正常、经 WMI 则无任何输出）。
+
+耗时也从 ~5.1s 压到 ~3s：
+
+| 环节 | 改动 |
+| --- | --- |
+| killer 杀进程前的等待（让 202 先回到浏览器） | 1200ms → **700ms** |
+| 批处理在「进程已消失」后的额外沉降延时 | **删除** —— 循环已经等到该镜像名全部消失，端口与单实例锁此时就是空的 |
+
+另外把批处理里的日志改成 `%DATE% %TIME%`：原先是在 PowerShell 侧取一次时间戳写死，
+三行日志显示同一秒，**根本无法回读真实耗时**（我一度据此误判「等待循环没生效」）。
 
 ## 来源
 
