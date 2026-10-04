@@ -1,0 +1,10 @@
+# ============================================================
+# @oblivion/brand — Bundle 层 patch
+#
+# 由 package.json 的 `dsh.bundle.patch` 指向；作用是把本插件的行插进组合树。
+# 注意：patch 会**替换整段 config** 而非合并，因此这里不写 config。
+# ============================================================
+
+- insert:
+    - id: oblivion-brand
+      name: '@oblivion/brand'
