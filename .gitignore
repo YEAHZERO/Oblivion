@@ -1,0 +1,27 @@
+# 依赖与本地状态
+node_modules/
+.pnpm-store/
+.cache/
+.dshx/
+
+# 构建产物
+dist/
+
+# 客户端插件的编译输出（lib/）。
+# dshx check / 激活需要它存在；想「clone 后免构建」就保持跟踪，
+# 想只存源码就把下面这行放开。
+# lib/
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# 编辑器 / 操作系统
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json

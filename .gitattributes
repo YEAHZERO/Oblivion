@@ -1,0 +1,30 @@
+# 统一按 LF 入库，避免 Windows 上 CRLF 引发整套文件改写
+* text=auto eol=lf
+
+# 显式声明为文本（即使被判定为二进制风险）
+*.ts   text
+*.tsx  text
+*.js   text
+*.mjs  text
+*.cjs  text
+*.json text
+*.yml  text
+*.yaml text
+*.md   text
+
+# 二进制
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf  binary
+*.zip  binary
+*.tgz  binary
+
+# 让 git 不要尝试 diff 锁文件
+pnpm-lock.yaml -diff
+package-lock.json -diff
