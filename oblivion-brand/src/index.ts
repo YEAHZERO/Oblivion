@@ -73,6 +73,7 @@ function Write-Log([string]$message) {
   } catch { }
 }
 
+# -------------------------------------------------------------------- killer
 try {
   Write-Log "helper start: host pid=$HostPid"
 
@@ -98,9 +99,7 @@ try {
         # The DSH host itself is also DeepSeek Harness.exe (ELECTRON_RUN_AS_NODE=1)
         # and shares its executable path with the Electron main process, so depth 0
         # already matches. Stopping at the first match would kill the host child
-        # instead of the main process: the main would break because it lost its
-        # child, and Start-Process would then race into
-        # "Another DSH instance is running".
+        # instead of the main process.
         $target = $proc
       }
     }
@@ -127,11 +126,58 @@ try {
 
   Write-Log ("target confirmed: pid={0} exe={1}" -f $target.ProcessId, $exe)
 
+  # Build the relauncher batch. Kept as a file (not an inline command) so the
+  # quoting stays readable and the wait loop can use goto.
+  $batPath = Join-Path (Split-Path -Parent $LogPath) 'obl-brand-relaunch.cmd'
+  $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+  $batLines = @(
+    '@echo off',
+    'setlocal',
+    ('set "APP={0}"' -f $exe),
+    ('set "IMG={0}"' -f (Split-Path -Leaf $exe)),
+    ('set "LOG={0}"' -f $LogPath),
+    ('>>"%LOG%" echo {0} relauncher start' -f $stamp),
+    'set /a N=0',
+    ':wait',
+    # The timeout command needs a console, so sleep with ping instead.
+    'tasklist /FI "IMAGENAME eq %IMG%" 2>nul | find /I "%IMG%" >nul',
+    'if errorlevel 1 goto go',
+    'set /a N+=1',
+    'if %N% GEQ 40 goto go',
+    'ping -n 2 127.0.0.1 >nul',
+    'goto wait',
+    ':go',
+    ('>>"%LOG%" echo {0} relauncher: previous processes gone' -f $stamp),
+    'ping -n 2 127.0.0.1 >nul',
+    'start "" "%APP%"',
+    ('>>"%LOG%" echo {0} relaunched' -f $stamp)
+  )
+  Set-Content -LiteralPath $batPath -Value $batLines -Encoding ASCII
+  Write-Log "relauncher batch written: $batPath"
+
   # Verify-only mode: report the target and stop. Used to prove identification
   # without ending the running application.
   if ($DryRun) {
-    Write-Log 'dry run: target identified, nothing stopped'
+    Write-Log 'dry run: target identified, batch written, nothing stopped or armed'
     exit 0
+  }
+
+  # Arm the relauncher BEFORE killing anything.
+  #
+  # Measured: this helper dies together with the Electron main process (they share
+  # a job object), so an in-process "stop, wait, Start-Process" never reaches its
+  # last step -- the log ended at "stopped pid=..." and the app stayed closed until
+  # the user reopened it by hand.
+  #
+  # A process created through WMI has the WMI provider host as its parent, so it is
+  # OUTSIDE that job and survives. It must be cmd.exe, not PowerShell: Windows
+  # PowerShell 5.1 needs a console, and a WMI-created process has none -- it exits 0
+  # without running a single line (same root cause as the detached trap).
+  try {
+    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ('cmd.exe /c "{0}"' -f $batPath) }
+    Write-Log ("relauncher armed via WMI: returnValue={0} pid={1}" -f $created.ReturnValue, $created.ProcessId)
+  } catch {
+    Write-Log ("relauncher arm failed: {0}" -f $_)
   }
 
   # Let the HTTP 202 reach the browser first, otherwise the page drops the response.
@@ -139,15 +185,6 @@ try {
 
   Stop-Process -Id $target.ProcessId -Force -ErrorAction Stop
   Write-Log ("stopped pid={0}" -f $target.ProcessId)
-
-  for ($i = 0; $i -lt 60; $i++) {
-    if (-not (Get-Process -Id $target.ProcessId -ErrorAction SilentlyContinue)) { break }
-    Start-Sleep -Milliseconds 250
-  }
-
-  Start-Sleep -Milliseconds 900
-  Start-Process -FilePath $exe
-  Write-Log 'relaunched'
 } catch {
   Write-Log ("failed: {0}" -f $_)
   exit 1
