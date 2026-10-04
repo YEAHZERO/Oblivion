@@ -230,6 +230,39 @@ oblivion-brand/
 去掉 `detached` 不会让子进程随父进程消失 —— 已单独实测：**父进程退出后 6 秒内心跳仍在继续**
 （Windows 本就不会因父进程结束而终止子进程）。
 
+### 重启功能的第五个坑：helper 与主进程同作业对象，会一起被杀
+
+第一次真实点击的日志停在半路：
+
+```
+23:02:54 target confirmed: pid=25388
+23:02:56 stopped pid=25388        ← 到此为止，没有 relaunched
+```
+
+应用被关掉后再没起来，是用户手动重开的。原因：**helper 与 Electron 主进程处在同一个作业对象里**，
+杀掉主进程的同时把自己也带走了，脚本最后那步 `Start-Process` 根本没机会执行。
+
+**修法：把「重新拉起」这一步派到作业对象之外。** 经 WMI 创建的进程，其父是 WMI provider host，
+不在我们的作业对象内，因此能在主进程死后存活。
+
+但这里又踩到同一个根因的第二面 —— **经 WMI 创建的 PowerShell 同样跑不起来**（无控制台），
+实测：
+
+| 经 WMI 创建的目标 | 结果 |
+| --- | --- |
+| `cmd.exe /c echo … > file` | ✅ 写入成功 |
+| `powershell.exe -Command …` | ❌ 无输出 |
+| `powershell.exe -File …` | ❌ 无输出 |
+| `cmd /c start "" powershell -File …` | ❌ 无输出 |
+| `cmd.exe /c <等待批处理>` | ✅ 等待循环 + `start` 全部生效 |
+
+所以**重新拉起改用纯批处理**（`obl-brand-relaunch.cmd`）：轮询 `tasklist` 直到该镜像名的进程全部消失
+（上限 40 次，避免死循环），再用 `start ""` 拉起。批处理里用 `ping -n 2 127.0.0.1` 代替
+`timeout` —— `timeout` 同样需要控制台。
+
+> 另一个陷阱：`RESTART_SCRIPT` 是 `String.raw` 模板，**注释里不能出现反引号** ——
+> 一个 `` `goto` `` 就会提前终止模板，报出一堆莫名其妙的 TS 语法错误。
+
 ## 来源
 
 北极星几何与素材来自 `Oblivion_deepseek/assets/brand/`（`polaris-path.ts` / `polaris.svg` 同源）。`src/client/polaris.ts` 是该 path 的副本，两边更新时需同步。
