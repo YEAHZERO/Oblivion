@@ -148,9 +148,17 @@ Oblivion/
 **一条命令（推荐）**：`tools/check-workspace.ps1` 在**运行时解析** DSH 运行时位置，因此不依赖 `pnpm` 在 PATH 上：
 
 ```powershell
-powershell -File tools/check-workspace.ps1              # = install + typecheck + test + build + 版本一致性
-powershell -File tools/check-workspace.ps1 -Task test   # 只跑测试（install/typecheck/test/build/version）
+powershell -File tools/check-workspace.ps1              # = 契约校验 + install + typecheck + test + build + 版本一致性
+powershell -File tools/check-workspace.ps1 -Task test   # 只跑测试（compat/install/typecheck/test/build/version）
+powershell -File tools/check-workspace.ps1 -Task compat # 只跑 DSH 宿主契约校验（升级后最该跑的一条）
 ```
+
+> **`check` 的第一步是 DSH 宿主契约校验** —— 它回答「DSH 升级后我的插件还活着吗」。
+> 机制、升级 SOP 与台账见 [`.design/DSH-COMPAT.md`](.design/DSH-COMPAT.md)。
+
+> **`.ps1` 必须带 UTF-8 BOM**（PS 5.1 会把无 BOM 脚本按 ANSI 读，中文注释乱码 → 解析失败）。
+> 这条**有机器检查**：`tools/lint-ps1-bom.ps1`（纯 ASCII 写的，因此它自己永远不会因这个原因失效），
+> 且 `pnpm run check` 会先跑它。**检查不能写在它要保护的文件里** —— 那个文件一旦丢了 BOM 就连解析都过不去，脚本内的断言永远跑不到。
 
 > 之所以要有这个脚本：DSH 把 pnpm 作为**受控运行时**分发（`pnpm.mjs` 由它自带的 node 执行），
 > 本机上 `pnpm` **不在 PATH** 上，所以 `package.json` 里不能写嵌套的 `pnpm run xxx`（会 `'pnpm' is not recognized`）。

@@ -163,7 +163,7 @@ function createBeatSender(win, getConfig, endpoint = "/oblivion-vimc/beat", inte
     const send = win.fetch;
     if (typeof send !== "function") return;
     const payload = {
-      version: "0.2.8",
+      version: "0.2.9",
       command: entry.command,
       at: Date.now(),
       userAgent: win.navigator?.userAgent ?? "",
@@ -836,7 +836,7 @@ var HELP = [
   "  oblivionVimc.set({...}) / probe() / hints() / bindings() / importVimium(json)"
 ].join("\n");
 function installApi(win, engine) {
-  const version = "0.2.8";
+  const version = "0.2.9";
   const api = {
     version,
     status: () => ({
@@ -2681,7 +2681,7 @@ function createVimcSettingsPanel(win, engine) {
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { style: { ...HEADING, fontSize: "15px" }, children: "Oblivion \u952E\u76D8\u5BFC\u822A" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: BADGE, children: [
             "v",
-            "0.2.8"
+            "0.2.9"
           ] })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Toggle, { label: "\u542F\u7528", checked: config.enabled, onChange: (enabled) => apply2({ enabled }) })
@@ -2970,7 +2970,7 @@ function apply(ctx) {
   };
   const disposeApi = installApi(win, engine);
   logger?.info(
-    `v${"0.2.8"} \u5DF2\u5B89\u88C5\uFF1Aw/s \u7FFB\u9875\u3001a/d \u6A2A\u5411\u6B65\u8FDB\u3001W/S \u5230\u9876/\u5230\u5E95\u3001f \u94FE\u63A5\u63D0\u793A\u3001i \u805A\u7126\u8F93\u5165\u6846\uFF08\u7126\u70B9\u5728\u8F93\u5165\u6846\u5185\u65F6\u4E0D\u63A5\u7BA1\uFF0CEsc \u9000\u51FA\uFF09`
+    `v${"0.2.9"} \u5DF2\u5B89\u88C5\uFF1Aw/s \u7FFB\u9875\u3001a/d \u6A2A\u5411\u6B65\u8FDB\u3001W/S \u5230\u9876/\u5230\u5E95\u3001f \u94FE\u63A5\u63D0\u793A\u3001i \u805A\u7126\u8F93\u5165\u6846\uFF08\u7126\u70B9\u5728\u8F93\u5165\u6846\u5185\u65F6\u4E0D\u63A5\u7BA1\uFF0CEsc \u9000\u51FA\uFF09`
   );
   beat.send("mounted", { probe: engine.probe({ scan: false }), perf: engine.perf() });
   let settleTimer = null;

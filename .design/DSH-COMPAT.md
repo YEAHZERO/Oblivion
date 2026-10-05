@@ -45,8 +45,10 @@ DSH 升级可能动的东西，按「坏了会不会响」分两类：
 ### ② 校验脚本（升级后一条命令）
 
 ```powershell
-pnpm run verify:dsh                      # = powershell -File tools/verify-dsh-compat.ps1
-powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand
+pnpm run check                                  # 全量；**第一步**就是契约校验
+pnpm run verify:dsh                             # 只跑契约校验（= tools/verify-dsh-compat.ps1）
+pnpm run compat                                 # 同上，走工作区入口（-Task compat）
+powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个插件
 ```
 
 它做的事：读每个插件的 `dsh.compat`，逐条**对宿主源码取证**，打印 PASS/FAIL 矩阵，任一条不过就 `exit 1`。
@@ -85,7 +87,7 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand
 
 **升级后（必做）**
 
-1. `pnpm run verify:dsh` —— 契约仍在？
+1. `pnpm run verify:dsh` —— 契约仍在？（等价于 `pnpm run check` 会跑的第一项）
 2. `pnpm run check` —— 插件自身仍能 typecheck / test / build？
 3. **重启应用**，看有没有加载错误（`N entry did not activate`）。
 4. 每个客户端插件**目视确认一次**：品牌位（`@oblivion/brand`）、键盘导航（`@oblivion/vimc`）。
@@ -93,17 +95,20 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand
 
 > **第 4 步不能省**：静态契约过了不等于**渲染**过了。契约是必要条件，不是充分条件。
 
+> **范围**：本机制**只管 Oblivion 自己的插件**。同一 profile 里的第三方插件
+> （`dsh-creator-mode-plus` 等）不在校验范围内 —— 升级后**只按本脚本的结果判断**我们的插件是否还活着。
+
 ---
 
 ## 四、已知风险（与本台账相关）
 
 | # | 风险 | 为什么危险 | 处置 |
 | --- | --- | --- | --- |
-| R1 | **`dsh-creator-mode-plus` 的 peer 范围是 `>=0.2.0-rc.1 <0.2.1`** | **升到 0.2.1 就出界**。它坏掉会拖累**整个 profile**（上次就是 `1 entry did not activate`），而且 **`dshx_*` 工具本身就是它提供的** —— 验证手段会先挂 | 升级前先确认它有没有对应版本；若没有，**先摘掉它**再升级，不要让它拖垮你的插件 |
-| R2 | `dsh-creator-mode-plus` 的两个 Windows 路径缺陷已就地打补丁 | 补丁在 `node_modules` 里，**插件升级即丢失** | 上游未修前，每次它升级后重新检查这两处（`desktop-profile.js` 的分隔符、`runner.js` 的 `--import` 裸路径） |
-| R3 | **`@oblivion/vimc` 挂在机器本地的 `cordis.patch.yml`**（不在 `dsh.profile.bundles`） | 换机器 / 重置 profile 就丢；且它是**用户层文件**，不在仓库里 | 应迁到 **bundle 层**：给 vimc 加 `cordis.patch.yml` + 写进 `dsh.profile.bundles`（像 `@oblivion/brand` 那样自描述） |
-| R4 | 两个插件原先**都没声明宿主版本范围** | 升级后无法自动发现不兼容 | ✅ **已修**：两者都加了 `dsh.compat.host` |
-| R5 | 契约校验**只覆盖静态契约** | 覆盖不到「渲染结果不对」 | 靠 SOP 第 4 步的目视确认补上 |
+| R1 | **`@oblivion/vimc` 曾挂在机器本地的 `cordis.patch.yml`**（不在 `dsh.profile.bundles`） | 换机器 / 重置 profile 就丢，且**不报错** —— 插件"装好了却完全不生效" | ✅ **已修（2026-10-06）**：vimc 加了 `cordis.patch.yml`（`dsh.bundle.patch`）+ 写进 `dsh.profile.bundles`，并**移除用户层的重复插入**（否则同 id 插两次）。现校验为 **6/6**（多出的就是 bundles 挂载断言） |
+| R2 | 两个插件原先**都没声明宿主版本范围** | 升级后无法自动发现不兼容 | ✅ **已修**：两者都加了 `dsh.compat.host` |
+| R3 | 契约校验**只覆盖静态契约** | 覆盖不到「渲染结果不对」 | 靠 SOP 第 4 步的目视确认补上 |
+| R4 | **漏跑校验** | 校验再准，不跑等于没有 | ✅ **已修**：`pnpm run check` 现在**第一步**就是契约校验（`-Task compat`） |
+| R5 | 插件新增扩展点依赖时**忘了补 `dsh.compat`** | 该契约不在校验范围内，静默失效 | 加扩展点依赖 = 必须同批补 `dsh.compat`；本文件与脚本同步更新 |
 
 ---
 
@@ -112,15 +117,20 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand
 | 插件 | 插件版本 | DSH 版本 | 校验日期 | 结果 | 证据源 |
 | --- | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS 10/10 | `deepseek-harness @ dsh-v0.2.0-rc.2` (`639ed01539`) |
-| `@oblivion/vimc` | 0.2.8 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS 5/5 | 同上 |
+| `@oblivion/vimc` | **0.2.9** | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS **6/6**（迁 bundle 层后） | 同上 |
 
-**本轮校验覆盖的契约**：
+**校验覆盖的契约**：
 
 | 插件 | 断言的契约 |
 | --- | --- |
 | `@oblivion/brand` | host 范围；5 个槽位的 kind（`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` = `single`，`sidebar.panellist` = `list`，`main` = `keyed`）；`__ModuleLoader__`；`slots` 服务；profile 挂载（dependencies + bundles） |
-| `@oblivion/vimc` | host 范围；`settings.section` = `list`；客户端包 `@deepseek-ai/dsh-client-ui-settings` 存在；`__ModuleLoader__`；profile 挂载（dependencies） |
+| `@oblivion/vimc` | host 范围；`settings.section` = `list`；客户端包 `@deepseek-ai/dsh-client-ui-settings` 存在；`__ModuleLoader__`；profile 挂载（dependencies + **bundles**） |
+
+**两个插件的挂载方式现已统一**：都走 **bundle 层**（各自 `package.json` 的 `dsh.bundle.patch` 指向自己的 `cordis.patch.yml`，并在 `dsh.profile.bundles` 中列出）——
+**包自己声明怎么被组合**，装到哪台机器都一样。
 
 ---
+
+_最后更新：2026-10-06 · 新增机制或改动挂载方式时同步本文件与 `tools/verify-dsh-compat.ps1`。_
 
 _最后更新：2026-10-06 · 新增机制时同步本文件与 `tools/verify-dsh-compat.ps1`。_

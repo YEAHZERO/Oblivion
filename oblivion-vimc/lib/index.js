@@ -75,7 +75,7 @@ function scheduleEvidenceFlush() {
     flushTimer = null;
     writeEvidence("client-beat.json", {
       plugin: "@oblivion/vimc",
-      hostVersion: "0.2.8",
+      hostVersion: "0.2.9",
       hostPid: process.pid,
       ...summary
     });
@@ -142,7 +142,7 @@ function apply(ctx) {
   };
   writeEvidence("host-mount.json", {
     plugin: "@oblivion/vimc",
-    version: "0.2.8",
+    version: "0.2.9",
     // 载入的模块 URL：用于回答「现在跑的是不是最新构建」（Host 可能按修订号
     // 追加查询串，或复用 ESM 缓存里的旧模块 —— 见 README「迭代」节）。
     moduleUrl: import.meta.url,
@@ -156,14 +156,14 @@ function apply(ctx) {
   ctx.effect?.(() => () => {
     writeEvidence("host-unmount.json", {
       plugin: "@oblivion/vimc",
-      version: "0.2.8",
+      version: "0.2.9",
       pid: process.pid,
       unmountedAt: (/* @__PURE__ */ new Date()).toISOString()
     });
   }, "oblivion-vimc: \u5378\u8F7D\u81EA\u8BC1");
   try {
     ctx.provide?.("oblivionVimc", {
-      version: "0.2.8",
+      version: "0.2.9",
       describe: () => "Oblivion \u952E\u76D8\u5BFC\u822A\u63D2\u4EF6\uFF08\u5BBF\u4E3B\u534A\u8FB9\uFF1A\u542F\u52A8\u6807\u8BB0 + \u8BCA\u65AD\u8DEF\u7531\uFF09"
     });
   } catch (error) {

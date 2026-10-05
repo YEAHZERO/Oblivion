@@ -15,17 +15,37 @@
     DSH_PNPM          pnpm.mjs 路径
 
 .EXAMPLE
-  powershell -File tools/check-workspace.ps1              # = check：install + typecheck + test + build
+  powershell -File tools/check-workspace.ps1              # = 契约 + install + typecheck + test + build + 版本一致性
   powershell -File tools/check-workspace.ps1 -Task test   # 只跑测试
+  powershell -File tools/check-workspace.ps1 -Task compat # 只跑 DSH 宿主契约校验
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('check', 'install', 'typecheck', 'test', 'build', 'version')]
+  [ValidateSet('check', 'compat', 'install', 'typecheck', 'test', 'build', 'version')]
   [string]$Task = 'check'
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# ---- 自检：本目录的 .ps1 必须带 UTF-8 BOM ----
+#
+# Windows PowerShell 5.1 会把**无 BOM** 的脚本按 ANSI/GBK 读：中文注释乱码 → 解析失败。
+# 这条规则原本只写在 AGENTS.md 里，2026-10-06 就被踩中一次（编辑器改完 BOM 丢了），
+# 而且报错内容（乱码 token）指向的是**错误的方向**（看起来像语法写错）。
+# 所以改成机器检查，而不是靠人记。
+function Assert-ScriptBom {
+  $bad = @()
+  Get-ChildItem $PSScriptRoot -Filter '*.ps1' -File | ForEach-Object {
+    $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    if (-not $hasBom) { $bad += $_.Name }
+  }
+  if ($bad.Count -gt 0) {
+    throw ('以下脚本缺 UTF-8 BOM，PS 5.1 会按 ANSI 读、中文注释乱码导致解析失败：' + ($bad -join ', ') + '。修法：另存为「UTF-8 带 BOM」。')
+  }
+}
+Assert-ScriptBom
 
 $runtimeRoot = $env:DSH_RUNTIME_ROOT
 if (-not $runtimeRoot) {
@@ -53,6 +73,15 @@ function Invoke-Pnpm {
   if ($LASTEXITCODE -ne 0) { throw ("「" + $Label + "」失败（exit " + $LASTEXITCODE + "）") }
 }
 
+# ---- DSH 宿主契约校验（升级后最重要的一条）----
+# 子进程调用：verify-dsh-compat.ps1 用 exit 收口，同进程调用会把本脚本一起结束。
+function Invoke-Compat {
+  $script = Join-Path $PSScriptRoot 'verify-dsh-compat.ps1'
+  Write-Host '==> DSH 宿主契约校验   # 升级后「我的插件还活着吗」' -ForegroundColor Cyan
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $script
+  if ($LASTEXITCODE -ne 0) { throw ('「DSH 宿主契约校验」失败（exit ' + $LASTEXITCODE + '）') }
+}
+
 Push-Location $repoRoot
 try {
   $version = (& $node $pnpm --version | Out-String).Trim()
@@ -61,6 +90,9 @@ try {
 
   if ($Task -eq 'install') {
     Invoke-Pnpm -TaskArgs @('install') -Label '安装工作区依赖（依赖只存一份）'
+  }
+  elseif ($Task -eq 'compat') {
+    Invoke-Compat
   }
   elseif ($Task -eq 'typecheck') {
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'typecheck') -Label '全部插件类型检查'
@@ -75,6 +107,7 @@ try {
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'check:version') -Label 'VERSION 与 package.json 一致性'
   }
   else {
+    Invoke-Compat
     Invoke-Pnpm -TaskArgs @('install') -Label '安装工作区依赖（依赖只存一份）'
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'typecheck') -Label '全部插件类型检查'
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'test') -Label '全部插件测试'

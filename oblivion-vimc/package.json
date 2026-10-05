@@ -1,6 +1,6 @@
 {
   "name": "@oblivion/vimc",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Oblivion 键盘导航插件：把 DSH 当浏览器用 —— w/s/a/d 上下左右翻页、W/S 到顶/到底、i 聚焦输入框；只在焦点不在输入框内时生效。",
   "license": "MIT",
   "type": "module",
@@ -11,6 +11,9 @@
     "./package.json": "./package.json"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "inject": [
@@ -39,6 +42,7 @@
     "lib",
     "VERSION",
     "README.md",
+    "cordis.patch.yml",
     "dshx.yml",
     "cordis.yml"
   ],

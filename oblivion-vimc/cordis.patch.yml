@@ -1,0 +1,19 @@
+# ============================================================
+# @oblivion/vimc — Bundle 层 patch
+#
+# 由 package.json 的 `dsh.bundle.patch` 指向；作用是把本插件的行插进组合树。
+# 注意：patch 会**替换整段 config** 而非合并，因此这里不写 config。
+#
+# 为什么必须走 bundle 层（而不是 profile 的用户层 cordis.patch.yml）：
+#   用户层是**机器本地文件**（~/.dsh/profiles/desktop/cordis.patch.yml），不入库，
+#   换机器或重置 profile 就丢 —— 插件会"装好了却完全不生效"，且不报错。
+#   走 bundle 层后，**包自己声明怎么被组合**，装到哪台机器都一样。
+#
+# id 用**包名**而非 kebab 目录名：`dshx activate-new-client` 有一条硬校验
+# `plugin.id === packageName`（见 tools/dshx/src/internal/new-client.ts），
+# 与 dshx.yml 的 `id` 保持逐字一致。
+# ============================================================
+
+- insert:
+    - id: '@oblivion/vimc'
+      name: '@oblivion/vimc'

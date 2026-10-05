@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     把 DeepSeek Harness 的桌面 / 开始菜单快捷方式图标换成自己的图，或恢复默认。
 
