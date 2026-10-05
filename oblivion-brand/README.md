@@ -161,10 +161,13 @@ ctx.provide('market', { render: (props = {}) => buildMarketElement(props) })
 ## 构建
 
 ```powershell
-cd C:\Projects\Oblivion\oblivion-brand
-npm install
-npm run build        # esbuild 双产物
-npm run typecheck    # tsc --noEmit
+# 依赖在仓库根安装一次（pnpm workspace；插件目录里只留符号链接）
+cd C:\Projects\Oblivion
+pnpm install
+
+# 构建本插件
+pnpm -C oblivion-brand run build        # esbuild 双产物
+pnpm -C oblivion-brand run typecheck    # tsc --noEmit
 ```
 
 产出：
@@ -191,7 +194,7 @@ $dsh = 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd'
 
 > `link:` 的路径必须用**正斜杠**：桌面包管理器的目标校验正则不含反斜杠，写 `link:C:\...` 会被拒。
 
-该命令会同时更新 `dependencies` 与 `dsh.profile.bundles`。因为是 `link:` 安装（junction 指向源码目录），**改完源码只要重跑 `npm run build` 再重启 App**，不需要重新安装。
+该命令会同时更新 `dependencies` 与 `dsh.profile.bundles`。因为是 `link:` 安装（junction 指向源码目录），**改完源码只要重跑 `pnpm run build` 再重启 App**，不需要重新安装。
 
 ## 目录
 
@@ -314,11 +317,10 @@ $startup.ShowWindow = 0
 同步到 `package.json`。
 
 ```powershell
-npm run version:bump -- patch    # fix / docs / chore
-npm run version:bump -- minor    # feat
-npm run version:bump -- major    # 破坏性改动 / 正式发版
-npm run version:bump -- patch --tag   # 顺便打 git tag v<新版本>
-npm run check:version            # 只校验 VERSION 与 package.json 是否漂移
+pnpm run version:bump               # 默认加第三位（patch）
+pnpm run version:bump -- --minor    # 仅在明确要求时
+pnpm run version:bump -- --major    # 仅在明确要求时
+pnpm run check:version              # 只校验 VERSION 与 package.json 是否漂移
 ```
 
 **客户端（浏览器半边）拿不到 `package.json`**，所以版本由 `scripts/build.mjs` 在打包时

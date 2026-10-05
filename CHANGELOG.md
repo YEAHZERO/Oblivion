@@ -13,6 +13,65 @@
 
 ---
 
+---
+
+## [未发布] — 仓库工程化：依赖改用 pnpm workspace（与 DSH Profile 同一模型）
+
+### 变更：npm 单包 → pnpm workspace
+
+所有者要求「本 oblivion 也使用同样的 pnpm，不然反复出现不同文件夹的 node_modules」。落地：
+
+| 文件 | 作用 |
+| --- | --- |
+| `package.json`（根，private） | `packageManager: pnpm@11.7.0`；`-r` 聚合脚本（`build`/`typecheck`/`test`/`check:version`/`check`） |
+| `pnpm-workspace.yaml` | `packages: ['oblivion-*']` + `allowBuilds: { esbuild: true }`（依赖安装脚本**显式审批**） |
+| `.npmrc` | `auto-install-peers=false`（框架包只放 peer）、`strict-peer-dependencies=false`、`hoist=false` |
+| `pnpm-lock.yaml` | 工作区唯一 lockfile（入库）；删除两个 `package-lock.json` |
+
+**实测收益（同机迁移前后）**
+
+| 指标 | npm | pnpm workspace |
+| --- | --- | --- |
+| `oblivion-brand/node_modules` | 38.0 MB / 313 文件 | **0.02 MB / 12 项（5 个符号链接）** |
+| `oblivion-vimc/node_modules` | 54.7 MB / 3626 文件 | **0.02 MB / 12 项（9 个符号链接）** |
+| 实体依赖 | 两处各一份（~92.7 MB） | 根 `node_modules/.pnpm` 一份（~55 MB，两插件共享） |
+
+### 与 DSH 一致的铁律（写进 `.action/AGENTS.MD` 的《包管理器规范》）
+
+1. **框架包 `@deepseek-ai/*` 只放 `peerDependencies`**，绝不放 `dependencies`（否则运行时两个模块实例、symbol 分裂）。
+2. 依赖的 install/postinstall **默认不执行**，只在 `allowBuilds` 里逐包放行（当前仅 esbuild）。
+3. `hoist=false`：未声明的依赖一律解析失败。
+4. 依赖安装/脚本执行走 **DSH 分发的受控 pnpm 11.7.0**（不要求系统装 Node/pnpm）；
+   **禁止**在插件目录里 `npm install`。
+
+### 新增：工作区统一入口 `tools/check-workspace.ps1`
+
+- 本机 `pnpm` **不在 PATH**（DSH 只把 `pnpm.mjs` 作为受控运行时分发），所以根 `package.json` 里
+  **不能**写嵌套的 `pnpm run xxx`（实测 `'pnpm' is not recognized`）
+- 入口脚本在**运行时**解析运行时位置（可用 `DSH_RUNTIME_ROOT` / `DSH_NODE` / `DSH_PNPM` 覆盖），
+  按 `install → typecheck → test → build → check:version` 顺序执行并在任一环失败时中止
+- 两个坑记下来：① 脚本必须兼容 **Windows PowerShell 5.1**（`$x = if (...) {...}` 是 pwsh 7 语法，5.1 直接解析失败）；
+  ② `.ps1` **必须带 UTF-8 BOM**，否则 5.1 按 ANSI 读、中文变乱码导致 `UnexpectedToken`
+- 根脚本 `check`/`build`/`test`/`typecheck`/`check:version` 全部指向它；实测 `pnpm run build|test|check:version`
+  与 `powershell -File tools/check-workspace.ps1` 全部 **exit 0**
+
+### 验收
+
+- `pnpm install` 退出 0（esbuild 的 postinstall 经审批执行，`esbuild.transform` 实测可用）
+- `pnpm run check`：`typecheck` ✅（brand + vimc）、`test` ✅（vimc **42/42**）、`build` ✅（两插件产物正常）
+- `pnpm -r run check:version`：`oblivion-brand 0.1.0` / `oblivion-vimc 0.2.8` 一致
+- `dshx check oblivion-vimc` 仍全绿（源码契约不受包管理器影响）
+
+### 顺带更正
+
+- `CONTRIBUTING.md`《第三方复用登记》第 1 行：vimium-c 的许可证由误记的「MIT」更正为 **Apache-2.0**
+  （`LICENSE.txt`：Copyright 2023-present Gong Dahan），并补上本地源码版本（2.12.3）与被参考的具体文件；
+  其余行「package-lock 锁定」改为「pnpm-lock 锁定」。
+- `README.md` / `WORKSPACE.md` / `CONTRIBUTING.md` / `.action/AGENTS.MD` / `.action/GUIDE.MD` / 两个插件 README：
+  命令与结构说明统一改成 pnpm workspace。
+
+---
+
 ## [未发布] — `@oblivion/vimc` v0.2.8：落点标记跟随滚动 + 内联引用独立一档 + 上游署名修正
 
 ### 修复：落点标记错位（所有者实测「搜『高亮』，黄框出现在『结果』旁边」）

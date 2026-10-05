@@ -115,6 +115,7 @@ Oblivion/
 ├── .action/                 # Agent 协作框架（规则 / 工作流 / 技能）
 ├── .memory/                 # 记忆库：规则与模板入库，逐日记录不入库
 ├── .design/                 # 设计书 ARCHITECTURE.MD + 设计笔记
+├── package.json · pnpm-workspace.yaml · .npmrc · pnpm-lock.yaml   # pnpm 工作区（依赖只存一份）
 ├── oblivion-brand/          # @oblivion/brand（品牌槽位接管）
 │   ├── VERSION              #   插件版本单一真源
 │   ├── src/ · lib/ · scripts/
@@ -124,6 +125,11 @@ Oblivion/
 │   ├── src/ · lib/ · scripts/ · tests/
 │   └── README.md
 ├── tools/                   # 本机运维脚本
+├── package.json             # pnpm workspace 根（packageManager: pnpm@11.7.0；脚本转 tools/check-workspace.ps1）
+├── pnpm-workspace.yaml      # 工作区 glob + allowBuilds（依赖安装脚本显式审批）
+├── .npmrc                   # auto-install-peers=false · hoist=false（框架包只放 peerDependencies）
+├── pnpm-lock.yaml           # 工作区唯一 lockfile（入库）
+├── tools/check-workspace.ps1# 工作区统一入口（解析 DSH 运行时；不依赖 PATH）
 ├── CHANGELOG.md             # 对外版本说明
 ├── CONTRIBUTING.md          # 贡献指南 + 第三方复用登记
 ├── LICENSE · SECURITY.md
@@ -131,6 +137,51 @@ Oblivion/
 ├── WORKSPACE.md             # DSH 插件工作区操作细节
 └── README.md
 ```
+
+---
+
+## 四·五、构建与测试（pnpm workspace）
+
+本仓库用 **pnpm**，并且**只用 DSH 分发的那份受控运行时**——不要求系统安装 Node.js 或 pnpm。
+
+**一条命令（推荐）**：`tools/check-workspace.ps1` 在**运行时解析** DSH 运行时位置，因此不依赖 `pnpm` 在 PATH 上：
+
+```powershell
+powershell -File tools/check-workspace.ps1              # = install + typecheck + test + build + 版本一致性
+powershell -File tools/check-workspace.ps1 -Task test   # 只跑测试（install/typecheck/test/build/version）
+```
+
+> 之所以要有这个脚本：DSH 把 pnpm 作为**受控运行时**分发（`pnpm.mjs` 由它自带的 node 执行），
+> 本机上 `pnpm` **不在 PATH** 上，所以 `package.json` 里不能写嵌套的 `pnpm run xxx`（会 `'pnpm' is not recognized`）。
+> 根 `package.json` 的 `check` / `build` / `test` / `typecheck` / `check:version` 全部指向这个脚本；
+> 换机器/CI 可用 `DSH_RUNTIME_ROOT`、`DSH_NODE`、`DSH_PNPM` 覆盖。
+
+**直接调运行时**（等价，便于排错）：
+
+```powershell
+# DSH 受控运行时（随 DSH Desktop 分发；版本与宿主一致）
+$node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+$pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.mjs"
+
+& $node $pnpm install          # 工作区一次装完
+& $node $pnpm -r run build     # 全部插件构建
+& $node $pnpm -C oblivion-vimc run test   # 单个插件
+```
+
+如果你把该运行时目录放进了 PATH（或系统本来就有同版本 pnpm），直接 `pnpm install` / `pnpm -r run build` 也可以。
+
+**为什么是 pnpm 而不是 npm —— 与 DSH 的 Profile 模型同源：**
+
+| 维度 | npm（旧） | pnpm workspace（现在） |
+| --- | --- | --- |
+| 依赖落盘 | 每个插件一份实体 `node_modules`（实测 `oblivion-brand` 38.0 MB + `oblivion-vimc` 54.7 MB） | **全局内容寻址 store 一份**，插件目录里只有符号链接（实测每个插件 `node_modules` 约 **0.02 MB / 12 项**） |
+| lockfile | 每插件一个 `package-lock.json` | 工作区**唯一** `pnpm-lock.yaml` |
+| 安装脚本 | 依赖想跑就跑 | 默认**不执行**，只在 `pnpm-workspace.yaml` 的 `allowBuilds` 里逐包放行（当前仅 `esbuild`） |
+| 框架包 | 容易被装成 `dependencies` → 运行时两个模块实例、symbol 分裂 | 只放 `peerDependencies` + `auto-install-peers=false`，与 DSH Profile 同一条铁律 |
+| 未声明依赖 | 可能"碰巧 require 到" | `hoist=false`：未声明就解析失败 |
+
+> DSH 侧仍按 Profile 模型消费插件：`$DSH_HOME/profiles/<name>/package.json` 里是 `link:` 依赖 +
+> `cordis.patch.yml` 插入行（见 [`WORKSPACE.md`](WORKSPACE.md)），**与这里的开发工作区互不影响**。
 
 ---
 

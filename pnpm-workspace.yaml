@@ -1,0 +1,16 @@
+# Oblivion 工作区（pnpm workspace）
+#
+# 与 DSH 的 Profile 模型一致：**依赖只存一份**（全局内容寻址 store + 硬链接），
+# 每个插件目录里只有指向 store 的符号链接，不再出现「每个文件夹一份 node_modules 实体」。
+#
+# 新增插件只要目录名匹配下面的 glob，就会被自动纳入工作区。
+packages:
+  - 'oblivion-*'
+
+# 依赖安装脚本的**显式审批**（受控供应链）。
+#
+# pnpm 10+ 默认禁止依赖执行安装脚本；pnpm 11 用这张 allowBuilds 映射逐包放行
+# （pnpm 10 时代的旧键名是 onlyBuiltDependencies，本工作区不再使用，避免双重配置）。
+# esbuild 靠 postinstall 落位平台二进制 —— 只放行它一个，其余依赖的脚本一律不执行。
+allowBuilds:
+  esbuild: true

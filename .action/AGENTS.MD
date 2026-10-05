@@ -44,11 +44,19 @@ Oblivion/
 │   ├── specs/         # 需求规格（仅 TEMPLATE.md 入库）
 │   └── release/       # 三级版本分层（alpha / rc / patch）规则
 ├── .design/           # 设计书 ARCHITECTURE.MD（意图/决策/验收基线）
-├── oblivion-brand/    # @oblivion/brand 插件（当前唯一已实现的能力）
+├── oblivion-brand/    # @oblivion/brand 插件（品牌槽位接管）
 │   ├── VERSION        #   插件版本单一真源
 │   ├── src/ lib/ scripts/
 │   └── README.md
+├── oblivion-vimc/     # @oblivion/vimc 插件（键盘导航：w/s/a/d · W/S · [ ] · / · f · i/Esc）
+│   ├── VERSION        #   插件版本单一真源
+│   ├── src/ lib/ scripts/ tests/
+│   └── README.md
 ├── tools/             # 本机运维脚本
+├── package.json       # pnpm workspace 根（packageManager: pnpm@11.7.0）
+├── pnpm-workspace.yaml# packages: ['oblivion-*'] + allowBuilds（依赖安装脚本显式审批）
+├── .npmrc             # auto-install-peers=false · hoist=false
+├── pnpm-lock.yaml     # 工作区唯一 lockfile（入库）
 ├── CHANGELOG.md       # 对外的版本说明（唯一公开发布记录）
 ├── CONTRIBUTING.md    # 贡献指南 + 第三方复用登记
 ├── LICENSE  SECURITY.md
@@ -832,6 +840,22 @@ A:
 | 何时动第二位/第一位 | **仅在所有者明确要求时**（`--minor` / `--major`），不得由提交类型自动推断 |
 | 真源 | 有 `VERSION` 用 `VERSION`；没有但有 `package.json.version` 则以其为源并补建 `VERSION` 镜像 |
 | 触发点 | 每批改动完成验收并写入 changelog 后，执行改动的 agent 必须运行递增脚本（本仓库根缺 `scripts/bump-version.ps1`，插件各自带 `scripts/bump-version.mjs`） |
+
+### 包管理器规范（pnpm workspace，强制）
+
+| 规则 | 内容 |
+| --- | --- |
+| 只用 pnpm | 依赖安装/脚本执行一律走 **DSH 分发的受控 pnpm**（`%USERPROFILE%\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.mjs`，11.7.0）；`package.json` 声明 `packageManager: pnpm@11.7.0` |
+| 依赖只存一份 | 在**仓库根**执行 `pnpm install`；插件目录里的 `node_modules` 应为符号链接（实测每个约 0.02 MB），**禁止**在插件目录里跑 `npm install`（会重新长出每目录一份实体依赖） |
+| 框架包铁律 | `@deepseek-ai/*` **只放 `peerDependencies`**，绝不放 `dependencies`；配套 `.npmrc` 的 `auto-install-peers=false`（否则运行时出现两个模块实例、symbol 身份分裂，工具调用直接崩） |
+| 安装脚本审批 | 依赖的 install/postinstall 默认**不执行**；需要时在 `pnpm-workspace.yaml` 的 `allowBuilds` 里逐包显式放行（当前仅 `esbuild`） |
+| 未声明依赖 | `hoist=false`：插件必须显式声明依赖，不允许"碰巧 require 到" |
+| lockfile | 工作区唯一 `pnpm-lock.yaml` **入库**；不再产生 `package-lock.json` |
+| 入口脚本 | 根 `package.json` 的 `check`/`build`/`test`/`typecheck`/`check:version` 全部转 `tools/check-workspace.ps1`（**运行时解析** DSH 运行时位置；因为本机 `pnpm` 不在 PATH，脚本里不能嵌套 `pnpm run xxx`）。脚本保持 **Windows PowerShell 5.1 兼容**，并且**必须带 UTF-8 BOM**（5.1 会按 ANSI 读无 BOM 脚本，中文会乱码导致解析失败） |
+| 命令 | 根：`pnpm run check`（typecheck+test+build）；单插件：`pnpm -C <plugin> run test` |
+
+> 依据：DSH 以 pnpm 作为 **Profile 隔离机制的实现工具**（树外插件、双锚点解析、peer 共享实例）。
+> 本仓库在**开发期**沿用同一模型，以便「本地怎么装，Profile 里就怎么解析」。
 
 ### 验证清单
 

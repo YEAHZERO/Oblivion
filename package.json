@@ -1,0 +1,17 @@
+{
+  "name": "oblivion",
+  "private": true,
+  "version": "0.0.2",
+  "description": "Oblivion —— DSH 外部插件工作区（pnpm workspace；依赖只存一份）",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1",
+    "typecheck": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task typecheck",
+    "test": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task test",
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task build",
+    "check:version": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task version"
+  }
+}

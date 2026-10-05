@@ -36,8 +36,51 @@ C:\Projects\deepseek-harness\my-plugins\<plugin-name>
 | DSHX | `C:\Projects\deepseek-harness\tools\dshx`（v0.9.5） |
 | 指向配置 | `C:\Users\liveu\.config\dshx\harness`，内容为 Harness checkout 路径 |
 | 备选 | 环境变量 `DSHX_HARNESS`（需重启 DSH 才生效；配置文件方式无需重启） |
+| **包管理器** | **DSH 分发的受控 pnpm**：`%USERPROFILE%\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\{node\bin\node.exe, pnpm\bin\pnpm.mjs}`（pnpm 11.7.0）—— 不要求系统装 Node/pnpm |
 
 Windows 需要**开发者模式**才能创建符号链接（DSHX 全程使用 `symlinkSync`，无 junction 回退）。
+
+## 依赖模型：pnpm workspace（2026-10-05 起）
+
+本仓库的**开发期依赖**走 pnpm workspace，与 DSH 的 Profile 模型同源（依赖只存一份、框架包只放 peer）：
+
+```
+Oblivion/
+├── package.json           # private 根；packageManager: pnpm@11.7.0；-r 聚合脚本
+├── pnpm-workspace.yaml    # packages: ['oblivion-*'] + allowBuilds: { esbuild: true }
+├── .npmrc                 # auto-install-peers=false · strict-peer-dependencies=false · hoist=false
+├── pnpm-lock.yaml         # 工作区唯一 lockfile（入库）
+└── oblivion-*/            # 各插件包（依赖在各自 node_modules 里只是符号链接）
+```
+
+```powershell
+# 推荐：工作区统一入口（运行时解析 DSH 运行时位置，不要求 pnpm 在 PATH 上）
+powershell -File tools/check-workspace.ps1              # install + typecheck + test + build + 版本一致性
+powershell -File tools/check-workspace.ps1 -Task test   # 只跑测试
+
+# 或者直接调运行时
+$node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+$pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.mjs"
+& $node $pnpm install
+& $node $pnpm -r run build
+& $node $pnpm -C oblivion-vimc run test
+```
+
+迁移前后（同一台机器实测）：
+
+| 指标 | npm（迁移前） | pnpm workspace（迁移后） |
+| --- | --- | --- |
+| `oblivion-brand/node_modules` | 38.0 MB / 313 文件 | **0.02 MB / 12 项（5 个符号链接）** |
+| `oblivion-vimc/node_modules` | 54.7 MB / 3626 文件 | **0.02 MB / 12 项（9 个符号链接）** |
+| 实体依赖 | 两处各自一份（合计 ~92.7 MB） | 根 `node_modules/.pnpm` **一份**（~55 MB，两插件共享） |
+| lockfile | 每插件一个 `package-lock.json` | 一个 `pnpm-lock.yaml` |
+
+**铁律**（与 DSH Profile 一致，违反会让工具调用崩）：
+
+1. 框架包 `@deepseek-ai/*` **只放 `peerDependencies`**，绝不放 `dependencies`；配套 `auto-install-peers=false`。
+2. 依赖安装脚本默认不执行；需要时在 `pnpm-workspace.yaml` 的 `allowBuilds` 里**逐包显式放行**（当前仅 `esbuild`）。
+3. `hoist=false`：插件必须显式声明依赖，不允许"碰巧 require 到"。
+4. **不要在插件目录里跑 `npm install`** —— 会重新长出每目录一份的实体 `node_modules`。
 
 ## 常用命令
 

@@ -330,8 +330,8 @@ oblivionVimc.probe().hints       // { matched, candidates, scanMs, sessions }
 | 项 | 结果 |
 | --- | --- |
 | `dshx check`（CLI） | **全绿**：manifest / `export apply` / 无默认导出 / boot-marker / overlay 可移植 / `dsh.client.platform=web` / `client-inject` / 客户端 inject 声明 / 构建产物 |
-| `npm run build` · `npm run typecheck` · `npm run check:version` | ✅ / ✅ / 一致（`0.2.8`） |
-| `npm test` | **42/42**：翻页与像素步进、输入框守卫三路径、修饰键/IME 放行、大小写锁定、`ignoreKeyboardLayout`、`Esc` 退出、链接提示（单字母/短提示优先/前缀无歧义/两段触发/**三档优先级**/**引用判据正反例**）、轮次跳转、页面内查找（紧凑计数、回车失焦的 HUD、`/` 重新编辑、`.`/`,` 直接跳、回绕、正则、落点标记、**滚动跟随重摆**、折叠区先展开）、翻页比例默认与迁移、性能自检字段、排除规则、键位文本覆盖与 `unmapAll`、真实 Vimium-C 导出导入、设置页注册与静态渲染 |
+| `pnpm run build` · `pnpm run typecheck` · `pnpm run check:version` | ✅ / ✅ / 一致（`0.2.8`） |
+| `pnpm test` | **42/42**：翻页与像素步进、输入框守卫三路径、修饰键/IME 放行、大小写锁定、`ignoreKeyboardLayout`、`Esc` 退出、链接提示（单字母/短提示优先/前缀无歧义/两段触发/**三档优先级**/**引用判据正反例**）、轮次跳转、页面内查找（紧凑计数、回车失焦的 HUD、`/` 重新编辑、`.`/`,` 直接跳、回绕、正则、落点标记、**滚动跟随重摆**、折叠区先展开）、翻页比例默认与迁移、性能自检字段、排除规则、键位文本覆盖与 `unmapAll`、真实 Vimium-C 导出导入、设置页注册与静态渲染 |
 | 客户端半边在真实页面运行 | `client-beat.json`：`clientVersion 0.2.8`、UA `@deepseek-ai/dsh-desktop/0.2.0-rc.2 … Electron/44.0.0` |
 | 真实页面自检 | `keys.active 17 / unsupported 0 / errors 0`、`config.pageRatioVertical 0.6`、`hints.tiers { references: 1, content: 25, outer: 20 }`（信号 `path`）、`matched 1340 → candidates 46`、`find.highlight = custom` |
 | 设置页挂载 | `Slots` 只读查询：`settings.section` 占用者含 `{ registrant: "@oblivion/vimc-client", id: "oblivion-vimc", order: 46, active: true }` |
@@ -382,7 +382,7 @@ $dsh = 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd'
     `w`/`s` 一次走 0.6 × 容器高度；历史默认（0.9 / 0.7，判据是存储里有没有 `regexFindMode` 字段）
     会被自动迁移到 0.6，用户自己改过的值不动。
 11. **改宿主半边（`src/index.ts`）需要重启 DSH App**：Host 复用 ESM 缓存里的同一模块命名空间，
-    禁用再启用**不会**重新导入。浏览器半边（`src/client/`）不受此限：改完 `npm run build`，
+    禁用再启用**不会**重新导入。浏览器半边（`src/client/`）不受此限：改完 `pnpm run build`，
     再改动一次 profile 补丁触发图重算，页面会自动重挂新 bundle。
 12. **不往页面注入常驻 DOM**；唯一外部副作用是宿主的诊断路由（限长 8 KiB + 来源校验）。
 13. **不实现 Vimium-C 的浏览器能力**（标签页/Vomnibar/书签/下载/剪贴板/标记/可视模式）——
@@ -396,8 +396,8 @@ $dsh = 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd'
 | --- | --- |
 | 起点 | 新版本线一律从 **`0.0.1`** 起步 |
 | 已有版本 | **不回改**（`@oblivion/vimc` 从 `0.1.0` 起一路加第三位：`0.2.0 → … → 0.2.8`） |
-| 每次递增 | **先加第三位**（patch）：`npm run version:bump` |
-| 第二位/第一位 | **只在明确要求时**：`npm run version:bump -- --minor` / `--major`（位置参数写 `minor` 会被拒绝） |
+| 每次递增 | **先加第三位**（patch）：`pnpm run version:bump` |
+| 第二位/第一位 | **只在明确要求时**：`pnpm run version:bump -- --minor` / `--major`（位置参数写 `minor` 会被拒绝） |
 
 规则同时记在 [`.action/AGENTS.MD`](../.action/AGENTS.MD) 与 [`CHANGELOG.md`](../CHANGELOG.md)。
 
@@ -430,12 +430,15 @@ oblivion-vimc/
 ```
 
 ```powershell
-cd C:\Projects\Oblivion\oblivion-vimc
-npm install
-npm run build        # lib/index.js + lib/client.js
-npm run typecheck    # tsc --noEmit
-npm test             # 37 条行为与兼容测试
-npm run version:bump # 只加第三位（第二位/第一位要 --minor / --major）
+# 依赖在仓库根安装一次（pnpm workspace；插件目录里只留符号链接，约 0.02 MB）
+cd C:\Projects\Oblivion
+pnpm install
+
+# 本插件的构建 / 检查 / 测试
+pnpm -C oblivion-vimc run build        # lib/index.js + lib/client.js
+pnpm -C oblivion-vimc run typecheck    # tsc --noEmit
+pnpm -C oblivion-vimc run test         # 42 条行为与兼容测试
+pnpm -C oblivion-vimc run version:bump # 只加第三位（第二位/第一位要 -- --minor / --major）
 ```
 
 ---

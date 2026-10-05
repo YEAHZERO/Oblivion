@@ -252,18 +252,20 @@ cp .env.example .env
 ```
 
 ### 4. 构建与测试
+
+> 本仓库用 **pnpm workspace**（`pnpm 11.7.0`，DSH 分发的受控运行时）。依赖在**仓库根**装一次，
+> 插件目录里的 `node_modules` 只是符号链接 —— 不要在插件目录里跑 `npm install`。
+
 ```powershell
-# 类型检查
-npm run typecheck
+# 在仓库根
+pnpm install          # 工作区一次装完
+pnpm run typecheck    # 全部插件类型检查
+pnpm run build        # 全部插件构建
+pnpm test             # 全部插件测试
+pnpm run check        # = typecheck + test + build
 
-# 构建所有包
-npm run build
-
-# 单元测试
-npm test
-
-# 端到端
-npm run test:e2e
+# 单个插件
+pnpm -C oblivion-vimc run test
 ```
 
 ### 5. DSH 配置验证
