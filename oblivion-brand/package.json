@@ -23,6 +23,31 @@
         "@deepseek-ai/dsh-client-ui-settings"
       ],
       "platform": "web"
+    },
+    "compat": {
+      "host": ">=0.2.0-rc.2 <0.3.0",
+      "requires": {
+        "services": [
+          "slots"
+        ],
+        "slots": [
+          "sidebar.brand.mark",
+          "sidebar.brand.name",
+          "conversation.hero.brand.mark",
+          "sidebar.panellist",
+          "main"
+        ],
+        "slotKinds": {
+          "sidebar.brand.mark": "single",
+          "sidebar.brand.name": "single",
+          "conversation.hero.brand.mark": "single",
+          "sidebar.panellist": "list",
+          "main": "keyed"
+        },
+        "clientContract": [
+          "__ModuleLoader__"
+        ]
+      }
     }
   },
   "files": [

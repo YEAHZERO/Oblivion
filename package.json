@@ -12,6 +12,7 @@
     "typecheck": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task typecheck",
     "test": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task test",
     "build": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task build",
-    "check:version": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task version"
+    "check:version": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task version",
+    "verify:dsh": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-dsh-compat.ps1"
   }
 }

@@ -100,6 +100,7 @@
 | **Agent 协作规范与业务规则** | [`.action/`](.action/) |
 | **记忆库怎么用（每轮三步固定动作）** | [`.memory/README.md`](.memory/README.md) |
 | **对外版本说明** | [`CHANGELOG.md`](CHANGELOG.md) |
+| **DSH 升级后我的插件还活着吗** | [`.design/DSH-COMPAT.md`](.design/DSH-COMPAT.md) + `pnpm run verify:dsh`（契约声明 / 取证校验 / 升级 SOP / 台账） |
 | **怎么贡献 / 第三方复用登记** | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
 > **版本有两条轴，别混**：**产品版本**在根 [`VERSION`](VERSION) / [`CHANGELOG.md`](CHANGELOG.md)；

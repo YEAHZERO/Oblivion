@@ -16,6 +16,23 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings"
       ]
+    },
+    "compat": {
+      "host": ">=0.2.0-rc.2 <0.3.0",
+      "requires": {
+        "clientPackages": [
+          "@deepseek-ai/dsh-client-ui-settings"
+        ],
+        "slots": [
+          "settings.section"
+        ],
+        "slotKinds": {
+          "settings.section": "list"
+        },
+        "clientContract": [
+          "__ModuleLoader__"
+        ]
+      }
     }
   },
   "files": [
