@@ -1,0 +1,16 @@
+# ============================================================
+# @oblivion/vimc — DSHX 清单
+#
+# id 必须与 package.json 的 name 逐字相同：`dshx activate-new-client`
+# 有一条硬校验 `plugin.id === packageName`（见 tools/dshx/src/internal/new-client.ts）。
+# 因此这里写的是**作用域名**，而非常见的 kebab-case 目录名 —— 目录名
+# `oblivion-vimc` 只用于人读，DSHX 通过 dshx.yml / profile 链接解析它。
+#
+# marker 必须与 src/index.ts 里的 console.log 逐字相同，
+# `dshx verify-boot` 用它证明 apply() 真的跑过。
+# ============================================================
+id: '@oblivion/vimc'
+entry: src/index.ts
+marker: "[oblivion-vimc] loaded"
+kind: client
+profile: web

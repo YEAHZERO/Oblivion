@@ -45,10 +45,21 @@
 
 | #   | 来源仓库                    | 许可证 | 上游 commit/版本 | 检索/复用日期 | 被用文件/内容 | 使用方式（复制/移植/参考/数据） | 状态（计划中/已复用/参考/禁止） |
 | --- | --------------------------- | ------ | ---------------- | ------------- | ------------- | ------------------------------- | ------------------------------- |
-| 0   | （示例）octocat/Hello-World | MIT    | abc1234          | 2026-09-19    | `src/foo.py`  | 移植改写                        | 计划中                          |
+| 1   | [gdh1995/vimium-c](https://github.com/gdh1995/vimium-c) | MIT（上游声明；本机抓取 github.com 被拒，**未能联网复核**） | 未锁定（**仅理念启发，未复制代码**） | 2026-10-05 | 键位语义（`scrollPageUp/Down`、`scrollLeft/Right`、`scrollToTop/Bottom`、`focusInput`）、翻页量级、滚动容器发现、`focusInput` 的 `prefer`/`select` 选项命名 | 参考（理念启发）——落地文件 `oblivion-vimc/src/client/{keys,scroller,focus}.ts` | 参考 |
+| 2   | [capricorn86/happy-dom](https://github.com/capricorn86/happy-dom) | MIT | 20.14.5（package-lock 锁定） | 2026-10-05 | `oblivion-vimc/tests/*.mjs` 的 DOM 替身（派发真实 `KeyboardEvent`） | 依赖（devDependency，仅测试） | 已复用 |
+| 3   | [evanw/esbuild](https://github.com/evanw/esbuild) | MIT | 0.28.2（package-lock 锁定） | 2026-10-05 | `oblivion-vimc/scripts/build.mjs` 的打包器（双产物 Node/浏览器） | 依赖（devDependency，仅构建） | 已复用 |
+| 4   | [microsoft/TypeScript](https://github.com/microsoft/TypeScript) | Apache-2.0 | 5.9.3（package-lock 锁定） | 2026-10-05 | `oblivion-vimc` 类型检查（`tsc -p tsconfig.json`） | 依赖（devDependency，仅构建） | 已复用 |
+| 5   | [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped)（`@types/node`） | MIT | 26.6.4（package-lock 锁定） | 2026-10-05 | 同上（`node:http` 等类型） | 依赖（devDependency，仅构建） | 已复用 |
+| 6   | [facebook/react](https://github.com/facebook/react) | MIT | 19.x（package-lock 锁定） | 2026-10-05 | `oblivion-vimc/src/client/settings.tsx` 的设置页；**运行期由 DSH 客户端模块表提供**（标 external，不打进插件包） | 依赖（devDependency 供类型/测试；运行期用宿主自带） | 已复用 |
+| 7   | [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped)（`@types/react`、`@types/react-dom`） | MIT | 19.x（package-lock 锁定） | 2026-10-05 | 同上 | 依赖（devDependency，仅构建） | 已复用 |
 
 > 新项目初始化后：删除示例行，按实际参考对象逐条登记。本项目当前参考源见 `.design/architecture.md` §30（参考库结构）。
+> 第 1 行是**理念启发**：`@oblivion/vimc` 的实现代码全部自写，未复制 Vimium-C 的任何源码；
+> 若将来真的复制其文件，**先补锁定 commit 与许可原文**再动代码。
 
 ### 许可声明原文
 
 （首次实际复制某仓库代码/数据时，在此粘贴其 LICENSE 原文与版权行，一仓库一节。）
+
+> 当前状态：**本仓库未复制任何上游代码**。登记表第 1 行（vimium-c）是理念级参考；
+> 第 2–5 行是 devDependencies（只在构建/测试时使用，不随本仓库再发布），因此无需附许可原文。

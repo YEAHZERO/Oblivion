@@ -1,0 +1,53 @@
+{
+  "name": "@oblivion/vimc",
+  "version": "0.2.8",
+  "description": "Oblivion 键盘导航插件：把 DSH 当浏览器用 —— w/s/a/d 上下左右翻页、W/S 到顶/到底、i 聚焦输入框；只在焦点不在输入框内时生效。",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "files": [
+    "lib",
+    "VERSION",
+    "README.md",
+    "dshx.yml",
+    "cordis.yml"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test",
+    "version:bump": "node scripts/bump-version.mjs",
+    "check:version": "node scripts/bump-version.mjs --check"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "happy-dom": "^20.14.5",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "^5.6.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  }
+}

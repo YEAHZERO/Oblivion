@@ -1,0 +1,8 @@
+# portable overlay: relative name only. --patch resolves against the profile
+# directory, so cold-boot through `dshx start` / `dshx verify-boot`, not raw pnpm dsh.
+#
+# 本文件是 DSHX 的**可移植 overlay**（冷启动 / 隔离验证用），不是线上挂载点：
+# 线上挂载走 profile 的 cordis.patch.yml 插入行（name 为包名 '@oblivion/vimc'）。
+- insert:
+    - id: '@oblivion/vimc'
+      name: './src/index.ts'

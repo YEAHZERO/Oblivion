@@ -4,6 +4,294 @@
 [`VERSION`](VERSION) 文件，由 [`scripts/bump-version.ps1`](scripts/bump-version.ps1) 写入。
 发布流水（三级分层：alpha / rc / patch）记在 `.memory/release/`（本机目录，不入库）。
 
+> **版本递增规则（2026-10-05 所有者裁定）**：任何新版本线从 **`0.0.1`** 起步；**已有版本号不回改**；
+> 此后**每次只加第三位**（patch，例如 `0.2.0 → 0.2.1`）；第二位/第一位**只在明确要求时**才动
+> （`--minor` / `--major`），不再由提交类型自动推断。规则同时记在 [`.action/AGENTS.MD`](.action/AGENTS.MD)。
+>
+> 注：`oblivion-brand/scripts/bump-version.mjs` 的注释里仍写着旧映射（`feat → minor`），
+> 该插件下次改动时一并同步；`oblivion-vimc` 的脚本已按新规则实现（`--minor` / `--major` 需显式开关）。
+
+---
+
+## [未发布] — `@oblivion/vimc` v0.2.8：落点标记跟随滚动 + 内联引用独立一档 + 上游署名修正
+
+### 修复：落点标记错位（所有者实测「搜『高亮』，黄框出现在『结果』旁边」）
+
+- 根因：标记用**视口坐标**，而 `present()` 是**先画后滚**，滚动（尤其 `smooth` 平滑滚动动画）之后坐标就过期了
+- 修法：改成**先滚再画**，并在标记存活期间监听 `scroll`/`resize`（捕获 + rAF 节流）**持续重摆**；
+  标记寿命 900ms → 1200ms（覆盖平滑滚动动画）；自检新增 `find.repositions`（重摆次数）
+- 参考上游 `dom_ui.ts` 的 `flash_()`：单个活动标记 + 寿命 + 淡出；差别是它把矩形换算成页面坐标
+  （`.AbsF`），而 DSH 正文是嵌套滚动容器、不能假定宿主定位上下文，所以用「跟随重摆」替代
+
+### 变更：内联引用单独提一档（排在消息操作按钮之前）
+
+- 三档改为：**① 内联引用 → ② 正文其它（含消息操作按钮）→ ③ 外部按钮**
+- 引用的判据（依据所有者截图：悬停内联引用会显示它指向的文件路径）：真链接，或 `title`/`aria-label`
+  含 `/`、以 `@` 开头、或以**已知文件扩展名**结尾
+- 判据刻意收紧：`aria-label` 带版本号（`v4.1`）的按钮**不会**被误判（曾用「点 + 短串」的宽泛规则，实测误判）
+- 自检新增 `hints.referenceSignals`（`link`/`path`/`at`/`ext`，只报信号名、不报属性值）；
+  **真机实测**：某一时刻 `references 1 / content 25 / outer 20`、信号 `path` —— 引用确实被提到最前
+
+### 修正：上游许可证写错了
+
+- README「参考与许可」原写 vimium-c 是 MIT —— **实际是 Apache-2.0**（`LICENSE.txt`：Copyright 2023-present Gong Dahan）
+- 补上「读了哪个文件、复用了什么理念、哪里故意不一样」的对照表（提示串短在前、`flash_` 落点、
+  查找的大小写/`postOnEsc`/反向查找），并注明：本插件是独立实现、**未复制上游代码**；
+  若将来直接拷贝上游代码，必须保留 Apache-2.0 声明
+
+验收：`npm test` **42/42**（新增：三条优先级/判据用例 + 滚动跟随重摆用例）；
+`dshx check` 全绿；版本 `0.2.6 → 0.2.8`。
+
+---
+
+## [未发布] — `@oblivion/vimc` v0.2.6：`f` 候选优先级 + 查找落点靠上 + 翻页 0.6
+
+### 变更：`f` 的候选按优先级排序，前面的拿单字母（所有者要求）
+
+- 三档：**会话正文里的链接 → 正文里其它元素 → 正文之外（外部按钮，排最后）**，档内仍按「行 → 左」
+- 提示串改为**短提示优先**：候选 ≤ 字母表长度时全单字母；更多时前面的拿单字母，其余用
+  **被保留首字母**的两位串（`15 个候选 → 10 个单字母 + zd zs za zv ze`），因此**前缀依然无歧义**：
+  按 `d` 立即触发，按 `z` 才需要第二个字母；两级放不下时退回统一长度
+- 自检新增 `hints.tiers`（三档数量）与 `hints.sampleAttrs`（前几个候选的**属性名**，不含值）
+- **实测发现**：DSH 的内联引用是 `button[data-variant]`，**不是 `<a href>`** —— 所以真实页面上
+  「正文链接」档为 0、正文元素落在第二档（实测 `content 28 / outer 20`），整体仍排在外部按钮之前
+
+### 变更：查找落点从居中改为「靠上留一点距离」
+
+- 所有者反馈「太靠中了不好看」→ 落点比例由 1/2 改回 **1/4**（像自己那条提问的位置）
+
+### 变更：翻页距离默认 0.6
+
+- 理由（所有者）：输入框占掉一部分可视高度，比例要小一点
+- 历史默认（0.9 → 0.7 →）0.6 的**定向迁移**：判据是存储里有没有 v0.2.2 才引入的 `regexFindMode`
+  字段；没有 = 那份配置只可能带历史默认值 → 迁移；用户自己改过的值不动
+
+验收：`npm test` **40/40**（新增：多候选时前 10 个单字母 + 前缀无歧义 + 两字母两段触发；
+正文链接/正文按钮/外部按钮的优先级与 `hints.tiers`）；`dshx check` 全绿；版本 `0.2.4 → 0.2.6`
+（0.2.5 为优先级实现、0.2.6 加 `sampleAttrs` 诊断）。
+线上实测：`tiers { links: 0, content: 28, outer: 20 }`、`config.pageRatioVertical 0.6`、
+前几个候选全来自正文档。
+
+---
+
+## [未发布] — `@oblivion/vimc` v0.2.4：查找落点「一定看得见」
+
+所有者反馈：`/点击 (1 处)` 跳过去之后**没有高亮该词，不知道落在哪**。逐项查证后改了四处：
+
+- **`::highlight()` 只认长写属性**：原来的 `background:` 简写在某些构建里会被整条丢弃（＝完全没有高亮），
+  改为 `background-color:`（`color` 保留）
+- **新增落点标记（ping）**：每次跳转在当前命中四周画一圈会淡出的琥珀色框（900ms，`position: fixed` 覆盖层）。
+  它**不依赖 Custom Highlight**，所以「高亮不可用 / 命中在折叠内容里」时也一定看得见落点
+- **落点从容器 1/3 改到 1/2（居中）**：长回答里更醒目
+- **折叠分组里的命中**：DSH 把工具调用收进 `<details>`，文字在 DOM 里但不可见。
+  现在跳转先找已渲染的命中；都不渲染就**点开 `<summary>`**（官方开关，React 状态跟着变）展开该组，
+  重新定位后再跳 —— 与浏览器原生查找一致（此前会「跳到一个看不见的地方」，正是反馈的现象）
+- 自检新增 `find.highlight`（`custom`/`none`）与 `find.pings`（累计标记数），这类问题以后能直接从证据文件判断
+
+验收：`npm test` **39/39**（新增两条：每次跳转都画标记 + 关闭时清理；折叠区命中跳转前先展开）；
+`dshx check` 全绿；版本 `0.2.3 → 0.2.4`。
+线上实测：`find.highlight = custom`（页面里 Custom Highlight 可用）、`keys.active 17 / turns 3`。
+
+---
+
+## [未发布] — `@oblivion/vimc` v0.2.3：查找条对齐 Vimium 形态（回车后失焦）
+
+按所有者给出的参照（浏览器/Vimium-C 的查找条 `基础 (3 处)`）：
+
+- **紧凑形态**：查找条改为 `[/] 查询 (N 处)`，去掉原来那行长帮助文字（键位改在设置页/README 说明）；
+  全部命中浅琥珀、当前命中深琥珀（图四那种橙色高亮）
+- **`Enter` = 提交**：跳到下一个之后**收起输入框、焦点回到页面** —— 这样 `,` / `.` 能**立刻**前后跳
+  （此前输入框一直持有焦点，`,`/`.` 会被当成普通字符吞掉，这是本轮要修的核心手感）
+- **HUD 形态**：提交后查找条变成只读文本（不聚焦），仍显示查询与 `(N 处)`；
+  再按 `/` 回到编辑态并**全选**查询；`Esc` 在编辑态与 HUD 形态下都能关闭（查询与命中保留）
+- 自检新增 `find.committed`，便于在证据文件里看出当前处于哪种形态
+
+验收：`npm test` **37/37**（查找用例按新形态重写：计数写法、回车后失焦、HUD 只读、`/` 重新编辑并全选、
+HUD 形态下 Esc 关闭、`.`/`,` 直接前后跳）；`dshx check` 全绿；版本 `0.2.2 → 0.2.3`（按新规则加第三位）。
+线上实测：`openFind=2 · findPrevious=1`（已在真实页面里用过），`keys.active 17 / turns 3`。
+
+---
+
+## [未发布] — `@oblivion/vimc` v0.2.2：页面内查找（`/` `.` `,`）+ 翻页距离 0.7
+
+### 新增：页面内查找（对应 Vimium-C 的 `enterFindMode` / `performFind` / `performBackwardsFind`）
+
+- `/` 打开查找框（带上次查询），**边打边找**并显示 `当前/总数`；`Enter` / `Shift+Enter` 前后跳；
+  `Esc` 关闭并把焦点还给打开前的元素（**查询与命中保留**）；关掉后 `.` / `,` 继续前后跳（到端回绕）
+- **不侵入 DOM**：命中用 `Range` + **CSS Custom Highlight API**（`::highlight(vimc-find)`），
+  不包 `<mark>`、不改文本节点 —— DSH 输入框是 Lexical 宿主，外部动选区会导致状态不同步；
+  浏览器不支持该 API 时退化为「只滚动、不高亮」
+- 落点放在容器高度的 1/3；查找范围 = 会话正文滚动容器（不搜侧栏）
+- 大小写按 Vimium 的**智能大小写**；`regexFindMode`（已从「不采纳」改为**采纳**，所有者那份为 `true`）
+  打开时按正则解释，非法正则按无命中处理
+- 查找框本身是 `<input>`，插件其它快捷键在框内靠**可编辑区守卫**自动让位（无需额外状态机）
+
+### 变更：翻页距离默认 0.7（0.6–0.8 区间）
+
+- 所有者要求把「平滑滚动的距离」设在 0.6–0.8 之间；Vimium-C 导出里**没有**这一项
+  （它只有 `scrollStepSize = 90` 像素步长，本插件已沿用），所以这是本插件自己的选项
+- 取值 **0.7**（区间中点）；v0.1 那个「从没被用户改过」的 0.9 会**自动迁移**到 0.7，
+  用户真正改过的值原样保留
+
+### 验收证据（本机实测，2026-10-05）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm test` | **37/37**（新增：查找开关/边打边找/回绕/Esc 后继续/正则/非法正则、翻页比例默认与旧值迁移；原有 34 条在 0.7 口径下全绿） |
+| `dshx check`（CLI） / 类型 / 版本一致 | 全绿 / ✅ / `0.2.2` |
+| 真实页面自检 | `keys.active 17 / unsupported 0 / errors 0`、`turns 2`、`hints.candidates 46`（命中 605）`/ scanMs 7.5`、`find` 计数与耗时字段就位 |
+| 真实使用 | 宿主计数器（截至本轮）：`scrollPageUp 20 · scrollPageDown 22 · linkHints 7 · focusInput 2 · scrollToTop 2 · scrollToBottom 6 · escapeToPage 1` |
+| 版本规则 | 本轮按新规则加第三位：`0.2.1 → 0.2.2`（不是 `0.3.0`） |
+
+---
+
+## [未发布] — `@oblivion/vimc` v0.2.1：轮次跳转 + 性能自证与优化 + 版本规则变更
+
+### 新增：轮次跳转（`[` / `]`）
+
+- 按 `[` 跳到**上一条提问**、`]` 跳到**下一条提问**，落点与 DSH 右侧轮次导航条一致 ——
+  用的是**同一批官方锚点** `ui-chat` 的 `[data-chat-turn]`（不依赖任何 class 名或组件内部结构）
+- 语义照所有者描述：**读到回答中间按一次回到本轮提问；已在提问顶部再按一次继续往上**；
+  已在最上面那条时**不动作也不吞键**（往上滚仍交给 `w`/`W`）
+- 落点贴容器顶 + 2px，并对目标做 700ms 描边（用完还原行内样式）
+- 边界：DSH 会话分页加载，跳转只覆盖已加载轮次（滚到顶会触发它自己的分页，再按即可继续）
+
+### 新增：插件自身开销的**可观测**证据
+
+- `oblivionVimc.probe().perf` / `hints.{matched,candidates,scanMs,sessions}`：按键处理耗时与候选扫描漏斗
+- **每条命令心跳都带 `perf`**：真实页面里按几下就能看到实测延迟（设置页也直接列成表格）
+- 设置页「运行只读自检」新增：已加载轮次数、选择器命中数、扫描耗时、按键耗时（平均/峰值/采样数）
+
+### 变更：性能（实测 111.8ms → 11.2ms）
+
+第一版在真机上量到候选扫描 **111.8ms**，逐项拆开后修掉四处：
+
+| 优化 | 原因 |
+| --- | --- |
+| `checkVisibility()` 快路径替代 `getComputedStyle` | DSH 样式表极大，逐元素读计算样式在真机上是毫秒级；`checkVisibility()` 是引擎内部一次判定 |
+| 一次 `closest()` 替代两次祖先遍历 | 排除浮层与 `aria-hidden` 子树 |
+| 每个元素只读一次矩形，样式只给幸存者 | 筛序改成「便宜的在前」 |
+| 挂载自检跳过扫描 | 挂载那刻外壳未渲染完，扫描没用且白花时间（交给 1.5s 后的自检） |
+
+另外把按键路径**按开销重排**：先做纯计算（比对 ≤14 条键位），**没命中就立刻返回**，
+只有命中命令时才问 DOM 焦点 —— 于是最常见的「在输入框里打字」一次 DOM 查询都不做。
+宿主侧心跳落盘也从「每条一次同步写」改为**750ms 合并窗口**（该项需重启 App 生效）。
+
+### 变更：版本规则（所有者 2026-10-05 裁定）
+
+- 任何新版本线从 **`0.0.1`** 起步；**已有版本号不回改**；此后**每次只加第三位**（patch）
+- 第二位/第一位**只在明确要求时**动：`--minor` / `--major`；位置参数写 `minor` 会被脚本拒绝
+- 规则落点：[`.action/AGENTS.MD`](.action/AGENTS.MD)（规范）+ 本文件开头 + 插件 `scripts/bump-version.mjs`
+- 本轮按新规则：`@oblivion/vimc` `0.2.0 → 0.2.1`（不是 `0.3.0`）
+
+### 验收证据（本机实测，2026-10-05）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm test` | **34/34**（新增：轮次跳转 4 条语义/边界、性能字段 1 条、快捷路径重排后原有用例全绿） |
+| `dshx check`（CLI） / 类型 / 版本一致 | 全绿 / ✅ / `0.2.1` |
+| 扫描耗时（真机） | **11.2ms**（选择器命中 1220 → 视口候选 42）；优化前同页 **111.8ms** |
+| 按键耗时（真机，重排前样本） | 平均 **1.825ms** / 峰值 **3ms**（4 次采样）；重排后打字路径不再做 DOM 查询 |
+| 真实使用 | 宿主计数器：`scrollPageUp 18 · scrollPageDown 21 · linkHints 7 · focusInput 2 · scrollToTop 2 · scrollToBottom 5 · escapeToPage 1` |
+| 真实页面锚点 | 竖向容器 `div[data-conversation-scroll]`、输入框 `div[data-composer-input]`、已加载轮次 **3**、`keys.active 14` |
+
+---
+
+
+
+按所有者要求，把插件从「几个固定快捷键」升级为「Vimium-C 语义的可配置层」，并提供设置页面。
+
+### 新增：链接提示（`f` → `LinkHints.activate`）
+
+- 视口内可点击元素浮出琥珀色字母标签；候选 ≤ 字母表长度时**每个 1 个字母**，更多时**全部 2 个字母**
+  （统一长度，避免「`d` 与 `da` 并存」的前缀歧义）
+- 字母表取 `linkHintCharacters`（默认 `dsavewrqcxz`），按「行 → 左」分配（顺序即优先级）
+- 触发时依次派发 `pointerdown → mousedown → pointerup → mouseup → click`（React `onMouseDown`/`onClick`
+  与 `<a href>` 默认跳转都能生效）；`Esc` 或字母表之外的键取消；浮层随滚动/缩放重排；不注入常驻 DOM
+
+### 新增：DSH 设置页（`settings.section`，id `oblivion-vimc`，order 46）
+
+七块：启用与版本 / 键位文本（Vimium `map`·`run` 语法，含生效键位与**未接管命令逐条理由**）/ 滚动
+（平滑、翻页比例、`scrollStepSize`）/ 输入框（`Esc` 退出、编辑中允许翻页、选区模式、优先选择器）/
+链接提示（字母表、就地试跑）/ 兼容导入（选文件或粘贴 JSON，显示已采纳·未采纳报告）/ 排除规则与只读自检。
+
+### 新增：Vimium-C 兼容层（`src/client/vimium.ts`）
+
+- **键位解析**：`map` / `run` 文本（含续行 `\`、`#` 注释、`unmapAll`）、修饰键写法 `<a-t>`/`<c-up>`、
+  命名键 `<backspace>`/`<left>`/`<f1>`、标点键、`run <键> <另一个键>` 的单层别名（`run q i` → `focusInput`）
+- **命令映射**：`scrollPageUp/Down`、`scrollUp/Down/Left/Right`、`scrollPx*`、`scrollToTop/Bottom`、`focusInput`、
+  `LinkHints.activate`、`goBack`/`goForward`；其余（标签页 / Vomnibar / 查找 / Marks / 剪贴板 / 下载 /
+  序列键 / `reload` / `goUp`…）**逐条列出并给出不适用理由**，绝不静默忽略
+- **选项导入**：`keyMappings`、`linkHintCharacters`、`scrollStepSize`、`keyLayout`→`ignoreKeyboardLayout`、
+  `smoothScroll`、`exclusionRules[].pattern`→`exclusions`、`focusInput` 的 `o.select`/`o.prefer`
+  （`o.prefer` 追加在本插件默认 `[data-composer-input]` 之后）；导入报告含「已采纳 / 未采纳 / 源信息」
+- 键位文本进入设置页后**内置默认不再硬编码**：`DEFAULT_KEY_MAPPINGS` 就是一段 `map` 文本，与用户文本走同一条解析路径
+
+### 变更（破坏性：键位语义）
+
+- **`a`/`d` 改为像素步进**（Vimium 语义：`scrollLeft`/`scrollRight` = `scrollStepSize` 像素，实测导出值 90），
+  不再是「一屏」；要一屏请调大 `scrollStepSize`
+- **`Esc` 退出输入框默认开启**（`i` 进去之后必须能原路退出）；有菜单/弹窗打开时让位
+- 新增 `Ctrl+↑↓←→` → 像素级竖向/横向步进（与导出配置一致）
+
+### 验收证据（本机实测，2026-10-05）
+
+| 项 | 结果 |
+| --- | --- |
+| `dshx check`（CLI） | **全绿**（新增 `client-inject` 检查通过） |
+| 构建 / 类型 / 版本一致 | ✅ / ✅ / `0.2.0` |
+| `npm test` | **31/31**（含**真实 `vimium_c-20251214_001720.json` 的导入断言**：`linkHintCharacters=dsavewrqcxz`、`scrollStepSize=90`、`keyLayout=0`→按字符匹配、排除规则、`o.prefer` 合并、`w/s/a/d/W/S/f/i/q` 全部解析出命令、未支持命令逐条有理由） |
+| 客户端半边在真实页面运行 | `client-beat.json`：`clientVersion 0.2.0`、UA `@deepseek-ai/dsh-desktop/0.2.0-rc.2 … Electron/44.0.0` |
+| **真实按键已被处理** | 宿主计数器：`scrollPageUp 9 · scrollPageDown 7 · focusInput 2 · scrollToTop 1 · scrollToBottom 1` |
+| 真实页面自检 | `keys.active 12 / unsupported 0 / errors 0`、`hints.characters dsavewrqcxz`、视口内可点击元素 155 个、竖向容器 `div[data-conversation-scroll]` |
+| 设置页在线 | `Slots` 只读查询：`settings.section` 占用者含 `{ registrant: "@oblivion/vimc-client", id: "oblivion-vimc", order: 46, active: true }` |
+
+---
+
+
+
+### 新增：`@oblivion/vimc` v0.1.0（`oblivion-vimc/`）
+
+第二个已落地的 `@oblivion/*` 插件（不在设计书 §9.1 的 8 项能力清单内，是按所有者需求新增的**交互工具类**插件）。
+
+- **键位**（照搬需求里给出的 Vimium-C 自定义配置）：`w/s` 上/下翻页、`a/d` 左/右移屏、
+  `W/S` 到顶/到底、`i` 聚焦输入框；`Esc` 退出输入框（默认关）。
+- **核心约束**：焦点在输入框 / 终端里时**一个键都不接管**（`contenteditable` 的 Lexical 宿主、
+  `input`、`textarea`、`select`、`[role=textbox]`、`.xterm` 全部识别）；`Ctrl/Alt/Meta`、
+  IME 组合期、已被 `preventDefault` 的事件一律放行；**没找到可滚容器时不吞键**。
+- **滚动目标发现**：视口中心探测 → DSH 正文滚动区 `[data-conversation-scroll]` → 上次容器 → 根滚动元素。
+  弹窗打开时自然滚弹窗；横向轴会先滚宽代码块/表格/终端块自己的横向条。
+- **为什么不走 `ctx.shortcuts`**：桌面端 Windows/macOS 的原生键盘桥会**先于**本地处理拦截已接受的组合键，
+  且 `ShortcutRegistry.dispatch()` 在 priority 为真时跳过 region 判定 —— 注册裸字母会让用户在输入框里
+  打不出 `w/s/a/d/i`。故改为页面级 keydown + 自判焦点区域（与 Vimium 同类做法）。详见插件 README 第三节。
+- **宿主半边**：启动标记、卸载自证、`POST /oblivion-vimc/beat` 诊断路由（限长 8 KiB + 来源校验）。
+
+### 验收证据（本机实测，2026-10-05）
+
+| 项 | 结果 |
+| --- | --- |
+| `dshx check`（CLI） | **全绿**（manifest / `export apply` / 无默认导出 / boot-marker / cordis overlay 可移植 / `dsh.client.platform=web` / 构建产物存在） |
+| 构建与类型 | `npm run build` ✅、`npm run typecheck` ✅ |
+| 行为测试 | `npm test` → **20/20**（对构建产物 `lib/client.js` 派发真实 `KeyboardEvent`） |
+| 宿主半边挂载 | `%TEMP%\oblivion-vimc\host-mount.json`（DSH 宿主自身写入，pid 24220 / node 24.18.1） |
+| 客户端半边挂载 | `client-beat.json`：UA 为 `@deepseek-ai/dsh-desktop/0.2.0-rc.2 …Electron/44.0.0` |
+| 真实页面锚点自检 | `div[data-conversation-scroll]`（可滚 range 随会话增长，实测 1824 → 2157px）、`div[data-composer-input]`（命中优先选择器） |
+| 挂载方式 | profile `link:` 依赖 + `cordis.patch.yml` 插入行，**无需重启应用**（补丁落盘同一秒宿主即装载） |
+
+### 记录：两条本机环境事实（已写入 `WORKSPACE.md`）
+
+- **DSHX 的 MCP 工具面在本机全废**：`dshx check` / `activate-new-client` / `verify-boot` / `browser open`
+  都先跑 `dshx creator claim`，而 claim 依赖 POSIX `ps -o lstart=` → 恒报
+  `Creator+ Host identity is incomplete`。**但 `dshx` CLI 的 `check` 子命令可用**（本轮即用它取得源码契约证据）。
+- **宿主半边的代码改动需要重启 DSH App**：Host 复用 ESM 缓存里的同一模块命名空间，禁用再启用不会重新导入；
+  浏览器半边不受此限（改完 `npm run build` + 触发一次补丁重算即可自动重挂）。
+
+### 记录：产品版本递增工具缺失
+
+本轮**未改动根 `VERSION`（0.0.2）**：本文件与 `.action/AGENTS.MD` 都引用 `scripts/bump-version.ps1`，
+但仓库根**没有** `scripts/` 目录（只有 `oblivion-brand/scripts/bump-version.mjs`）。产品版本的递增工具待补，
+补上之前产品版本无法按规范递增。
+
 ---
 
 ## [0.0.2] — Phase 5 问答闭环落地 + README 三条主线

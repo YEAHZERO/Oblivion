@@ -82,6 +82,53 @@ Windows 上没有支持 `-o`/`-axo` 的 `ps`，`lsof` 也不存在，因此 `dis
 
 > **约定：服务端代码改完重启 DSH App 生效，不要依赖热重载。**
 
+### 3. DSHX 的 MCP 工具面在本机全废，但 CLI 的 `check` 可用（2026-10-05 实测补充）
+
+`dshx_check` / `dshx_activate_new_client` / `dshx_activation_plan` / `dshx_scaffold` /
+`dshx_browser_open` 在本会话**全部**返回同一句：
+
+```
+dshx creator
+ERROR  creator   Creator+ Host identity is incomplete: process start time unavailable for pid <pid> (exit-1)
+```
+
+原因与第 1 条同源：这些工具在桥接层**先跑 `dshx creator claim`**，而 claim 依赖
+`ps -o lstart=`（`internal/host-discovery.ts`）→ Windows 上恒失败。也就是说
+**Creator Mode+ 的整条「scaffold → claim → check → activate」链路在本机走不通**，
+不只是 hot-reload。
+
+但**同样的 `check` 用 CLI 直接跑是好的**（它不经过 claim 包装）：
+
+```powershell
+$dshx = 'C:\Projects\deepseek-harness\tools\dshx'
+node --import "file:///$($dshx -replace '\\','/')/node_modules/tsx/dist/esm/index.mjs" `
+     "$dshx\src\cli.ts" check '<插件目录>' --harness 'C:\Projects\deepseek-harness'
+```
+
+本机可用的替代挂载路径（`@oblivion/vimc` 就是这么装的，**不需要重启 App**）：
+
+```powershell
+# ① 官方 CLI 装 link: 依赖（正斜杠；反斜杠会被桌面包管理器拒掉）
+& 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd' `
+  plugin --profile desktop add 'link:C:/Projects/Oblivion/<插件目录>'
+
+# ② 在 %USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml 追加插入行
+#    （@ 开头的 YAML 标量必须加引号）
+# - insert:
+#     - id: '@oblivion/<插件>'
+#       name: '@oblivion/<插件>'
+```
+
+实测结论（对未来的会话很重要）：
+
+| 事项 | 结论 |
+| --- | --- |
+| profile 补丁层是否被监视 | **是**。补丁落盘同一秒，新行就被 Host 装载（插件自身的启动自证文件立刻出现） |
+| 客户端半边是否需刷新页面 | **不需要**。图重算后客户端模块表增量重组，插件在活动页面里自动重挂 |
+| 宿主半边改代码 | **需重启 App**（Host 复用 ESM 缓存里的模块命名空间，禁用再启用不会重新导入） |
+| 清单里的 `dsh.bundle` | 有它 = profile 层（改一次要重启）；没有 = 普通依赖 + 补丁插入行（可热挂）。两者别混 |
+| 桌面 profile 的 CLI 权限 | `dsh plugin` 子命令放行（普通 `dsh` 会拒绝「由 Electron 独占管理」） |
+
 ### 2. `dsh-creator-mode-plus` 在本机打了两个 Windows 补丁
 
 补丁位于 `~/.dsh/profiles/desktop/node_modules/dsh-creator-mode-plus/`，

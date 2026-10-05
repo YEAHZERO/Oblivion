@@ -822,9 +822,16 @@ A:
 | git tag `vX.Y.Z` | 发布定版，仅发版时打（`bump-version.ps1 -Tag`） |
 | `.changelog/` | 每次 bump 同步补一行版本记录 |
 
-递增规则（与提交类型映射）：`fix/docs/chore → patch`；`feat → minor`；破坏性变更或首个正式版 → `major`；0.x 阶段视为不稳定。
-**触发点**：每批改动完成验收并写入 changelog 后，执行改动的 agent 必须运行 `.\scripts\bump-version.ps1 -Level <级别>`。
-真源判定顺序：有 `VERSION` 用 `VERSION`；没有但有 `package.json.version` 则以其为源并补建 `VERSION` 镜像。
+递增规则（**2026-10-05 所有者裁定，取代原「提交类型 → 级别」映射**）：
+
+| 规则 | 内容 |
+| --- | --- |
+| 起点 | 任何新版本线一律从 **`0.0.1`** 起步（不再从 `0.1.0` 起） |
+| 已有版本 | **不回改**（历史版本号保持原样，不追溯重编号） |
+| 每次递增 | **先加第三位**（patch）：`0.2.0 → 0.2.1 → 0.2.2 …` |
+| 何时动第二位/第一位 | **仅在所有者明确要求时**（`--minor` / `--major`），不得由提交类型自动推断 |
+| 真源 | 有 `VERSION` 用 `VERSION`；没有但有 `package.json.version` 则以其为源并补建 `VERSION` 镜像 |
+| 触发点 | 每批改动完成验收并写入 changelog 后，执行改动的 agent 必须运行递增脚本（本仓库根缺 `scripts/bump-version.ps1`，插件各自带 `scripts/bump-version.mjs`） |
 
 ### 验证清单
 

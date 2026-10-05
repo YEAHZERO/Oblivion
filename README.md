@@ -27,14 +27,30 @@
 | `.design/ARCHITECTURE.MD` | **设计书**（v4.1-baseline，2400+ 行） | 权威规范 |
 | `.action/` · `.memory/` | **AI Agent 协作框架**（工作流 / 业务规则 / 记忆库与版本规则） | 已入库（规则与模板） |
 | `oblivion-brand/` | **`@oblivion/brand` 插件** | ✅ 已实现并装机（见下） |
+| `oblivion-vimc/` | **`@oblivion/vimc` 插件**（键盘导航） | ✅ 已实现并装机（见下） |
 | `tools/` | 本机运维脚本 | 可用 |
 
-**已实现的唯一插件** —— [`@oblivion/brand`](oblivion-brand/README.md) v0.1.0：
+**已实现的插件（2 个）**：
+
+① [`@oblivion/brand`](oblivion-brand/README.md) v0.1.0：
 
 - 侧栏与会话 Hero 的**品牌换成北极星**（占用官方槽位，**零 Fork**）
 - 品牌名文字可自定义；品牌图形可上传替换；**接管可完全关闭**（关闭后官方外观立即恢复）
 - 可把「插件市场」这类**可嵌入面板挂到侧栏**「插件」下方（支持多选）
 - 设置页**一键重启 DSH**（自动重新拉起，无控制台窗口，约 2.7 秒）
+
+② [`@oblivion/vimc`](oblivion-vimc/README.md) v0.2.8（**清单外新增**，交互工具类）：
+
+- 把 DSH 当浏览器用：`w/s` 上/下翻页（距离 **0.6 屏**）、`a/d` 横向像素步进、`W/S` 到顶/到底、
+  `[`/`]` **上一条/下一条提问**、`/` **页面内查找**（`.`/`,` 前后跳，落点靠上 + 落点标记）、
+  `f` **链接提示**（**正文内联引用优先拿单字母**，消息操作按钮其次，外部按钮最后）、`i` 聚焦输入框、**`Esc` 退出输入框**；
+  `Ctrl+方向键` 像素级滚动
+- **焦点在输入框里时一个键都不接管**；键位与选项按 [Vimium-C](https://github.com/gdh1995/vimium-c) 语义实现，
+  **可直接导入 `vimium_c-*.json` 选项导出**（已采纳/未采纳逐条给出理由）
+- **自带设置页**（设置 → Oblivion 键盘导航）：键位文本、滚动、输入框、查找、链接提示、导入、排除规则与只读自检
+- **开销可自证**：真实页面里候选扫描 7.5–19ms（优化前 111.8ms）、按键平均 1.8ms/峰值 3ms；
+  无轮询、无常驻注入 DOM
+- 挂载走 profile 补丁插入行，**无需重启应用**；自带诊断证据链（本机 DSHX 验证面不可用，见 [`WORKSPACE.md`](WORKSPACE.md)）
 
 > ⚠️ **本仓库目前没有 26 个 `oblivion-*` 能力包。** 那是 **v4.0 及更早**的计划；
 > v4.1 已把它**收敛为 8 个插件**（宿主提供的不再重造）。**不要把旧计划读成现状。**
@@ -58,6 +74,7 @@
 | 插件 | 职责 |
 | --- | --- |
 | `@oblivion/brand` | 品牌槽位接管 ✅ **已落地** |
+| `@oblivion/vimc` | 键盘导航（**清单外新增**，交互工具类）✅ **已落地** |
 | `@oblivion/knowledge` | 知识库核心 + 文档解析 + 向量检索 |
 | `@oblivion/qa-loop` | 问答闭环（四层筛选 + 注入） |
 | `@oblivion/perspective` | 思维激荡（双模式触发） |
@@ -79,13 +96,15 @@
 | **为什么这么设计 / 有哪些证据 / 决策与验收** | [`.design/ARCHITECTURE.MD`](.design/ARCHITECTURE.MD)（v4.1-baseline） |
 | **DSH 插件怎么开发**（环境前置、命令、已知限制与踩过的坑） | [`WORKSPACE.md`](WORKSPACE.md) |
 | **`@oblivion/brand` 插件怎么用/怎么改** | [`oblivion-brand/README.md`](oblivion-brand/README.md) |
+| **`@oblivion/vimc` 插件怎么用/怎么改** | [`oblivion-vimc/README.md`](oblivion-vimc/README.md)（设计意图/决策/验收见 [`.design/vimc-键盘导航.md`](.design/vimc-键盘导航.md)） |
 | **Agent 协作规范与业务规则** | [`.action/`](.action/) |
 | **记忆库怎么用（每轮三步固定动作）** | [`.memory/README.md`](.memory/README.md) |
 | **对外版本说明** | [`CHANGELOG.md`](CHANGELOG.md) |
 | **怎么贡献 / 第三方复用登记** | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
 > **版本有两条轴，别混**：**产品版本**在根 [`VERSION`](VERSION) / [`CHANGELOG.md`](CHANGELOG.md)；
-> **插件版本**在 [`oblivion-brand/VERSION`](oblivion-brand/VERSION)。两者独立递增（设计书 §12.13）。
+> **插件版本**在 [`oblivion-brand/VERSION`](oblivion-brand/VERSION) 与 [`oblivion-vimc/VERSION`](oblivion-vimc/VERSION)。
+> 两者独立递增（设计书 §12.13）。
 
 ---
 
@@ -96,9 +115,13 @@ Oblivion/
 ├── .action/                 # Agent 协作框架（规则 / 工作流 / 技能）
 ├── .memory/                 # 记忆库：规则与模板入库，逐日记录不入库
 ├── .design/                 # 设计书 ARCHITECTURE.MD + 设计笔记
-├── oblivion-brand/          # @oblivion/brand（当前唯一已实现的插件）
+├── oblivion-brand/          # @oblivion/brand（品牌槽位接管）
 │   ├── VERSION              #   插件版本单一真源
 │   ├── src/ · lib/ · scripts/
+│   └── README.md
+├── oblivion-vimc/           # @oblivion/vimc（键盘导航：w/s/a/d · W/S · i）
+│   ├── VERSION              #   插件版本单一真源
+│   ├── src/ · lib/ · scripts/ · tests/
 │   └── README.md
 ├── tools/                   # 本机运维脚本
 ├── CHANGELOG.md             # 对外版本说明
@@ -118,6 +141,7 @@ Oblivion/
 | **0.0.1** | 2026-10-02 | 起点基线 |
 | **0.0.2** | 2026-10-04 | Phase 5 问答闭环落地（**旧范式**：26 个自建能力包） |
 | 未发版 | 2026-10-04 | **范式修正**：重新开仓，改为 DSH 宿主 + `@oblivion/*` 插件生态；只保留设计书、协作框架与已落地的 `@oblivion/brand` |
+| 未发版 | 2026-10-05 | 新增 `@oblivion/vimc`（键盘导航插件，已装机并附验收证据）。**产品版本未递增**：根 `scripts/bump-version.ps1` 不存在，工具待补（见 [`CHANGELOG.md`](CHANGELOG.md)） |
 
 ## 许可证
 
