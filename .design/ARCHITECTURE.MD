@@ -2244,7 +2244,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | **DEC-026** | **插件如何给用户可见的版本凭据** | **Confirmed：日志每行 + 设置面板标题都带版本号**（2026-10-04）。<br>**理由（代价换来的）**：node 半边**只在应用启动时加载**，刷新页面不更新它。v4.1 开发中因此**连续误判两轮**（以为代码没生效，实为旧版仍在跑）。<br>**配套**：`VERSION` 单一真源 + `bump-version.mjs` 正则同步到 `package.json`；客户端由构建期 esbuild `define` 注入（§12.13） |
 | **DEC-027** | **插件能否接管桌面图标** | **Confirmed：不能，且不做替身**（2026-10-04）。窗口/任务栏图标来自 **exe 的 PE 资源**，`resources/icon.png` 只喂 `setAboutPanelOptions`、`resources/tray.ico` 只喂托盘。**拒绝**改写官方安装目录内的资源（越界且升级即失效）。<br>**替代**：改快捷方式 `.lnk` 的 `IconLocation`（`tools/set-shortcut-icon.ps1`，支持 `-Restore`）——明确告知这是**壳层替代**，不是应用图标接管（RISK-129） |
 | **DEC-028** | **`@oblivion/core` 的挂载策略** | **Confirmed：走热挂**（2026-10-06）。用户层 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 的 insert 行，**不声明 `dsh.bundle`** —— 改 config 落盘即装载、不必重启（Host 侧 JS 代码改动仍需重启 App 才重新导入）。<br>**代价**：换机器 / 重置 profile 会静默失效（正命中 `DSH-COMPAT.md` 的 **R1**）。<br>**缓解**：安装片段随包提交（`oblivion-core/cordis.patch.yml` + `oblivion-core/README.md` §9.1）；`pnpm run verify:dsh` 的 `mount profile.dependencies` 断言会在装载缺失时报 FAIL。详见 §33.6 |
-| **DEC-029** | **知识库落盘位置与分类** | **Confirmed：写进既有知识库**（2026-10-06）。文档根 = **`C:/Library/那些渐渐被遗忘`**（**不再**单开 `oblivion_docs/`）；内部按编号目录分类：`01_问答沉淀/`（问答闭环）、`00_导入文件/`（文档导入）、`02_Wiki页面/`、`03_创作产物/`、`99_其他/`（兜底）。<br>**实现**：`config.mdRoot` + `config.mdClassify`（来源类型 → 子目录），已在 `oblivion-core` v0.1.3 落地。<br>**安全约束**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，**绝不覆盖**。详见 §33.6 |
+| **DEC-029** | **知识库落盘位置与分类** | **Confirmed：写进既有知识库**（2026-10-06）。文档根 = **`C:/Library/那些渐渐被遗忘`**（**不再**单开 `oblivion_docs/`）；内部按编号目录分类：`01_问答沉淀/`（问答闭环）、`00_导入文件/`（文档导入）、`02_Wiki页面/`、`03_创作产物/`、`99_其他/`（兜底）。<br>**`mdRoot` 可由 config 自由自定义**（任何绝对路径或 `~/` 写法）；**一经配置，插件装载时即自动创建**该根与全部分类目录（不等第一次落盘）；目录名会消毒（去 `..`／盘符／非法字符），不会逃出 `mdRoot`。<br>**实现**：`config.mdRoot` + `config.mdClassify` + `ensureMdDirs()`，已在 `oblivion-core` v0.1.4 落地。<br>**安全约束**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，**绝不覆盖**。详见 §33.6 |
 
 ### 31.3 变更日志 delta 类型
 
@@ -2289,7 +2289,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | client | **bundle 层**（`dsh.bundle.patch` + `dsh.profile.bundles`） | 契约 10/10 + 目视（AC-032~035 ✅） |
 | `@oblivion/vimc` | 0.2.9 | client | **bundle 层** | 契约 6/6 + 真实按键计数（RUNTIME_VERIFIED） |
-| `@oblivion/core` | 0.1.3 | object（Host） | ✅ **热挂**（用户层 insert 行，落盘即装载，**不重启**；DEC-028） | 契约 8/8 + test 12/12 + selfcheck 19/19；**真实 Host 待重启验证** |
+| `@oblivion/core` | 0.1.4 | object（Host） | ✅ **热挂**（用户层 insert 行，落盘即装载，**不重启**；DEC-028） | 契约 8/8 + test 13/13 + selfcheck 22/22；**真实 Host 待重启验证** |
 
 > `@oblivion/core` 把设计书的 Phase 2–6（knowledge / qa-loop / perspective / feedback / graph）**合并成一个包**，
 > 理由与遗留项见 `HANDOFF.md` §六。它**按 DEC-028 保持热挂**（不声明 `dsh.bundle`，改参数落盘即生效），
@@ -2362,7 +2362,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | ID | 决策 | 内容与代价 |
 | --- | --- | --- |
 | **DEC-028** | **`@oblivion/core` 走热挂** | 用户层 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 的 insert 行；**不声明 `dsh.bundle`**。收益：改代码落盘即装卸载载（Host 侧代码改动仍需重启 App 才重新导入）。代价：换机器 / 重置 profile 会**静默失效**（DSH-COMPAT R1）→ 缓解：安装片段随包提交（`oblivion-core/cordis.patch.yml` + README §9.1），并由 `pnpm run verify:dsh` 的 `mount profile.dependencies` 断言兜底 |
-| **DEC-029** | **知识库落盘位置与分类** | 文档根 = **`C:/Library/那些渐渐被遗忘`**（所有者既有知识库，不再单开 `oblivion_docs/`）；内部按编号目录分类：`01_问答沉淀/`（问答闭环）、`00_导入文件/`（文档导入）、`02_Wiki页面/`、`03_创作产物/`、`99_其他/`（兜底）。实现：`config.mdRoot` + `config.mdClassify`。**安全约束**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，绝不覆盖 |
+| **DEC-029** | **知识库落盘位置与分类** | 文档根 = **`C:/Library/那些渐渐被遗忘`**（所有者既有知识库，不再单开 `oblivion_docs/`）；内部按编号目录分类：`01_问答沉淀/`（问答闭环）、`00_导入文件/`（文档导入）、`02_Wiki页面/`、`03_创作产物/`、`99_其他/`（兜底）。实现：`config.mdRoot` + `config.mdClassify`。**`mdRoot` 可自定义，装载时自动创建全部目录**（`ensureMdDirs`，v0.1.4）。**安全约束**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，绝不覆盖 |
 
 ---
 

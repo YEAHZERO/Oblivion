@@ -118,7 +118,7 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 | --- | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS 10/10 | `deepseek-harness @ dsh-v0.2.0-rc.2` (`639ed01539`) |
 | `@oblivion/vimc` | 0.2.9 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS **6/6**（迁 bundle 层后） | 同上 |
-| `@oblivion/core` | **0.1.3** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **8/8** | 同上（host / service `tools`·`systemPrompt` / event `session/event`·`turn/end` / hostPkg `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
+| `@oblivion/core` | **0.1.4** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **8/8** | 同上（host / service `tools`·`systemPrompt` / event `session/event`·`turn/end` / hostPkg `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 
 **校验覆盖的契约**：
 

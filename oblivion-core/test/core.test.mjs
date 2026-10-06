@@ -9,7 +9,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync as mkdtemp, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -141,5 +142,25 @@ describe('装配（apply）', () => {
     assert.equal(typeof captured.text, 'function');
     assert.equal(captured.text({ agent: undefined }), '', '没有 agent 时不注入任何内容');
     assert.ok(captured.text({ agent: {} }).includes('Oblivion 认知陪伴规则'));
+  });
+
+  it('装载即建目录：mdRoot 一经配置就自动创建 01_问答沉淀/ 等分类目录', async () => {
+    const kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+    const root = await mkdtemp(join(tmpdir(), 'oblivion-mdroot-'));
+    try {
+      const { ctx } = fakeCtx();
+      // 刻意用一个与默认值完全不同的自定义知识库位置
+      mod.apply(ctx, { dataRoot: join(root, 'data'), mdRoot: join(root, '自定义知识库') });
+      // 目录创建是非阻塞链路（失败只记日志），给它一点时间
+      await new Promise((r) => setTimeout(r, 300));
+      const expected = ['01_问答沉淀', '00_导入文件', '02_Wiki页面', '03_创作产物', '99_其他'];
+      const missing = expected.filter((dir) => !existsSync(join(root, '自定义知识库', dir)));
+      assert.deepEqual(missing, [], '应自动创建全部分类目录，缺：' + missing.join('、'));
+      // 消毒：配置里的分类目录不得逃出 mdRoot
+      assert.equal(kit.safeDirName('../../etc'), 'etc');
+      assert.equal(kit.safeDirName('C:\\Windows\\System32'), 'Windows/System32');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

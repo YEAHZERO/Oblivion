@@ -169,11 +169,11 @@ oblivion-core/
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` ~52 KB + `lib/testkit.js`（v0.1.3） |
+| `pnpm run build` | ✅ `lib/index.js` ~53 KB + `lib/testkit.js`（v0.1.4） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ 12/12 |
-| `pnpm run selfcheck` | ✅ **19/19**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、时钟保护、去重、阈值分布） |
-| `pnpm run check:version` | ✅ `0.1.3` 一致 |
+| `pnpm run test` | ✅ **13/13**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒」） |
+| `pnpm run selfcheck` | ✅ **22/22**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、时钟保护、去重、阈值分布） |
+| `pnpm run check:version` | ✅ `0.1.4` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **8/8**（host / `tools`·`systemPrompt` / `session/event`·`turn/end` / `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 | 真实 Host 装载 | ⏳ **仍未验证**（需要 App 重启后才能验证 v0.1.2 起的修复，见第九节） |
@@ -207,12 +207,20 @@ $core = 'C:\Projects\Oblivion\oblivion-core'
 ```
 
 profile 补丁层被监视、落盘即装载（**无需重启**）；但 **Host 侧 JS 代码只有在 App 重启后才会重新导入** ——
-`0.1.2` 的捕获修复属于 Host 侧代码，改完请**重启一次 DSH Desktop**。
+捕获链路的修复与「装载即建目录」都是 Host 侧代码，改完请**重启一次 DSH Desktop**。
 
 ### 9.2 验证闭环（一问一答 → 自动沉淀）
 
+**先看目录是否就位**：`mdRoot` 一经配置，插件**装载时就会自动创建**知识库根与全部分类目录
+（`01_问答沉淀\`、`00_导入文件\`、`02_Wiki页面\`、`03_创作产物\`、`99_其他\`）—— 不必等第一次落盘：
+
 ```powershell
-# 重启 App 后：在会话里正常问一句（≥10 字、有实质回答），然后
+Get-ChildItem 'C:\Library\那些渐渐被遗忘' -Directory       # 期望看到 01_问答沉淀 等 5 个目录
+```
+
+然后**在会话里正常问一句**（≥10 字、有实质回答），再查落盘：
+
+```powershell
 Get-ChildItem "$env:USERPROFILE\.oblivion\data"            # 期望出现 ts-*.json（知识条目）
 Get-ChildItem 'C:\Library\那些渐渐被遗忘\01_问答沉淀'        # 期望出现 <主题>.md（笔记）
 Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction SilentlyContinue
@@ -220,6 +228,17 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
 
 出现 `ts-*.json` + `01_问答沉淀\*.md` = `turn/end → 捕获 → 落盘` 整条链通了。
 **在此之前只应声称 `SOURCE_BUILT`，不要声称 `RUNTIME_VERIFIED`。**
+
+例：把知识库换到别处（并让它自动建好分类目录）：
+
+```yaml
+- insert:
+    - id: '@oblivion/core'
+      name: '@oblivion/core'
+      config:
+        mdRoot: 'D:/Knowledge/OblivionKB'      # 自定义位置；装载时自动创建该根 + 01_问答沉淀 等
+        dataRoot: '~/.oblivion/data'
+```
 
 ### 9.3 用五个模型面工具
 
@@ -237,8 +256,8 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `dataRoot` / `mdRoot` | `~/.oblivion/data` / **`C:/Library/那些渐渐被遗忘`** | JSON 存储 / 笔记落盘根（DEC-029：直接写进既有知识库） |
-| `mdClassify` | `session`·`qa_loop` → `01_问答沉淀`、`doc` → `00_导入文件`、`wiki` → `02_Wiki页面`、`content_creator` → `03_创作产物` | 来源类型 → 子目录；未命中落 `99_其他/`（§25.3） |
+| `dataRoot` / `mdRoot` | `~/.oblivion/data` / **`C:/Library/那些渐渐被遗忘`** | JSON 存储 / 笔记落盘根。**`mdRoot` 可自由自定义**（绝对路径或 `~/` 写法都行）；**一经配置，装载时就自动创建**该根与全部分类目录 |
+| `mdClassify` | `session`·`qa_loop` → `01_问答沉淀`、`doc` → `00_导入文件`、`wiki` → `02_Wiki页面`、`content_creator` → `03_创作产物` | 来源类型 → 子目录；未命中落 `99_其他/`（§25.3）。目录名会**消毒**（去掉 `..`／盘符／非法字符），不会逃出 `mdRoot` |
 | `valueThreshold` | `0.3` | L4 价值闸门；**勿改回 0.5**（会让一切被丢弃） |
 | `enablePerspective` / `enableFeedback` | `true` | 认知陪伴 / 反馈微调开关 |
 | `perspectiveActiveSessionMax` | `3` | §25.4 主动触发只在最早 3 个会话 |

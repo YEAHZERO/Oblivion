@@ -5,7 +5,7 @@ import type { KnowledgeService } from '../knowledge/index.js';
 import type { ProfileService } from '../profile/index.js';
 import { expandHome } from '../util/paths.js';
 import { extractQAPair, type TurnEventLike } from './extract.js';
-import { writeMD, type MdAction } from './md-writer.js';
+import { ensureMdDirs, writeMD, type MdAction } from './md-writer.js';
 
 interface SessionLike {
   id: string;
@@ -68,6 +68,18 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   const buffers = new Map<string, TurnBuffer>();
   const mdRoot = expandHome(config.mdRoot);
   let warnedNoEvents = false;
+
+  /**
+   * 装载即建目录（所有者要求）：`mdRoot` 一经配置，`01_问答沉淀\` 等分类目录立即就位。
+   * 非阻塞：失败只记日志（知识库可能在不可写的盘/需要权限），不影响插件装载与问答链路。
+   */
+  void ensureMdDirs(mdRoot, config.mdClassify)
+    .then((dirs) => {
+      ctx.logger?.info?.(config.logPrefix + ' 知识库目录就位：%s（%d 个分类）', mdRoot, dirs.length);
+    })
+    .catch((error: unknown) => {
+      ctx.logger?.warn?.(config.logPrefix + ' 知识库目录创建失败（不影响捕获）：%o', error);
+    });
 
   function remember(key: string): void {
     processed.add(key);

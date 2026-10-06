@@ -19,6 +19,53 @@ export type MdClassifyMap = Readonly<Record<string, string>>;
 export const MD_FALLBACK_DIR = '99_其他';
 
 /**
+ * 目录名消毒：配置里的分类目录**不允许逃出 mdRoot**。
+ * 去掉盘符/前导分隔符、`..` 片段与非法字符；结果为空则视为未配置。
+ */
+export function safeDirName(input: string): string {
+  const cleaned = String(input ?? '')
+    .replace(/^[a-zA-Z]:/, '')
+    .split(/[\\/]+/)
+    .filter((seg) => seg !== '' && seg !== '.' && seg !== '..')
+    .map((seg) => seg.replace(/[<>:"|?*]/g, '_').trim())
+    .filter((seg) => seg !== '')
+    .join('/');
+  return cleaned;
+}
+
+/** 配置里声明过（或兜底）的全部分类目录名，去重且已消毒。 */
+export function mdDirNames(map: MdClassifyMap | undefined): string[] {
+  const names: string[] = [MD_FALLBACK_DIR];
+  if (map) {
+    for (const value of Object.values(map)) {
+      const dir = safeDirName(value);
+      if (dir !== '' && !names.includes(dir)) names.push(dir);
+    }
+  }
+  return names;
+}
+
+/**
+ * **装载即建目录**：`mdRoot` 一经配置，就把知识库根与全部分类目录创建出来。
+ *
+ * 为什么不等第一次落盘再建：所有者要求「一旦定义后就自动创建 `01_问答沉淀\` 等」——
+ * 目录先就位，用户马上能在知识库里看到落点，也避免首次捕获时才暴露权限问题。
+ *
+ * 幂等（`recursive: true`）、非阻塞（调用方 fire-and-forget + 失败只记日志）、
+ * 不做任何删除：只创建，不动已有内容。
+ *
+ * @returns 已确保存在的目录绝对路径列表。
+ */
+export async function ensureMdDirs(root: string, map?: MdClassifyMap): Promise<string[]> {
+  await mkdir(root, { recursive: true });
+  const dirs = mdDirNames(map);
+  for (const dir of dirs) {
+    await mkdir(join(root, dir), { recursive: true });
+  }
+  return dirs.map((dir) => join(root, dir));
+}
+
+/**
  * 取分类目录。
  *
  * 依次看条目的来源类型，命中第一条有映射的就用它；都没有则落 `99_其他/`（§25.3 兜底）。
@@ -27,7 +74,7 @@ export function classifyDir(item: KnowledgeItem, map: MdClassifyMap | undefined)
   if (map) {
     for (const source of item.sources) {
       const dir = map[source.type];
-      if (typeof dir === 'string' && dir.trim() !== '') return dir.trim();
+      if (typeof dir === 'string' && dir.trim() !== '') return safeDirName(dir) || MD_FALLBACK_DIR;
     }
   }
   return MD_FALLBACK_DIR;

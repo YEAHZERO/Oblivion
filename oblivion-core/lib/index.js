@@ -1128,11 +1128,33 @@ function extractQAPair(turn) {
 import { mkdir as mkdir5, readFile as readFile5, writeFile as writeFile5 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var MD_FALLBACK_DIR = "99_\u5176\u4ED6";
+function safeDirName(input) {
+  const cleaned = String(input ?? "").replace(/^[a-zA-Z]:/, "").split(/[\\/]+/).filter((seg) => seg !== "" && seg !== "." && seg !== "..").map((seg) => seg.replace(/[<>:"|?*]/g, "_").trim()).filter((seg) => seg !== "").join("/");
+  return cleaned;
+}
+function mdDirNames(map) {
+  const names = [MD_FALLBACK_DIR];
+  if (map) {
+    for (const value of Object.values(map)) {
+      const dir = safeDirName(value);
+      if (dir !== "" && !names.includes(dir)) names.push(dir);
+    }
+  }
+  return names;
+}
+async function ensureMdDirs(root, map) {
+  await mkdir5(root, { recursive: true });
+  const dirs = mdDirNames(map);
+  for (const dir of dirs) {
+    await mkdir5(join6(root, dir), { recursive: true });
+  }
+  return dirs.map((dir) => join6(root, dir));
+}
 function classifyDir(item, map) {
   if (map) {
     for (const source of item.sources) {
       const dir = map[source.type];
-      if (typeof dir === "string" && dir.trim() !== "") return dir.trim();
+      if (typeof dir === "string" && dir.trim() !== "") return safeDirName(dir) || MD_FALLBACK_DIR;
     }
   }
   return MD_FALLBACK_DIR;
@@ -1221,6 +1243,11 @@ function registerQaLoop(ctx, config, deps) {
   const buffers = /* @__PURE__ */ new Map();
   const mdRoot = expandHome(config.mdRoot);
   let warnedNoEvents = false;
+  void ensureMdDirs(mdRoot, config.mdClassify).then((dirs) => {
+    ctx.logger?.info?.(config.logPrefix + " \u77E5\u8BC6\u5E93\u76EE\u5F55\u5C31\u4F4D\uFF1A%s\uFF08%d \u4E2A\u5206\u7C7B\uFF09", mdRoot, dirs.length);
+  }).catch((error) => {
+    ctx.logger?.warn?.(config.logPrefix + " \u77E5\u8BC6\u5E93\u76EE\u5F55\u521B\u5EFA\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u6355\u83B7\uFF09\uFF1A%o", error);
+  });
   function remember(key) {
     processed.add(key);
     if (processed.size > MAX_PROCESSED_KEYS) {
@@ -1452,7 +1479,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.3";
+var VERSION = "0.1.4";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;

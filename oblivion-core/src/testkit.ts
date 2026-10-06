@@ -12,7 +12,7 @@ export { effectiveWeight, reinforce } from './graph/decay.js';
 export { extractEntities } from './graph/index.js';
 export { extractQAPair, textOfMessage, isHumanUserMessage, userMessageSourceKind } from './qa-loop/extract.js';
 export { registerQaLoop } from './qa-loop/index.js';
-export { classifyDir, MD_FALLBACK_DIR, writeMD } from './qa-loop/md-writer.js';
+export { classifyDir, ensureMdDirs, mdDirNames, safeDirName, MD_FALLBACK_DIR, writeMD } from './qa-loop/md-writer.js';
 export { deriveTitle, deriveTopic } from './knowledge/index.js';
 export { registerFeedback } from './feedback/index.js';
 export { defaultProfile, mergeProfile } from './profile/schema.js';

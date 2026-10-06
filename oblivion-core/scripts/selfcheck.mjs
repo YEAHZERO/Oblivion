@@ -439,6 +439,44 @@ await check('共用知识库防误伤：同名外来笔记不被覆盖，改写 
   return '外来文件未动，写入 ' + written.replace(/\\/g, '/').split('/').slice(-1)[0];
 });
 
+await check('装载即建目录（所有者要求）：mdRoot 一经配置，01_问答沉淀\\ 等分类目录立即创建', async () => {
+  const freshRoot = join(tmp, 'kb-fresh');
+  const fresh = makeCtx();
+  mod.apply(fresh.ctx, { dataRoot: join(tmp, 'data-fresh'), mdRoot: freshRoot });
+  await new Promise((r) => setTimeout(r, 300)); // 建目录是非阻塞链路（失败只记日志）
+  const expected = ['01_问答沉淀', '00_导入文件', '02_Wiki页面', '03_创作产物', '99_其他'];
+  const missing = expected.filter((d) => !existsSync(join(freshRoot, d)));
+  assert.deepEqual(missing, [], '应自动创建全部分类目录，缺：' + missing.join('、'));
+  return '已创建 ' + expected.length + ' 个分类目录 → ' + freshRoot.replace(/\\/g, '/');
+});
+
+await check('自定义知识库位置：换 mdRoot 后落盘跟着走', async () => {
+  const custom = join(tmp, 'kb-custom');
+  const ctx3 = makeCtx();
+  mod.apply(ctx3.ctx, { dataRoot: join(tmp, 'data-custom'), mdRoot: custom });
+  const handler3 = ctx3.reg.events.find((e) => e.event === 'session/event').handler;
+  await emitTurn(handler3, { id: 'custom-session' }, {
+    question: '自定义知识库位置之后，笔记会落到哪里？',
+    answer: ANSWER,
+    turn: 31,
+  });
+  const dir = join(custom, '01_问答沉淀');
+  const files = existsSync(dir) ? readdirSync(dir) : [];
+  assert.ok(files.length >= 1, '笔记应落在自定义 mdRoot，实际 ' + files.length + ' 个文件');
+  return '落 ' + files.length + ' 个文件 → ' + custom.replace(/\\/g, '/') + '/' + files[0];
+});
+
+await check('分类目录消毒：配置里的目录名不能逃出 mdRoot', () => {
+  assert.equal(kit.safeDirName('../../etc'), 'etc', '.. 片段必须被去掉');
+  assert.equal(kit.safeDirName('C:\\Windows\\System32'), 'Windows/System32', '盘符与反斜杠应被规整');
+  assert.equal(kit.safeDirName('  '), '', '空白视为未配置');
+  const names = kit.mdDirNames({ evil: '../../etc', ok: '01_问答沉淀' });
+  assert.ok(names.includes('99_其他'), '必须含兜底目录');
+  assert.ok(names.includes('01_问答沉淀'), '必须含实际分类目录');
+  assert.ok(!names.some((n) => n.includes('..')), '不得含 .. 片段');
+  return '消毒后 = ' + names.join(' , ');
+});
+
 rmSync(tmp, { recursive: true, force: true });
 
 process.stdout.write('\n@oblivion/core selfcheck\n\n');
