@@ -1827,8 +1827,22 @@ function createTraceStore(dataRoot, options) {
 }
 
 // src/stats/index.ts
-import { writeFile as writeFile7, mkdir as mkdir7 } from "node:fs/promises";
+import { join as join9 } from "node:path";
+
+// src/util/fs.ts
+import { mkdir as mkdir7, rename, writeFile as writeFile7 } from "node:fs/promises";
 import { dirname as dirname4, join as join8 } from "node:path";
+async function writeTextAtomic(path, text) {
+  await mkdir7(dirname4(path), { recursive: true });
+  const tmp = join8(dirname4(path), "." + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + ".tmp");
+  await writeFile7(tmp, text, "utf8");
+  await rename(tmp, path);
+}
+async function writeJsonAtomic(path, value) {
+  await writeTextAtomic(path, JSON.stringify(value, null, 2) + "\n");
+}
+
+// src/stats/index.ts
 function registerStats(ctx, config, meta) {
   const dataRoot = expandHome(config.dataRoot);
   const trace = createTraceStore(dataRoot, {
@@ -1869,8 +1883,7 @@ function registerStats(ctx, config, meta) {
     },
     async writeBootSnapshot(extra) {
       try {
-        const path = join8(dataRoot, "status.json");
-        await mkdir7(dirname4(path), { recursive: true });
+        const path = join9(dataRoot, "status.json");
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -1883,7 +1896,7 @@ function registerStats(ctx, config, meta) {
           tracePath: trace.path,
           ...extra
         };
-        await writeFile7(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        await writeJsonAtomic(path, payload);
         return;
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + " status.json \u5199\u5165\u5931\u8D25\uFF1A%o", error);

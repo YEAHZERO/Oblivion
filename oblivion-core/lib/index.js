@@ -1934,8 +1934,20 @@ function registerQaLoop(ctx, config, deps) {
 }
 
 // src/stats/index.ts
-import { writeFile as writeFile9, mkdir as mkdir9 } from "node:fs/promises";
-import { dirname as dirname5, join as join10 } from "node:path";
+import { join as join11 } from "node:path";
+
+// src/util/fs.ts
+import { mkdir as mkdir8, rename, writeFile as writeFile8 } from "node:fs/promises";
+import { dirname as dirname4, join as join9 } from "node:path";
+async function writeTextAtomic(path, text) {
+  await mkdir8(dirname4(path), { recursive: true });
+  const tmp = join9(dirname4(path), "." + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + ".tmp");
+  await writeFile8(tmp, text, "utf8");
+  await rename(tmp, path);
+}
+async function writeJsonAtomic(path, value) {
+  await writeTextAtomic(path, JSON.stringify(value, null, 2) + "\n");
+}
 
 // src/stats/summary.ts
 function ratio(part, whole) {
@@ -2067,10 +2079,10 @@ function suggest(summary, config, extra = {}) {
 }
 
 // src/stats/trace.ts
-import { appendFile as appendFile2, mkdir as mkdir8, readFile as readFile8, writeFile as writeFile8 } from "node:fs/promises";
-import { dirname as dirname4, join as join9 } from "node:path";
+import { appendFile as appendFile2, mkdir as mkdir9, readFile as readFile8, writeFile as writeFile9 } from "node:fs/promises";
+import { dirname as dirname5, join as join10 } from "node:path";
 function createTraceStore(dataRoot, options) {
-  const path = join9(dataRoot, "decisions.jsonl");
+  const path = join10(dataRoot, "decisions.jsonl");
   const MS_PER_DAY3 = 864e5;
   async function readRaw() {
     try {
@@ -2093,7 +2105,7 @@ function createTraceStore(dataRoot, options) {
     path,
     async record(entry) {
       try {
-        await mkdir8(dirname4(path), { recursive: true });
+        await mkdir9(dirname5(path), { recursive: true });
         await appendFile2(path, JSON.stringify(entry) + "\n", "utf8");
       } catch (error) {
         options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u5199\u5165\u5931\u8D25\uFF1A%o", error);
@@ -2106,7 +2118,7 @@ function createTraceStore(dataRoot, options) {
       const kept = fresh.length > options.maxEntries ? fresh.slice(fresh.length - options.maxEntries) : fresh;
       if (kept.length !== all.length) {
         try {
-          await writeFile8(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
+          await writeFile9(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
         } catch (error) {
           options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u88C1\u526A\u843D\u76D8\u5931\u8D25\uFF1A%o", error);
         }
@@ -2157,8 +2169,7 @@ function registerStats(ctx, config, meta) {
     },
     async writeBootSnapshot(extra) {
       try {
-        const path = join10(dataRoot, "status.json");
-        await mkdir9(dirname5(path), { recursive: true });
+        const path = join11(dataRoot, "status.json");
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -2171,7 +2182,7 @@ function registerStats(ctx, config, meta) {
           tracePath: trace.path,
           ...extra
         };
-        await writeFile9(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        await writeJsonAtomic(path, payload);
         return;
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + " status.json \u5199\u5165\u5931\u8D25\uFF1A%o", error);

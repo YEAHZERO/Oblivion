@@ -1,7 +1,7 @@
-import { writeFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { AppContext } from '../core-types.js';
 import type { Config } from '../config.js';
+import { writeJsonAtomic } from '../util/fs.js';
 import { expandHome } from '../util/paths.js';
 import { now } from '../util/time.js';
 import { suggest, summarize, type StatsSummary, type TuningHint } from './summary.js';
@@ -98,7 +98,6 @@ export function registerStats(
     async writeBootSnapshot(extra) {
       try {
         const path = join(dataRoot, 'status.json');
-        await mkdir(dirname(path), { recursive: true });
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -111,7 +110,9 @@ export function registerStats(
           tracePath: trace.path,
           ...extra,
         };
-        await writeFile(path, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+        // 原子写：这个文件会被**另一个进程**（面板的 Node 半边）随时读；
+        // 截断式写入会让它读到半个对象（实测事故：面板报 `JSON SyntaxError ... after JSON`）。
+        await writeJsonAtomic(path, payload);
         return;
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + ' status.json 写入失败：%o', error);
