@@ -478,7 +478,7 @@ function registerPanelTab(ctx, component, warn) {
 }
 
 // src/client/index.ts
-var inject = [];
+var inject = ["slots"];
 var LOG_NAME = "@oblivion/panel";
 function reportCtxShape(ctx) {
   try {
@@ -532,7 +532,12 @@ function apply(ctx) {
   const result = registerPanelTab(ctx, ((props) => (0, import_react3.createElement)(OblivionPanel, props)), warn);
   if (result.status === "registered") logger?.info?.("\u5DF2\u5728 side bar \u6CE8\u518C Oblivion \u9762\u677F tab");
   else warn("\u9762\u677F tab \u672A\u6CE8\u518C\uFF1A" + String(result.detail ?? result.status));
-  const slots = ctx.slots;
+  let slots;
+  try {
+    slots = ctx.slots;
+  } catch (error) {
+    warn("\u8BFB\u53D6 ctx.slots \u88AB\u5BBF\u4E3B\u5B88\u536B\u62E6\u4E0B\uFF1A" + (error instanceof Error ? error.message : String(error)));
+  }
   if (slots && typeof slots.inject === "function" && typeof slots.register === "function") {
     const service = result.service;
     const component = createLeftbarAction(() => {

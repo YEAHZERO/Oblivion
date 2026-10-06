@@ -127,6 +127,22 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   const ctxShape = describeCtx(ctx);
 
   /**
+   * 安全读取可能被宿主守卫拦下的成员。
+   *
+   * 实测教训：Cordis 对「未在 `inject` 里声明的服务」的属性访问会**在读取那一刻抛错**
+   * （`cannot get property "agents" without inject`）。我原先把 `ctx.agents` 的读取
+   * 直接写在对象字面量里（无 try/catch）→ **整个插件装载失败、App 起不来**。
+   * 诊断代码永远不能有这种杀伤力：一律走 `safeRead`。
+   */
+  function safeRead<T>(read: () => T): T | undefined {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * **临时事件探针**（`enableEventProbe`，链路验证通过后关掉）。
    *
    * 一行一个事件，写 `<dataRoot>/events-probe.jsonl`；超出 `eventProbeMax` 行时重写尾部。
@@ -376,8 +392,18 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     hasGet: typeof (ctx as { get?: unknown }).get === 'function',
     /** ctx 形状全量 dump（core 侧） */
     ctxShape,
-    /** 直接读 `ctx.agents`（不经 inject）—— 服务是否已经在这个上下文上 */
-    agentsDirect: typeof (ctx as { agents?: unknown }).agents === 'object' && (ctx as { agents?: unknown }).agents !== null,
+    /**
+     * 直接读 `ctx.agents` 的结果 —— **必须 safeRead**。
+     *
+     * 实测事故：这两个字段原本直接写在对象字面量里（无 try/catch），而 Cordis 对
+     * 「未在 `inject` 里声明的服务」的属性访问**在读取那一刻就抛错**
+     * （`cannot get property "agents" without inject`）→ **整个插件装载失败、App 起不来**。
+     * 诊断代码永远不能有这种杀伤力。
+     */
+    agentsDirect: safeRead(() => {
+      const value = (ctx as { agents?: unknown }).agents;
+      return value !== null && typeof value === 'object';
+    }) ?? false,
     agentsDirectCount: -1,
     /** `ctx.inject(['agents'], …)` 的回调是否触发 */
     injectFired: false,
@@ -403,14 +429,11 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   }
 
   // 挂载即落一次诊断（此刻还没有任何事件）
-  try {
+  const initialAgents = safeRead(() => {
     const direct = (ctx as { agents?: { list?: () => unknown[] } }).agents;
-    if (direct && typeof direct.list === 'function') {
-      diag.agentsDirectCount = direct.list().length;
-    }
-  } catch {
-    // 服务可能还没就绪
-  }
+    return direct && typeof direct.list === 'function' ? direct.list().length : -1;
+  });
+  if (typeof initialAgents === 'number' && initialAgents >= 0) diag.agentsDirectCount = initialAgents;
   diagDirty = true;
   void diagOnce();
 

@@ -1745,6 +1745,13 @@ function registerQaLoop(ctx, config, deps) {
     return typeof data?.turn === "number" ? data.turn : fallback;
   }
   const ctxShape = describeCtx(ctx);
+  function safeRead(read) {
+    try {
+      return read();
+    } catch {
+      return void 0;
+    }
+  }
   const probePath = join8(expandHome(config.dataRoot), "events-probe.jsonl");
   async function probe(subject, event, sessionId, origin) {
     if (!config.enableEventProbe) return;
@@ -1911,15 +1918,25 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.11",
+    version: "0.1.12",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
     hasGet: typeof ctx.get === "function",
     /** ctx 形状全量 dump（core 侧） */
     ctxShape,
-    /** 直接读 `ctx.agents`（不经 inject）—— 服务是否已经在这个上下文上 */
-    agentsDirect: typeof ctx.agents === "object" && ctx.agents !== null,
+    /**
+     * 直接读 `ctx.agents` 的结果 —— **必须 safeRead**。
+     *
+     * 实测事故：这两个字段原本直接写在对象字面量里（无 try/catch），而 Cordis 对
+     * 「未在 `inject` 里声明的服务」的属性访问**在读取那一刻就抛错**
+     * （`cannot get property "agents" without inject`）→ **整个插件装载失败、App 起不来**。
+     * 诊断代码永远不能有这种杀伤力。
+     */
+    agentsDirect: safeRead(() => {
+      const value = ctx.agents;
+      return value !== null && typeof value === "object";
+    }) ?? false,
     agentsDirectCount: -1,
     /** `ctx.inject(['agents'], …)` 的回调是否触发 */
     injectFired: false,
@@ -1942,13 +1959,11 @@ function registerQaLoop(ctx, config, deps) {
     diagDirty = false;
     await flushDiag();
   }
-  try {
+  const initialAgents = safeRead(() => {
     const direct = ctx.agents;
-    if (direct && typeof direct.list === "function") {
-      diag.agentsDirectCount = direct.list().length;
-    }
-  } catch {
-  }
+    return direct && typeof direct.list === "function" ? direct.list().length : -1;
+  });
+  if (typeof initialAgents === "number" && initialAgents >= 0) diag.agentsDirectCount = initialAgents;
   diagDirty = true;
   void diagOnce();
   const agentDisposers = /* @__PURE__ */ new Map();
@@ -2479,7 +2494,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.11";
+var VERSION = "0.1.12";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;

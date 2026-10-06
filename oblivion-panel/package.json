@@ -1,6 +1,6 @@
 {
   "name": "@oblivion/panel",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Oblivion 认知面板：把 @oblivion/core 的捕获率、拦截原因、调参建议与最近沉淀嵌进 dsh-better-sidebar 的一列里。",
   "license": "MIT",
   "type": "module",

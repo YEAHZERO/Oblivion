@@ -15,8 +15,16 @@ import { OblivionPanel } from './Panel.js';
 import { createLeftbarAction, openOblivionTab, type OpenTabCapable } from './leftbar.js';
 import { PANEL_TAB_ID, registerPanelTab, type ClientCtxLike } from './register.js';
 
-/** 没有硬依赖；`betterSidebar` / `slots` 都走渐进注册。 */
-export const inject: string[] = [];
+/**
+ * **必须声明 `slots`**：Cordis 对未在 `inject` 里声明的服务访问会**抛错**
+ * （`cannot get property "slots" without inject`），而左栏入口要用 `ctx.slots.register`。
+ * 原先是 `inject: []` + 裸读 `ctx.slots` → **panel 装载失败、App 起不来**
+ * （实测崩溃日志：`web boot: 1 entry did not activate @oblivion/panel: failed`）。
+ *
+ * `betterSidebar` 仍走**渐进注册**（`ctx.inject(['betterSidebar'], …)`）：它来自第三方插件，
+ * 缺席时应「不注册右侧 tab 但插件照常装载」。
+ */
+export const inject: string[] = ['slots'];
 
 const LOG_NAME = '@oblivion/panel';
 
@@ -84,7 +92,14 @@ export function apply(ctx: ClientCtxLike): void {
   else warn('面板 tab 未注册：' + String(result.detail ?? result.status));
 
   // ② 左栏入口（官方 sidebar.footer.action）
-  const slots = (ctx as { slots?: SlotServiceLike }).slots;
+  //    `slots` 已声明 inject；仍 try/catch —— 守卫读错也只该「少一个入口」，
+  //    不该让整个客户端 entry 装载失败（这正是上次 App 起不来的原因）。
+  let slots: SlotServiceLike | undefined;
+  try {
+    slots = (ctx as { slots?: SlotServiceLike }).slots;
+  } catch (error) {
+    warn('读取 ctx.slots 被宿主守卫拦下：' + (error instanceof Error ? error.message : String(error)));
+  }
   if (slots && typeof slots.inject === 'function' && typeof slots.register === 'function') {
     const service = result.service as OpenTabCapable | undefined;
     const component = createLeftbarAction(() => {
