@@ -1,0 +1,32 @@
+# ============================================================
+# @oblivion/daily-life（有数）— bundle 层组合补丁（**自挂**）
+#
+# package.json 里声明了：
+#     "dsh": { "bundle": { "patch": "./dsh.bundle.patch.yml" } }
+# 于是安装器把本包写进 profile 的 `dsh.profile.bundles` 时，
+# **下面这张表就是本插件自己的挂载声明** —— 不需要任何外部 bundle 替它插行
+# （与 @oblivion/brand 同一策略；@oblivion/bundle 那份只插不自带 patch 的包）。
+#
+# 安装：
+#     dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-daily-life'
+#
+# 为什么开发期也选 bundle 层而不是热挂：账本的行/字段/路由已经按规格冻结
+# （见 README 的「规格冻结」一节），改的是实现而不是接口；bundle 层的
+# `dsh.compat` 与契约校验（tools/verify-dsh-compat.ps1）在装载前就能把问题挡住。
+#
+# ── 行的语义 ────────────────────────────────────────────────
+#   · patch 会**替换整段的 config** 而非合并；这里不写 config，缺省即
+#     `src/config.ts` 里的默认值（想改就整段写进 config）。
+#   · `@` 开头的标量必须加引号，否则 YAML 解析直接报错。
+#
+# ── 可用配置（整段写进 config 才生效）────────────────────────
+#   dataFile:  '~/.oblivion/daily-life/assets.json'   # 账本文件（单文件）
+#   idleWarnDays: 90        # 多少天没用过算「闲置」（IDLE_WARN_DAYS 的实例值）
+#   statusPath: '/daily-life/status'   # 读：全量账本 + 指标 + 汇总
+#   itemsPath:  '/daily-life/items'    # 写：add / update / sell / use / remove
+#   maxItems: 2000          # 账本条目上限（防误操作把文件塞爆）
+# ============================================================
+
+- insert:
+    - id: '@oblivion/daily-life'
+      name: '@oblivion/daily-life'

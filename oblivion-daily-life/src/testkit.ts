@@ -1,0 +1,105 @@
+/**
+ * 测试探针入口（子路径导出 `@oblivion/daily-life/testkit`）。
+ *
+ * 主入口只暴露 Cordis 插件所需的 `name` / `inject` / `apply`；
+ * 纯函数与可测逻辑在这里导出，供 `scripts/selfcheck.mjs` 与 `test/` 直接验证。
+ */
+export {
+  CATEGORY_SEED,
+  DEFAULT_SERVICE_DAYS,
+  IDLE_WARN_DAYS,
+  MONEY_DECIMALS,
+  TOP_N,
+  daysBetween,
+  deriveItem,
+  formatDay,
+  parseDay,
+  roundMoney,
+  rowOf,
+  startOfDay,
+  summarize,
+  todayStart,
+  validateItem,
+  type Category,
+  type CheckResult,
+  type Item,
+  type ItemDerived,
+  type ItemRow,
+  type ItemStatus,
+  type LedgerStats,
+  type MetricsOptions,
+} from './metrics.js';
+export {
+  LEDGER_VERSION,
+  applyChecked,
+  createLedgerStore,
+  isSafeId,
+  newItemId,
+  writeTextAtomic,
+  type LedgerStore,
+  type LoadResult,
+} from './store.js';
+export {
+  DEFAULT_CONFIG,
+  asConfig,
+  expandHome,
+  type Config,
+} from './config.js';
+export {
+  apply,
+  buildState,
+  inject,
+  isSameOrigin,
+  name,
+  runAction,
+  VERSION,
+  type ActionName,
+  type ActionOptions,
+  type ActionResult,
+  type LedgerState,
+} from './index.js';
+export {
+  DEFAULT_ITEMS_PATH,
+  DEFAULT_STATUS_PATH,
+  draftToItem,
+  defaultDraft,
+  fetchState,
+  isState,
+  itemOf,
+  sendAction,
+  type ActionRequest,
+  type ActionResult as ClientActionResult,
+  type ApiOptions,
+  type DailyLifeState,
+  type FetchLike,
+  type FetchResponseLike,
+  type StateResult,
+} from './client/api.js';
+export {
+  countLine,
+  dayText,
+  daysText,
+  httpText,
+  kpiRow,
+  metaText,
+  money,
+  moneyPerDay,
+  numberText,
+  percentText,
+  progressText,
+  signedMoney,
+  statusLabel,
+  statusTone,
+  useHintText,
+  type KpiCell,
+  type Tone,
+} from './client/format.js';
+export {
+  DAILY_LIFE_TAB_ID,
+  dailyLifeDescriptor,
+  registerDailyLifeTab,
+  type BetterSidebarLike,
+  type ClientCtxLike,
+  type RegisterResult,
+  type TabDescriptorLike,
+} from './client/register.js';

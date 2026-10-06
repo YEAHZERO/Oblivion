@@ -1,0 +1,17 @@
+# ============================================================
+# @oblivion/daily-life（有数）— DSHX 清单
+#
+# id 必须与 package.json 的 name 逐字相同（`dshx activate-new-client` 的硬校验
+# `plugin.id === packageName`），所以这里写作用域名而不是 kebab 目录名。
+#
+# marker 必须与 src/index.ts 里的 console.log 逐字相同。
+#
+# kind: client —— 两个半边都有：
+#   Node 半边     ~/.oblivion/daily-life/assets.json 单文件账本 + 两条路由
+#   浏览器半边   侧栏里的「有数」一页（dsh-better-sidebar tab + 左栏入口）
+# ============================================================
+id: '@oblivion/daily-life'
+entry: src/index.ts
+marker: "[oblivion-daily-life] loaded"
+kind: client
+profile: desktop

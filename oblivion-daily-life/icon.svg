@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="有数">
+  <title>有数 —— 物品服役账本</title>
+  <circle cx="24" cy="24" r="21" fill="none" stroke="#22c55e" stroke-width="3"/>
+  <circle cx="24" cy="24" r="15.5" fill="#22c55e" opacity="0.12"/>
+  <path d="M15 16h18M24 16v18M15 24h18" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+</svg>
