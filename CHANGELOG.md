@@ -12,7 +12,57 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.14 + v0.0.13：MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写、知识库每篇文档下方显示「相关主题 / 关键词 / 日期」
+## [未发布] — `@oblivion/daily-life` v0.0.1 + `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.14 + v0.0.13：MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写、知识库每篇文档下方显示「相关主题 / 关键词 / 日期」
+
+### `@oblivion/daily-life` v0.0.1 —— 个人资产账本（**新包**，第四条产品线）
+
+所有者指令（引，m05080）：『单独做一个插件……个人资产全生命周期管理：万物资产化记录 / 真实日耗计算 /
+闲置流转复盘 / 资产总览看板』（附三张宣传图）。四项决策：**v0.0.1 只做闭环最小集**（录入物品 + 真实日耗 +
+资产总览，卖出/闲置复盘留到 0.0.2）、产品与仓库名 **DailyLife**、界面是 `dsh-better-sidebar` 里
+**与「面板」并列的独立侧栏 tab**、**先不做图片与抠图**（m05107 补充：可参考 `gorkys/youshu`）。
+
+**新增包** `oblivion-daily-life/`（`@oblivion/daily-life`，与 panel 同构：`inject = []` +
+`ctx.inject(['webServer'])`，自己带 `dsh.bundle.patch.yml` 自挂 ⇒ 不塞进 `oblivion-bundle/cordis.patch.yml`，
+避免两层同插＝挂载两次）：
+
+| 位置 | 职责 |
+| --- | --- |
+| `src/index.ts` | `GET /daily-life/status`（`no-store`）、`POST /daily-life/items`（`add`/`update`/`sell`/`use`/`remove`）；405 / 403 / 400 / 404 / 409 / 413 / 500 行为表齐全 |
+| `src/metrics.ts` | 纯函数口径层（无 IO）：持有天数、日耗、服役进度、保值率、闲置天数、汇总 |
+| `src/store.ts` | 单文件账本 `~/.oblivion/daily-life/assets.json` + 原子写 + 坏 JSON 留底（读得动就不覆盖） |
+| `src/client/*` | 浏览器半边：左栏 tab `oblivion:daily-life`（order 72、single），顶部 KPI 只三个数字（账面投入 / 日耗合计 / 闲置损耗）+ 服役进度条 |
+
+**口径（本包自定，不是抄来的）**：`holdingDays = Math.max(1, 天数差 + 1)`（含首日）；
+`dailyCost = (buyPrice − soldPrice) / holdingDays`（`roundMoney()` 显式 HALF_UP、先 `toFixed(9)` 抹二进制误差）；
+`usageProgress` clamp 0..1 且另有未截断的 `usageRatio` 与 `overdueDays`；`retentionRate = soldPrice / buyPrice`
+仅 `sold` 且 `buyPrice > 0` 才给数否则 `null`；状态是 string enum `serving | idle | sold`
+（`idle` = `lastUsedAt` 起算 90 天没用过的派生态）；求和一律 `Number.isFinite` 兜底；可空字段统一 `null`。
+
+**参考项目对账**：`gorkys/youshu`（MIT；本地快照 `C:\Projects\SourceCode\youshu-master`）是
+**家庭物品 / 有效期库存** Android App（Kotlin + Compose + Room + Hilt + WorkManager + CameraX），
+递归 grep `日均|每日成本|每天成本|折旧|保值|日耗|元/天` 覆盖全部 `.kt/.md/.xml/.kts` —— **0 命中**，
+其 README 里也没有宣传图上的 `¥9.9/天` 与「数据统计」；上游只有 `Item.kt:26-43` 的 `price`/`quantity`、
+`ItemDao.kt:203` 的存量估值（`SUM(price * quantity) WHERE status=0`）与 `DateUtil.kt:27-31` 的
+`ChronoUnit.DAYS.between`。⇒ **只借思路**（存放位置、折叠区、用后评价、业务状态与软删除分离），
+日耗与总览按本项目的口径做；包 README 有「本版不做」与「与参考项目的差异」两节，并写明那三张截图
+不是这个仓库实现的东西。
+
+**验收（独立复核，不是转述）**：`npx tsc -p tsconfig.json` exit 0；`node --test` **113/113**；
+`node scripts/selfcheck.mjs` **27 项失败 0**；`tools/verify-dsh-compat.ps1 -Plugin oblivion-daily-life`
+**7/7 PASS**；真进程探针（真 `node:http` 服务器 + 真 `fetch` + 临时账本）**51 项全过**，覆盖
+GET/POST 形状、跨请求持久化、缺字段/未来日期/坏 JSON/坏 id 的 400、未知 id 404、跨源 403、
+读路由 POST 405（带 `allow: GET`）、超 128 KiB 413、坏账本仍 200 且此时写动作 404（不静默覆盖）。
+
+**安装（重要，别走错门）**：`desktop` profile 由 Electron 应用**独占管理**，
+`dsh plugin --profile desktop add …` 会被 CLI 拒绝（`error: profile "desktop" is managed exclusively
+by the Electron application`）⇒ 手改 profile `package.json` 的 `dependencies` + `dsh.profile.bundles`，
+再在该 profile 目录 `pnpm install --prefer-offline`（两份 `*.bak-before-oblivion-daily-life` 备份）。
+**要重启 DSH 才会加载。**
+
+**已知缺口（0.0.2 候选）**：需求里的「已退役」没建模（只有 `serving | idle | sold`）；`retentionRate`
+在派生层未圆整（显示层遮住）；卖出/闲置复盘面板与闲置损耗图未做；侧栏可见标题仍是「有数」。
+
+
 
 ### `@oblivion/core` v0.2.8 —— MCP 成为 core 的内部模块 + 进程内通道（修掉桥接插件从未激活的根因）
 
