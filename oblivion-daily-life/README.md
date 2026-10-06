@@ -1,6 +1,8 @@
-# 有数（@oblivion/daily-life）
+# 有数 · DailyLife（`@oblivion/daily-life`）
 
 > 物品的价值不是它标价多少，而是它为你服务了多少天。
+
+英文名 / 仓库名 **DailyLife**，中文界面名「有数」；包名 `@oblivion/daily-life`，目录 `oblivion-daily-life/`。
 
 「有数」是一个**物品服役账本**：记下每件东西什么时候买的、花了多少、卖了多少，
 然后回答三个问题 ——
@@ -28,9 +30,24 @@
 
 ## 安装
 
+> ⚠️ `desktop` profile 由 **Electron 应用独占管理**，CLI 会直接拒绝：
+> `dsh plugin --profile desktop add …` → `error: profile "desktop" is managed exclusively by the Electron application`。
+> 所以装进桌面 profile 只能手改 + 重装链接（下面三步，改前先备份 `package.json` / `pnpm-lock.yaml`）：
+
 ```powershell
-dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-daily-life'
+$prof = "$env:USERPROFILE\.dsh\profiles\desktop"
+Copy-Item "$prof\package.json"    "$prof\package.json.bak-before-oblivion-daily-life"
+Copy-Item "$prof\pnpm-lock.yaml"  "$prof\pnpm-lock.yaml.bak-before-oblivion-daily-life"
+# ① package.json 的 dependencies 里加一行 link:（② 同时把包名加进 dsh.profile.bundles）
+#    "@oblivion/daily-life": "link:C:/Projects/Oblivion/oblivion-daily-life"
+$node = 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\primary-runtime\dependencies\node\bin\node.exe'
+$pnpm = 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\primary-runtime\dependencies\pnpm\bin\pnpm.mjs'
+& $node $pnpm install --prefer-offline     # 在 $prof 里跑：生成 node_modules\@oblivion\daily-life 软链 + 同步锁文件
 ```
+
+装完用 `pwsh -File tools\verify-dsh-compat.ps1` 核对（本包应 **7/7 PASS**：宿主区间、slot
+`sidebar.footer.action = list`、`__ModuleLoader__`、`webServer`、`dsh-better-sidebar`、
+profile 的 dependencies 与 bundles 两处挂载）。
 
 本包**自挂**：`package.json` 里声明了 `dsh.bundle.patch = ./dsh.bundle.patch.yml`，
 安装器把本包写进 profile 的 `dsh.profile.bundles` 时，那张补丁表就是它自己的挂载声明
@@ -136,12 +153,19 @@ dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-daily-life'
 
 ## 与参考项目（`youshu-master`，MIT）的差异
 
-参考项目 `C:\Projects\SourceCode\youshu-master` 是一个**家庭物品 / 有效期库存** Android App
-（`app/src/main/java/com/youshu/app/**`）。先说清楚一件事：
+参考项目有两个入口：上游仓库 <https://github.com/gorkys/youshu>（MIT），
+本地快照 `C:\Projects\SourceCode\youshu-master`（**没有 `.git`**，是源码快照，内容与上游同一份）。
+它是一个**家庭物品 / 有效期库存** Android App（`app/src/main/java/com/youshu/app/**`，
+Kotlin + Compose + Room + Hilt + WorkManager + CameraX）。先说清楚一件事：
 
-> 全仓库 grep `dailyCost|日均|每日成本|折旧|soldPrice|buyDate|使用寿命|服役` **零命中**。
+> 复核（2026-10-06）：对整份快照递归 grep `日均 | 每日成本 | 每天成本 | 折旧 | 保值 | 日耗 | 元/天`
+> —— 覆盖全部 `.kt / .md / .xml / .kts`（含 `样板.md`）—— **7 个词全部 0 命中**。
+> 上游 README 列的能力是：拍照快速录入、AI 模型管理入口、搜索中心与库房、分类与位置双维度、
+> 到期提醒、回收站 30 天、用后星级评价、沉浸式 UI —— 里面**没有**日均成本、保值、折旧这一类概念。
 > 也就是说：**日耗、持有天数、服役进度、保值率、闲置损耗全是本项目的口径**，
-> 没有任何参考先例可援引。下面只在「参考确实给出了正/反面佐证」的地方引用它，并标行号。
+> 没有任何参考先例可援引；那三张参考截图（`¥9.9/天`、「数据统计」、贴纸模式）**不是这个仓库实现的东西**，
+> 截图里的 App 另有所指，因此也不作为本项目的依据。下面只在「参考确实给出了正/反面佐证」的地方
+> 引用它，并标行号。
 
 只**借鉴思路**，未复制任何代码片段；若将来复制，必须在文件头注明来源 `youshu-master`（MIT，`LICENSE:1`）与版权行。
 
@@ -163,6 +187,18 @@ dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-daily-life'
 | 阈值散落在 ViewModel 里（7 天硬编码） | `HomeViewModel.kt:38` | 阈值集中为导出常量（`IDLE_WARN_DAYS` 等），界面不写字面量 |
 | 金额格式化未指定舍入模式（`NumberFormat.getCurrencyInstance(Locale.CHINA)`，Java 默认 HALF_EVEN） | `util/DateUtil.kt:16` | 显式 HALF_UP 到 2 位 + 边界单测（`0.005 / 1.005 / 2.675`） |
 | `ChronoUnit.DAYS.between` 自然日差、不含当天、无下界 | `util/DateUtil.kt:27-31` | **刻意不同**：含首日并兜底 `max(1, …)`，避免当天买入除零 |
+
+### 概念层借鉴（记录在案；多数本版没做，写明为什么）
+
+| 参考的能力 | 出处 | 我们的取舍 |
+| --- | --- | --- |
+| 拍照快速录入：把「拍 → 确认 → 保存」压到最短路径，次要字段折叠 | 上游 README「📸 拍照快速录入」、`样板.md:123-188` | 本版不做图片；但同一个取舍用在表单上 —— **必填只有 3 个**（`name` / `buyPrice` / `buyDate`），分类、目标服役期、备注全是可选，不做「表单式录入」 |
+| 折叠区默认收起（数量 / 有效期 / 价格 / 备注） | `样板.md:159-188` | 写动作是**局部合并**（`update` 只传要改的字段），调用方不需要「把整条重新拼一遍」 |
+| 到期提醒去重：同一物品同一日期只提醒一次 | 上游 README「到期提醒说明」 | 本版不做通知；但 `overdueDays` 只算成数字交给界面，不主动打扰 —— 同一种保守态度 |
+| 回收站 30 天软删除 + 超期清理 | 上游 README「♻️ 回收站」 | 本版不做回收站（`remove` 即删除）；代偿是账本为**单文件**，整份拷走即备份，随时能回到过去 |
+| 用后星级评价，沉淀后续购买参考 | 上游 README「⭐ 使用后评价」 | 本版用客观量替代主观分：`useCount` + `lastUsedAt`（用了几次、上次什么时候用）；星级不进本版 |
+| AI 模型管理入口（别名 / Provider / Endpoint / API Key 四件套） | 上游 README「🧠 AI 模型管理入口」 | 本版不做模型面工具；数据面（两条路由 + 冻结的字段）已经就绪，**接 MCP 工具是下一版的事** |
+| 业务状态与软删除状态分离（在用 / 已用完 / 已丢弃 vs 回收站） | 上游 README「数据状态说明」 | 我们的 `serving \| idle \| sold` 只做业务状态，删除是硬删除 —— 刻意不给同一件东西造第二套「状态真源」 |
 
 ## 本版不做
 

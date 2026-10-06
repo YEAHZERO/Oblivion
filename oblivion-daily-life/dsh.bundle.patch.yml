@@ -7,8 +7,13 @@
 # **下面这张表就是本插件自己的挂载声明** —— 不需要任何外部 bundle 替它插行
 # （与 @oblivion/brand 同一策略；@oblivion/bundle 那份只插不自带 patch 的包）。
 #
-# 安装：
-#     dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-daily-life'
+# 安装（desktop profile 由 Electron 应用独占管理，CLI 会拒绝，只能手改 + 重装链接）：
+#     ① ~/.dsh/profiles/desktop/package.json 的 dependencies 加
+#        "@oblivion/daily-life": "link:C:/Projects/Oblivion/oblivion-daily-life"
+#     ② 同一个文件把 "@oblivion/daily-life" 加进 dsh.profile.bundles
+#     ③ 在该 profile 目录跑 pnpm install --prefer-offline（生成软链 + 同步锁文件）
+#     ④ 核对：pwsh -File tools\verify-dsh-compat.ps1（本包应 7/7 PASS）
+# 详细步骤与坑见 README 的「安装」一节。
 #
 # 为什么开发期也选 bundle 层而不是热挂：账本的行/字段/路由已经按规格冻结
 # （见 README 的「规格冻结」一节），改的是实现而不是接口；bundle 层的

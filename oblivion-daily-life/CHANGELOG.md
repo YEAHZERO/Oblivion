@@ -48,3 +48,19 @@
   `react`/`react-dom`/`react/jsx-runtime` 留 external）。
 - 闸门四件套：`tsc -p tsconfig.json`、`node --test`、`node scripts/build.mjs`、
   `node scripts/selfcheck.mjs`；自挂 `dsh.bundle.patch.yml`；`dsh.compat.host = ">=0.2.0-rc.2 <0.3.0"`。
+
+### 文档修订（同属 0.0.1，未改代码）
+
+- 标题补上英文 / 仓库名 **DailyLife**（中文界面名仍为「有数」）。
+- 「安装」一节改正：`desktop` profile 由 Electron 应用独占管理，
+  `dsh plugin --profile desktop add …` 会被 CLI 拒绝
+  （`profile "desktop" is managed exclusively by the Electron application`），
+  改为「手改 `package.json` 两处 + `pnpm install --prefer-offline` 生成软链 + `verify-dsh-compat.ps1` 核对」；
+  `dsh.bundle.patch.yml` 顶部的安装注释同步改正。
+- 「与参考项目」一节补上游地址 <https://github.com/gorkys/youshu> 与复核口径
+  （递归 grep `日均|每日成本|每天成本|折旧|保值|日耗|元/天` 覆盖全部
+  `.kt/.md/.xml/.kts` 含 `样板.md`，7 个词 0 命中 ⇒ 日耗类口径无参考先例，
+  三张参考截图不是该仓库实现的东西），并新增「概念层借鉴」表
+  （录入路径压缩 / 折叠区 / 提醒去重 / 回收站 / 用后评价 / AI 模型管理入口 / 业务状态与软删除分离，
+  逐条写明本版做或不做及原因）。
+

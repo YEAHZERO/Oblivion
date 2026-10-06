@@ -1,7 +1,7 @@
 {
   "name": "@oblivion/daily-life",
   "version": "0.0.1",
-  "description": "有数 —— 家庭物品服役账本：记录买入/卖出、算真实日均成本与服役进度、复盘闲置损耗。Node 半边单文件 JSON 账本，浏览器半边是侧栏里的一页。",
+  "description": "DailyLife（有数）—— 家庭物品服役账本：记录买入/卖出、算真实日均成本与服役进度、复盘闲置损耗。Node 半边单文件 JSON 账本，浏览器半边是侧栏里的一页。",
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",
