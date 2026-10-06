@@ -185,23 +185,24 @@ function topReason(core) {
 
 // src/client/register.ts
 var PANEL_TAB_ID = "oblivion:panel";
-function panelDescriptor(component) {
+function panelDescriptor(component, icon) {
   return {
     id: PANEL_TAB_ID,
     title: () => "Oblivion",
     description: () => "\u8BA4\u77E5\u5C42\u89C2\u6D4B\uFF1A\u6355\u83B7\u7387\u3001\u62E6\u622A\u539F\u56E0\u3001\u8C03\u53C2\u5EFA\u8BAE\u4E0E\u6700\u8FD1\u6C89\u6DC0",
+    ...icon === void 0 ? {} : { icon },
     order: 70,
     single: true,
     component
   };
 }
-function registerPanelTab(ctx, component, warn) {
+function registerPanelTab(ctx, component, warn, icon) {
   const attach = (service) => {
     if (!service || typeof service.registerTab !== "function") {
       return { status: "no-service", detail: "ctx.betterSidebar \u4E0D\u53EF\u7528\uFF08dsh-better-sidebar \u672A\u88C5\u8F7D\uFF1F\uFF09" };
     }
     try {
-      const dispose = service.registerTab(panelDescriptor(component));
+      const dispose = service.registerTab(panelDescriptor(component, icon));
       if (typeof dispose === "function" && typeof ctx.effect === "function") {
         ctx.effect(() => dispose, "oblivion-panel: better-sidebar tab");
       }

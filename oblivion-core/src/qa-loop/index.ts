@@ -412,6 +412,9 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     rootSeen: 0,
     agentSeen: 0,
     mountedAgents: 0,
+    /** 生命周期事件到达计数 + 载荷键名（判断「事件到没到、形状对不对」） */
+    lifecycleSeen: {} as Record<string, number>,
+    lifecycleShapes: {} as Record<string, string>,
   };
   let diagDirty = false;
   async function flushDiag(): Promise<void> {
@@ -460,24 +463,78 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     }
   }
 
+  /**
+   * 容错提取 agent —— **这是上一版收不到事件的真凶之一**。
+   *
+   * 原来只认 `args[0].agent`。但 `agent/created` 的载荷形状在不同版本里可能是：
+   * ① `{ agent }` ② agent 本体 ③ `{ agent: { agent } }`（包装一层）④ `{ agentId }`。
+   * 校验失败时**症状是静默的**：订阅永远挂不上，一个事件都收不到，而日志里什么也没有。
+   * 所以这里改成「在载荷里浅层找一个带 `ctx` 的对象」，并把载荷键名记进诊断。
+   */
+  function pickAgent(payload: unknown): { ctx?: AppContext } | undefined {
+    const seen = new Set<unknown>();
+    const walk = (value: unknown, depth: number): { ctx?: AppContext } | undefined => {
+      if (depth > 3 || value === null || typeof value !== 'object' || seen.has(value)) return undefined;
+      seen.add(value);
+      const record = value as Record<string, unknown> & { ctx?: AppContext };
+      if (record.ctx !== undefined) return record;
+      for (const key of ['agent', 'agents', 'target', 'value', 'payload']) {
+        const found = walk(record[key], depth + 1);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    return walk(payload, 0);
+  }
+
+  /** 记录一次生命周期事件的形状（键名），供诊断判断「事件到底到没到」。 */
+  function noteLifecycle(event: string, payload: unknown): void {
+    const keys = payload !== null && typeof payload === 'object' ? Object.keys(payload as object).join(',') : typeof payload;
+    diag.lifecycleSeen[event] = (diag.lifecycleSeen[event] ?? 0) + 1;
+    diag.lifecycleShapes[event] = keys.slice(0, 120);
+    diagDirty = true;
+    void diagOnce();
+  }
+
   // ① 以后新建的 agent：听 `agent/created`（官方 `file-reference-local` 的写法）。
   ctx.on('agent/created', (...args: never[]) => {
-    attachAgent((args[0] as { agent?: { ctx?: AppContext } } | undefined)?.agent);
+    noteLifecycle('agent/created', args[0]);
+    attachAgent(pickAgent(args[0]));
   });
 
-  // ② **已经**在跑的 agent：装载时补挂一次。
-  //    这一条是实测补上的 —— profile 补丁热重挂时，当前会话的 agent 早已创建，
-  //    只听 `agent/created` 会漏掉它，症状是「改完代码重挂后依然一个事件都收不到」。
+  // ①' 另两条生命周期兜底：只要有一条到，就能把「已在跑的 agent」补挂上。
+  //     实测动机：agent 在 App 启动之后才创建，装载时 `agents.list()` 是空的（injectAgentCount=0），
+  //     而根上下文的 `session/event` 又收不到任何东西 —— 必须有别的入口把订阅补上。
+  for (const event of ['session/created', 'turn/start'] as const) {
+    ctx.on(event, (...args: never[]) => {
+      noteLifecycle(event, args[0]);
+      reconcileAgents();
+    });
+  }
+
+  /**
+   * **惰性补挂**：把当前活着的 agent 都挂上订阅。
+   *
+   * 刻意不用定时器（设计红线）：只由「生命周期事件」或「已有订阅真的收到事件」触发。
+   */
+  let agentsScope: unknown;
+  function reconcileAgents(): void {
+    const registry = (agentsScope as { agents?: { list?: () => Array<{ ctx?: AppContext }> } } | undefined)?.agents;
+    const live = registry?.list?.() ?? [];
+    diag.injectAgentCount = live.length;
+    for (const agent of live) attachAgent(agent);
+    diagDirty = true;
+    void diagOnce();
+  }
+
+  // ② **已经**在跑的 agent：装载时补挂一次（此刻通常为空，靠上面的生命周期兜底）。
   if (typeof ctx.inject === 'function') {
     ctx.inject(['agents'], (scope: unknown) => {
       diag.injectFired = true;
-      const registry = (scope as { agents?: { list?: () => Array<{ ctx?: AppContext }> } }).agents;
-      const live = registry?.list?.() ?? [];
-      diag.injectAgentCount = live.length;
-      for (const agent of live) attachAgent(agent);
-      diagDirty = true;
-      void diagOnce();
-      ctx.logger?.info?.(config.logPrefix + ' 已给 %d 个在跑的 agent 挂上会话事件订阅', live.length);
+      agentsScope = scope;
+      reconcileAgents();
+      const count = diag.injectAgentCount;
+      ctx.logger?.info?.(config.logPrefix + ' 装载时已给 %d 个在跑的 agent 挂上会话事件订阅', count);
     });
   }
 

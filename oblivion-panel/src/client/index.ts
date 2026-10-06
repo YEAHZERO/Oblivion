@@ -12,7 +12,7 @@
 
 import { createElement } from 'react';
 import { OblivionPanel } from './Panel.js';
-import { createLeftbarAction, openOblivionTab, type OpenTabCapable } from './leftbar.js';
+import { createLeftbarAction, openOblivionTab, PolarisGlyph, type OpenTabCapable } from './leftbar.js';
 import { PANEL_TAB_ID, registerPanelTab, type ClientCtxLike } from './register.js';
 
 /**
@@ -87,7 +87,12 @@ export function apply(ctx: ClientCtxLike): void {
   const warn = (message: string): void => logger?.warn?.(message);
 
   // ① 右侧栏 tab
-  const result = registerPanelTab(ctx, ((props: unknown) => createElement(OblivionPanel, props as never)) as never, warn);
+  const result = registerPanelTab(
+    ctx,
+    ((props: unknown) => createElement(OblivionPanel, props as never)) as never,
+    warn,
+    (size: number) => createElement(PolarisGlyph, { size }),
+  );
   if (result.status === 'registered') logger?.info?.('已在 side bar 注册 Oblivion 面板 tab');
   else warn('面板 tab 未注册：' + String(result.detail ?? result.status));
 
@@ -102,8 +107,7 @@ export function apply(ctx: ClientCtxLike): void {
   }
   if (slots && typeof slots.inject === 'function' && typeof slots.register === 'function') {
     const service = result.service as OpenTabCapable | undefined;
-    const component = createLeftbarAction(() => {
-      const outcome = openOblivionTab(service, PANEL_TAB_ID);
+    const component = createLeftbarAction(() => {      const outcome = openOblivionTab(service, PANEL_TAB_ID);
       if (outcome === 'opened') logger?.info?.('左栏入口：已打开右侧 Oblivion 页');
       else warn('左栏入口：打开右侧 Oblivion 页失败（' + outcome + '）');
     });

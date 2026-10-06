@@ -11,6 +11,8 @@
  */
 
 export interface TabDescriptorLike {
+  /** better-sidebar 的 `icon` 接受任意 ReactNode 或 `(size) => ReactNode`。 */
+  icon?: unknown;
   id: string;
   title: string | (() => string);
   description?: string | (() => string);
@@ -38,12 +40,21 @@ export interface RegisterResult {
 
 export const PANEL_TAB_ID = 'oblivion:panel';
 
-/** 默认 descriptor（`component` 由调用方注入，避免本模块依赖 React）。 */
-export function panelDescriptor(component: TabDescriptorLike['component']): TabDescriptorLike {
+/**
+ * 默认 descriptor（`component` 由调用方注入，避免本模块依赖 React）。
+ *
+ * `icon` 按 better-sidebar 的约定可传 **任意 ReactNode**（`ReactNode | ((size) => ReactNode)`），
+ * 所以这里直接给**北极星**而不是默认方块图标（用 `createElement` 而非 JSX：本文件是 .ts）。
+ */
+export function panelDescriptor(
+  component: TabDescriptorLike['component'],
+  icon?: (size: number) => unknown,
+): TabDescriptorLike {
   return {
     id: PANEL_TAB_ID,
     title: () => 'Oblivion',
     description: () => '认知层观测：捕获率、拦截原因、调参建议与最近沉淀',
+    ...(icon === undefined ? {} : { icon }),
     order: 70,
     single: true,
     component,
@@ -56,18 +67,20 @@ export function panelDescriptor(component: TabDescriptorLike['component']): TabD
  * @param ctx - 客户端 ctx（结构化类型，不依赖框架类型）。
  * @param component - tab 组件（React 组件，由调用方传入）。
  * @param warn - 记日志用。
+ * @param icon - 可选的 tab 图标工厂（`(size) => ReactNode`）；不给就是默认方块图标。
  */
 export function registerPanelTab(
   ctx: ClientCtxLike,
   component: TabDescriptorLike['component'],
   warn: (message: string) => void,
+  icon?: (size: number) => unknown,
 ): RegisterResult {
   const attach = (service: BetterSidebarLike | undefined): RegisterResult => {
     if (!service || typeof service.registerTab !== 'function') {
       return { status: 'no-service', detail: 'ctx.betterSidebar 不可用（dsh-better-sidebar 未装载？）' };
     }
     try {
-      const dispose = service.registerTab(panelDescriptor(component));
+      const dispose = service.registerTab(panelDescriptor(component, icon));
       if (typeof dispose === 'function' && typeof ctx.effect === 'function') {
         ctx.effect(() => dispose as () => void, 'oblivion-panel: better-sidebar tab');
       }

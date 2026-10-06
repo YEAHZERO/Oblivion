@@ -920,7 +920,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join3(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.12",
+    version: "0.1.13",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -946,7 +946,10 @@ function registerQaLoop(ctx, config, deps) {
     /** 两条订阅各自收到的事件计数 */
     rootSeen: 0,
     agentSeen: 0,
-    mountedAgents: 0
+    mountedAgents: 0,
+    /** 生命周期事件到达计数 + 载荷键名（判断「事件到没到、形状对不对」） */
+    lifecycleSeen: {},
+    lifecycleShapes: {}
   };
   let diagDirty = false;
   async function flushDiag() {
@@ -988,19 +991,54 @@ function registerQaLoop(ctx, config, deps) {
       ctx.logger?.warn?.(config.logPrefix + " agent \u4F5C\u7528\u57DF\u8BA2\u9605\u5931\u8D25\uFF1A%o", error);
     }
   }
+  function pickAgent(payload) {
+    const seen = /* @__PURE__ */ new Set();
+    const walk = (value, depth) => {
+      if (depth > 3 || value === null || typeof value !== "object" || seen.has(value)) return void 0;
+      seen.add(value);
+      const record = value;
+      if (record.ctx !== void 0) return record;
+      for (const key of ["agent", "agents", "target", "value", "payload"]) {
+        const found = walk(record[key], depth + 1);
+        if (found) return found;
+      }
+      return void 0;
+    };
+    return walk(payload, 0);
+  }
+  function noteLifecycle(event, payload) {
+    const keys = payload !== null && typeof payload === "object" ? Object.keys(payload).join(",") : typeof payload;
+    diag.lifecycleSeen[event] = (diag.lifecycleSeen[event] ?? 0) + 1;
+    diag.lifecycleShapes[event] = keys.slice(0, 120);
+    diagDirty = true;
+    void diagOnce();
+  }
   ctx.on("agent/created", (...args) => {
-    attachAgent(args[0]?.agent);
+    noteLifecycle("agent/created", args[0]);
+    attachAgent(pickAgent(args[0]));
   });
+  for (const event of ["session/created", "turn/start"]) {
+    ctx.on(event, (...args) => {
+      noteLifecycle(event, args[0]);
+      reconcileAgents();
+    });
+  }
+  let agentsScope;
+  function reconcileAgents() {
+    const registry = agentsScope?.agents;
+    const live = registry?.list?.() ?? [];
+    diag.injectAgentCount = live.length;
+    for (const agent of live) attachAgent(agent);
+    diagDirty = true;
+    void diagOnce();
+  }
   if (typeof ctx.inject === "function") {
     ctx.inject(["agents"], (scope) => {
       diag.injectFired = true;
-      const registry = scope.agents;
-      const live = registry?.list?.() ?? [];
-      diag.injectAgentCount = live.length;
-      for (const agent of live) attachAgent(agent);
-      diagDirty = true;
-      void diagOnce();
-      ctx.logger?.info?.(config.logPrefix + " \u5DF2\u7ED9 %d \u4E2A\u5728\u8DD1\u7684 agent \u6302\u4E0A\u4F1A\u8BDD\u4E8B\u4EF6\u8BA2\u9605", live.length);
+      agentsScope = scope;
+      reconcileAgents();
+      const count = diag.injectAgentCount;
+      ctx.logger?.info?.(config.logPrefix + " \u88C5\u8F7D\u65F6\u5DF2\u7ED9 %d \u4E2A\u5728\u8DD1\u7684 agent \u6302\u4E0A\u4F1A\u8BDD\u4E8B\u4EF6\u8BA2\u9605", count);
     });
   }
   ctx.on("session/event", (...args) => {
