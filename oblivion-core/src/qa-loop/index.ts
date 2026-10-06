@@ -319,6 +319,58 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
    * 两条订阅都保留：根订阅是兜底（万一作用域规则变了），agent 订阅是**真正生效的那条**；
    * 探针里的 `origin` 字段会把「到底是谁收到了」写下来，便于以后一眼看清。
    */
+  /**
+   * **临时挂载自诊断**（`enableEventProbe` 同时控制）：写 `<dataRoot>/mount-diag.json`。
+   *
+   * 为什么需要它：`console` 日志在本机读不到，而「事件收不到」这件事有四种可能
+   * （没有 inject / agents 服务不存在 / 列表为空 / 订阅上了但派发被过滤），
+   * 光看探针文件是空的无法区分。这里把**挂载那一刻的上下文事实**落盘，一次就能定位。
+   */
+  const diagPath = join(expandHome(config.dataRoot), 'mount-diag.json');
+  const diag = {
+    version: __OBLIVION_CORE_VERSION__,
+    mountedAt: Date.now(),
+    hasOn: typeof ctx.on === 'function',
+    hasInject: typeof ctx.inject === 'function',
+    hasGet: typeof (ctx as { get?: unknown }).get === 'function',
+    /** 直接读 `ctx.agents`（不经 inject）—— 服务是否已经在这个上下文上 */
+    agentsDirect: typeof (ctx as { agents?: unknown }).agents === 'object' && (ctx as { agents?: unknown }).agents !== null,
+    agentsDirectCount: -1,
+    /** `ctx.inject(['agents'], …)` 的回调是否触发 */
+    injectFired: false,
+    injectAgentCount: -1,
+    /** 两条订阅各自收到的事件计数 */
+    rootSeen: 0,
+    agentSeen: 0,
+    mountedAgents: 0,
+  };
+  let diagDirty = false;
+  async function flushDiag(): Promise<void> {
+    try {
+      await mkdir(dirname(diagPath), { recursive: true });
+      await writeFile(diagPath, JSON.stringify(diag, null, 2) + '\n', 'utf8');
+    } catch {
+      // 诊断本身绝不影响主链路
+    }
+  }
+  async function diagOnce(): Promise<void> {
+    if (!config.enableEventProbe || !diagDirty) return;
+    diagDirty = false;
+    await flushDiag();
+  }
+
+  // 挂载即落一次诊断（此刻还没有任何事件）
+  try {
+    const direct = (ctx as { agents?: { list?: () => unknown[] } }).agents;
+    if (direct && typeof direct.list === 'function') {
+      diag.agentsDirectCount = direct.list().length;
+    }
+  } catch {
+    // 服务可能还没就绪
+  }
+  diagDirty = true;
+  void diagOnce();
+
   const agentDisposers = new Map<unknown, () => void>();
 
   /** 给一个 agent 的作用域挂订阅（已挂过就跳过）。 */
@@ -328,9 +380,15 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     if (agentDisposers.has(agent)) return;
     try {
       const dispose = agentCtx.on('session/event', (...inner: never[]) => {
+        diag.agentSeen += 1;
+        diagDirty = true;
+        void diagOnce();
         onSessionEvent(inner[0] as SessionLike, inner[1] as TurnEventLike, 'agent');
       });
       agentDisposers.set(agent, typeof dispose === 'function' ? (dispose as () => void) : () => undefined);
+      diag.mountedAgents = agentDisposers.size;
+      diagDirty = true;
+      void diagOnce();
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + ' agent 作用域订阅失败：%o', error);
     }
@@ -346,14 +404,21 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   //    只听 `agent/created` 会漏掉它，症状是「改完代码重挂后依然一个事件都收不到」。
   if (typeof ctx.inject === 'function') {
     ctx.inject(['agents'], (scope: unknown) => {
+      diag.injectFired = true;
       const registry = (scope as { agents?: { list?: () => Array<{ ctx?: AppContext }> } }).agents;
       const live = registry?.list?.() ?? [];
+      diag.injectAgentCount = live.length;
       for (const agent of live) attachAgent(agent);
+      diagDirty = true;
+      void diagOnce();
       ctx.logger?.info?.(config.logPrefix + ' 已给 %d 个在跑的 agent 挂上会话事件订阅', live.length);
     });
   }
 
   ctx.on('session/event', (...args: never[]) => {
+    diag.rootSeen += 1;
+    diagDirty = true;
+    void diagOnce();
     onSessionEvent(args[0] as SessionLike, args[1] as TurnEventLike, 'root');
   });
 

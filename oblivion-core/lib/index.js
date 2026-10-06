@@ -1422,6 +1422,46 @@ function registerQaLoop(ctx, config, deps) {
       if (buffer.events.length < MAX_EVENTS_PER_TURN) buffer.events.push(event);
     }
   }
+  const diagPath = join7(expandHome(config.dataRoot), "mount-diag.json");
+  const diag = {
+    version: "0.1.9",
+    mountedAt: Date.now(),
+    hasOn: typeof ctx.on === "function",
+    hasInject: typeof ctx.inject === "function",
+    hasGet: typeof ctx.get === "function",
+    /** 直接读 `ctx.agents`（不经 inject）—— 服务是否已经在这个上下文上 */
+    agentsDirect: typeof ctx.agents === "object" && ctx.agents !== null,
+    agentsDirectCount: -1,
+    /** `ctx.inject(['agents'], …)` 的回调是否触发 */
+    injectFired: false,
+    injectAgentCount: -1,
+    /** 两条订阅各自收到的事件计数 */
+    rootSeen: 0,
+    agentSeen: 0,
+    mountedAgents: 0
+  };
+  let diagDirty = false;
+  async function flushDiag() {
+    try {
+      await mkdir6(dirname3(diagPath), { recursive: true });
+      await writeFile6(diagPath, JSON.stringify(diag, null, 2) + "\n", "utf8");
+    } catch {
+    }
+  }
+  async function diagOnce() {
+    if (!config.enableEventProbe || !diagDirty) return;
+    diagDirty = false;
+    await flushDiag();
+  }
+  try {
+    const direct = ctx.agents;
+    if (direct && typeof direct.list === "function") {
+      diag.agentsDirectCount = direct.list().length;
+    }
+  } catch {
+  }
+  diagDirty = true;
+  void diagOnce();
   const agentDisposers = /* @__PURE__ */ new Map();
   function attachAgent(agent) {
     const agentCtx = agent?.ctx;
@@ -1429,9 +1469,15 @@ function registerQaLoop(ctx, config, deps) {
     if (agentDisposers.has(agent)) return;
     try {
       const dispose = agentCtx.on("session/event", (...inner) => {
+        diag.agentSeen += 1;
+        diagDirty = true;
+        void diagOnce();
         onSessionEvent(inner[0], inner[1], "agent");
       });
       agentDisposers.set(agent, typeof dispose === "function" ? dispose : () => void 0);
+      diag.mountedAgents = agentDisposers.size;
+      diagDirty = true;
+      void diagOnce();
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + " agent \u4F5C\u7528\u57DF\u8BA2\u9605\u5931\u8D25\uFF1A%o", error);
     }
@@ -1441,13 +1487,20 @@ function registerQaLoop(ctx, config, deps) {
   });
   if (typeof ctx.inject === "function") {
     ctx.inject(["agents"], (scope) => {
+      diag.injectFired = true;
       const registry = scope.agents;
       const live = registry?.list?.() ?? [];
+      diag.injectAgentCount = live.length;
       for (const agent of live) attachAgent(agent);
+      diagDirty = true;
+      void diagOnce();
       ctx.logger?.info?.(config.logPrefix + " \u5DF2\u7ED9 %d \u4E2A\u5728\u8DD1\u7684 agent \u6302\u4E0A\u4F1A\u8BDD\u4E8B\u4EF6\u8BA2\u9605", live.length);
     });
   }
   ctx.on("session/event", (...args) => {
+    diag.rootSeen += 1;
+    diagDirty = true;
+    void diagOnce();
     onSessionEvent(args[0], args[1], "root");
   });
   ctx.effect(() => () => {
@@ -1875,7 +1928,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.8";
+var VERSION = "0.1.9";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
