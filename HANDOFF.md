@@ -13,7 +13,7 @@
 | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | client | 已现役（侧栏与会话 Hero 品牌） |
 | `@oblivion/vimc` | 0.2.9 | client | 已现役（Vimium 式键盘导航 + 页面内查找） |
-| `@oblivion/core` | **0.1.2** | **object（Host 侧）** | 源码与自检完成，**已修掉「捕获恒为空」的根因**；真实 Host 待重启验证 |
+| `@oblivion/core` | **0.1.3** | **object（Host 侧）** | 源码与自检完成，**已修掉「捕获恒为空」的根因**；真实 Host 待重启验证；**DEC-028：走热挂（不迁 bundle 层）** |
 
 ### `@oblivion/core` 完成了什么
 
@@ -64,13 +64,13 @@ JSON 文件存储，`turn/end` 单触发，防回灌，无定时任务。
 
 ```powershell
 # a) 在会话里正常问一句（≥10 字、有实质回答）
-# b) 查落盘
-Get-ChildItem "$env:USERPROFILE\.oblivion\data"          # 期望 ts-*.json
-Get-ChildItem "$env:USERPROFILE\OblivionKB\10-Topics"    # 期望 <主题>.md
+# b) 查落盘（DEC-029：根 = 所有者既有知识库，内部按 01_问答沉淀/ 分类）
+Get-ChildItem "$env:USERPROFILE\.oblivion\data"                 # 期望 ts-*.json
+Get-ChildItem 'C:\Library\那些渐渐被遗忘\01_问答沉淀'            # 期望 <主题>.md
 # c) 五个工具可调：oblivion_query / capture / profile / feedback / graph_neighbors
 ```
 
-出现 `ts-*.json` + `10-Topics\*.md` = `turn/end → 捕获 → 落盘` 整条链通了。
+出现 `ts-*.json` + `01_问答沉淀\*.md` = `turn/end → 捕获 → 落盘` 整条链通了。
 **在此之前只能声称 `SOURCE_BUILT`，不能声称 `RUNTIME_VERIFIED`。**
 
 若仍为空：看 Host 日志有没有 `[oblivion-core] turn/end 时没有任何可读事件` —— 有就是上游事件形状又变了，

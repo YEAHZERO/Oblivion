@@ -3,7 +3,21 @@
 // src/config.ts
 var DEFAULT_CONFIG = {
   dataRoot: "~/.oblivion/data",
-  mdRoot: "~/OblivionKB",
+  /**
+   * 文档根（所有者裁定 2026-10-06）：直接写进既有的知识库，不再单开 `oblivion_docs/`。
+   * 用正斜杠书写：Windows 上 `path.isAbsolute('C:/…')` 成立，`expandHome()` 原样放行，
+   * 且写进 YAML 时不需要转义反斜杠。
+   */
+  mdRoot: "C:/Library/\u90A3\u4E9B\u6E10\u6E10\u88AB\u9057\u5FD8",
+  mdClassify: {
+    // 问答沉淀（我们的捕获来源是 session；qa_loop 是设计书的原始命名，一并兼容）
+    session: "01_\u95EE\u7B54\u6C89\u6DC0",
+    qa_loop: "01_\u95EE\u7B54\u6C89\u6DC0",
+    // 设计书 §25.3 的其余分类（后续文档导入/创作能力落地后直接生效）
+    doc: "00_\u5BFC\u5165\u6587\u4EF6",
+    wiki: "02_Wiki\u9875\u9762",
+    content_creator: "03_\u521B\u4F5C\u4EA7\u7269"
+  },
   /**
    * 价值阈值 —— **已按实测重标定，不要改回设计书原值 0.5**。
    *
@@ -1113,9 +1127,20 @@ function extractQAPair(turn) {
 // src/qa-loop/md-writer.ts
 import { mkdir as mkdir5, readFile as readFile5, writeFile as writeFile5 } from "node:fs/promises";
 import { join as join6 } from "node:path";
+var MD_FALLBACK_DIR = "99_\u5176\u4ED6";
+function classifyDir(item, map) {
+  if (map) {
+    for (const source of item.sources) {
+      const dir = map[source.type];
+      if (typeof dir === "string" && dir.trim() !== "") return dir.trim();
+    }
+  }
+  return MD_FALLBACK_DIR;
+}
 function safeName(topic) {
   return (topic || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
 }
+var ID_MARKER = "oblivion:";
 function renderNew(item) {
   const tags = item.tags.map((t) => "#" + t).join(" ");
   const sources = item.sources.map((s) => "- `" + s.type + "`: " + s.ref).join("\n");
@@ -1161,11 +1186,16 @@ function appendSource(existing, payload) {
   if (existing.includes(line)) return existing;
   return existing.trimEnd() + "\n" + line + "\n";
 }
-async function writeMD(root, payload) {
-  const dir = join6(root, "10-Topics");
+async function writeMD(root, payload, classify) {
+  const dir = join6(root, classifyDir(payload.item, classify));
   await mkdir5(dir, { recursive: true });
-  const path = join6(dir, safeName(payload.item.topic) + ".md");
-  const existing = await readFile5(path, "utf8").catch(() => "");
+  const name2 = safeName(payload.item.topic);
+  let path = join6(dir, name2 + ".md");
+  let existing = await readFile5(path, "utf8").catch(() => "");
+  if (existing !== "" && !existing.includes(ID_MARKER)) {
+    path = join6(dir, name2 + "-oblivion.md");
+    existing = await readFile5(path, "utf8").catch(() => "");
+  }
   switch (payload.action) {
     case "created": {
       if (existing.includes("oblivion:id=" + payload.item.id)) return path;
@@ -1223,10 +1253,14 @@ function registerQaLoop(ctx, config, deps) {
     try {
       const result = await deps.knowledge.capture(qa);
       if (!result.pass || !result.item) return;
-      await writeMD(mdRoot, {
-        action: result.action,
-        item: result.item
-      });
+      await writeMD(
+        mdRoot,
+        {
+          action: result.action,
+          item: result.item
+        },
+        config.mdClassify
+      );
       await deps.graph.recordCooccurrence(qa);
       await deps.profile.updateFromQA(qa);
       deps.onCaptured?.({
@@ -1418,7 +1452,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.2";
+var VERSION = "0.1.3";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;

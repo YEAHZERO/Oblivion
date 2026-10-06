@@ -9,7 +9,7 @@ Oblivion 认知插件组的**内核插件**。一个包，六个模块，JSON �
 | 形态 | Cordis object 插件（Host 侧，无浏览器半边） |
 | 注入 | `tools`、`systemPrompt` |
 | 触发 | `session/event` → `turn/end`（幂等键 = sessionId + turn） |
-| 存储 | `<dataRoot>/*.json` + `conflicts/`，笔记落 `<mdRoot>/10-Topics/*.md` |
+| 存储 | `<dataRoot>/*.json` + `conflicts/`，笔记按分类落 `<mdRoot>/01_问答沉淀/*.md`（DEC-029） |
 | 依赖 | 运行时只用 node 内置 + `@deepseek-ai/dsh-tools`（Host 提供） |
 | 无 | SQLite / 向量切分 / cron / Worker / setInterval / MutationObserver |
 
@@ -18,7 +18,7 @@ Oblivion 认知插件组的**内核插件**。一个包，六个模块，JSON �
 | 模块 | 职责 | 落盘 |
 | --- | --- | --- |
 | `knowledge` | 存储、检索、四层筛选、冲突记录 | `<dataRoot>/<id>.json`、`conflicts/` |
-| `qa-loop` | 捕获 Q/A，串联全流程 | 笔记 `<mdRoot>/10-Topics/<topic>.md` |
+| `qa-loop` | 捕获 Q/A，串联全流程 | 笔记 `<mdRoot>/01_问答沉淀/<topic>.md`（同名外来笔记改写 `-oblivion.md`） |
 | `perspective` | 风格感知、维度追踪、激荡生成 | 内存队列（下一轮注入） |
 | `feedback` | 👍/👎/⏺ 捕获与画像微调 | `<dataRoot>/feedback.json` |
 | `graph` | 共现建边、惰性衰减 | `<dataRoot>/graph.json`、`graph-events.json` |
@@ -169,13 +169,14 @@ oblivion-core/
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` ~51 KB + `lib/testkit.js`（v0.1.2） |
+| `pnpm run build` | ✅ `lib/index.js` ~52 KB + `lib/testkit.js`（v0.1.3） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
 | `pnpm run test` | ✅ 12/12 |
-| `pnpm run selfcheck` | ✅ **17/17**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、时钟保护、去重、阈值分布） |
-| `pnpm run check:version` | ✅ `0.1.2` 一致 |
+| `pnpm run selfcheck` | ✅ **19/19**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、时钟保护、去重、阈值分布） |
+| `pnpm run check:version` | ✅ `0.1.3` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
-| 真实 Host 装载 | ⏳ **仍未验证**（需要 App 重启后才能验证 v0.1.2 的修复，见第九节） |
+| `pnpm run verify:dsh`（根） | ✅ 契约 **8/8**（host / `tools`·`systemPrompt` / `session/event`·`turn/end` / `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
+| 真实 Host 装载 | ⏳ **仍未验证**（需要 App 重启后才能验证 v0.1.2 起的修复，见第九节） |
 
 > ⚠️ **Host 侧改码必须重启 App**：Host 复用 ESM 缓存里的模块命名空间，禁用再启用**不会**重新导入。
 > 验证 v0.1.2 的步骤见下一节。
@@ -213,11 +214,11 @@ profile 补丁层被监视、落盘即装载（**无需重启**）；但 **Host 
 ```powershell
 # 重启 App 后：在会话里正常问一句（≥10 字、有实质回答），然后
 Get-ChildItem "$env:USERPROFILE\.oblivion\data"            # 期望出现 ts-*.json（知识条目）
-Get-ChildItem "$env:USERPROFILE\OblivionKB\10-Topics"      # 期望出现 <主题>.md（笔记）
+Get-ChildItem 'C:\Library\那些渐渐被遗忘\01_问答沉淀'        # 期望出现 <主题>.md（笔记）
 Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction SilentlyContinue
 ```
 
-出现 `ts-*.json` + `10-Topics\*.md` = `turn/end → 捕获 → 落盘` 整条链通了。
+出现 `ts-*.json` + `01_问答沉淀\*.md` = `turn/end → 捕获 → 落盘` 整条链通了。
 **在此之前只应声称 `SOURCE_BUILT`，不要声称 `RUNTIME_VERIFIED`。**
 
 ### 9.3 用五个模型面工具
@@ -236,7 +237,8 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `dataRoot` / `mdRoot` | `~/.oblivion/data` / `~/OblivionKB` | JSON 存储 / MD 落盘根 |
+| `dataRoot` / `mdRoot` | `~/.oblivion/data` / **`C:/Library/那些渐渐被遗忘`** | JSON 存储 / 笔记落盘根（DEC-029：直接写进既有知识库） |
+| `mdClassify` | `session`·`qa_loop` → `01_问答沉淀`、`doc` → `00_导入文件`、`wiki` → `02_Wiki页面`、`content_creator` → `03_创作产物` | 来源类型 → 子目录；未命中落 `99_其他/`（§25.3） |
 | `valueThreshold` | `0.3` | L4 价值闸门；**勿改回 0.5**（会让一切被丢弃） |
 | `enablePerspective` / `enableFeedback` | `true` | 认知陪伴 / 反馈微调开关 |
 | `perspectiveActiveSessionMax` | `3` | §25.4 主动触发只在最早 3 个会话 |

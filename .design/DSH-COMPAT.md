@@ -118,7 +118,7 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 | --- | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS 10/10 | `deepseek-harness @ dsh-v0.2.0-rc.2` (`639ed01539`) |
 | `@oblivion/vimc` | 0.2.9 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS **6/6**（迁 bundle 层后） | 同上 |
-| `@oblivion/core` | **0.1.2** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **8/8** | 同上（host / service `tools`·`systemPrompt` / event `session/event`·`turn/end` / hostPkg `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
+| `@oblivion/core` | **0.1.3** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **8/8** | 同上（host / service `tools`·`systemPrompt` / event `session/event`·`turn/end` / hostPkg `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 
 **校验覆盖的契约**：
 
@@ -132,8 +132,9 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 
 - `@oblivion/brand`、`@oblivion/vimc`：**bundle 层**（各自 `package.json` 的 `dsh.bundle.patch` 指向自己的 `cordis.patch.yml`，并在 `dsh.profile.bundles` 中列出）—— 包自己声明怎么被组合，装到哪台机器都一样。
 - `@oblivion/core`：⚠️ **仍走用户层 `cordis.patch.yml` 的 insert 行**（不在 bundles）→ **正处在 R1 描述的暴露面**。
-  这是**刻意的取舍**（Host 侧认知层要频繁迭代，bundle 层改一次就要重启 App），但换机器 / 重置 profile 会静默失效。
-  **待裁定**：见 `.design/ARCHITECTURE.MD` §33.5 第 ② 条（迁 bundle 层 vs 保持用户层）。
+  ✅ **2026-10-06 所有者裁定：走热挂**（`ARCHITECTURE.MD` §33.6 **DEC-028**）——收益是改参数/落盘即生效、不必重启，
+  代价是换机器 / 重置 profile 会静默失效。缓解：安装片段随包提交（`oblivion-core/cordis.patch.yml` + README §9.1），
+  且本脚本的 `mount profile.dependencies` 断言会在装载缺失时 FAIL。
 
 ---
 

@@ -16,7 +16,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync as mkdir, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,8 +142,8 @@ await check('端到端捕获：真实事件流（turn/start→消息→turn/end�
 
   const items = readdirSync(dataRoot).filter((f) => f.endsWith('.json') && f.startsWith('ts-'));
   assert.ok(items.length >= 1, '应写入至少 1 条知识条目，实际 ' + items.length);
-  const kbFiles = existsSync(join(mdRoot, '10-Topics')) ? readdirSync(join(mdRoot, '10-Topics')) : [];
-  assert.ok(kbFiles.length >= 1, '应生成主题笔记');
+  const kbFiles = existsSync(join(mdRoot, '01_问答沉淀')) ? readdirSync(join(mdRoot, '01_问答沉淀')) : [];
+  assert.ok(kbFiles.length >= 1, '应生成主题笔记（01_问答沉淀/）');
   const item = JSON.parse(readFileSync(join(dataRoot, items[0]), 'utf8'));
   return '条目 ' + item.id + ' / 主题 ' + item.topic + ' / 笔记 ' + kbFiles.join(',');
 });
@@ -400,6 +400,43 @@ await check('F5 保留期（§25.7）：超过 90 天的反馈在读取时被惰
   assert.equal(onDisk.length, 1, '裁剪结果应落盘');
   writeFileSync(join(dataRoot, 'feedback.json'), '[]', 'utf8');
   return '保留 ' + kept.length + ' 条 / 裁剪 ' + stats.pruned + ' 条 / 保留期 ' + stats.retentionDays + ' 天';
+});
+
+await check('分类落盘（§25.3）：问答沉淀落 01_问答沉淀/，未命中规则落 99_其他/', async () => {
+  const mkItem = (topic, type) => ({
+    id: 'ts-x', topic, title: topic, content: '内容'.repeat(40),
+    sources: [{ type, ref: 'r', hash: 'h' }],
+    tags: [], status: 'active', created_at: Date.now(), updated_at: Date.now(), version: 1,
+  });
+  const cfg = { ...kit.DEFAULT_CONFIG, dataRoot, mdRoot };
+  assert.equal(kit.classifyDir(mkItem('t1', 'session'), cfg.mdClassify), '01_问答沉淀', 'session 来源应落问答沉淀');
+  assert.equal(kit.classifyDir(mkItem('t2', 'qa_loop'), cfg.mdClassify), '01_问答沉淀', 'qa_loop 来源应落问答沉淀');
+  assert.equal(kit.classifyDir(mkItem('t3', 'doc'), cfg.mdClassify), '00_导入文件');
+  assert.equal(kit.classifyDir(mkItem('t4', 'unknown-type'), cfg.mdClassify), kit.MD_FALLBACK_DIR, '未命中必须落兜底');
+
+  const p1 = await kit.writeMD(mdRoot, { action: 'created', item: mkItem('分类测试', 'session') }, cfg.mdClassify);
+  assert.ok(p1.includes('01_问答沉淀'), '落盘路径应含 01_问答沉淀，实际 ' + p1);
+  const p2 = await kit.writeMD(mdRoot, { action: 'created', item: mkItem('兜底测试', 'unknown-type') }, cfg.mdClassify);
+  assert.ok(p2.includes(kit.MD_FALLBACK_DIR), '兜底路径应含 ' + kit.MD_FALLBACK_DIR + '，实际 ' + p2);
+  return '分类=' + kit.classifyDir(mkItem('x', 'session'), cfg.mdClassify) + ' / 兜底=' + kit.MD_FALLBACK_DIR;
+});
+
+await check('共用知识库防误伤：同名外来笔记不被覆盖，改写 -oblivion.md', async () => {
+  const dir = join(mdRoot, '01_问答沉淀');
+  await mkdir(dir, { recursive: true });
+  const minePath = join(dir, '防误伤.md');
+  writeFileSync(minePath, '# 我自己的笔记\n\n不要动我。\n', 'utf8');
+  const item = {
+    id: 'ts-guard', topic: '防误伤', title: '防误伤', content: '插件写入的内容',
+    sources: [{ type: 'session', ref: 'r', hash: 'h' }],
+    tags: [], status: 'active', created_at: Date.now(), updated_at: Date.now(), version: 1,
+  };
+  const written = await kit.writeMD(mdRoot, { action: 'created', item }, { session: '01_问答沉淀' });
+  const original = readFileSync(minePath, 'utf8');
+  assert.ok(original.includes('不要动我'), '外来笔记必须原样保留');
+  assert.ok(written.endsWith('防误伤-oblivion.md'), '应改写旁路文件，实际 ' + written);
+  assert.ok(readFileSync(written, 'utf8').includes('oblivion:id='), '旁路文件应带 id 标记');
+  return '外来文件未动，写入 ' + written.replace(/\\/g, '/').split('/').slice(-1)[0];
 });
 
 rmSync(tmp, { recursive: true, force: true });

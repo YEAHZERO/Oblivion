@@ -17,12 +17,16 @@
 #
 # 常用调参（要改就整段写进 config，缺省键由 resolveConfig 补默认）：
 #   dataRoot: '~/.oblivion/data'      # JSON 存储 + profile.json
-#   mdRoot:   '~/OblivionKB'          # MD 落盘（10-Topics/<topic>.md）
+#   mdRoot:   'C:/Library/那些渐渐被遗忘'  # 笔记落盘根（DEC-029：所有者既有知识库）
+#   mdClassify: { session: '01_问答沉淀', doc: '00_导入文件', wiki: '02_Wiki页面', content_creator: '03_创作产物' }
 #   valueThreshold: 0.3               # L4 价值闸门（勿改回 0.5，见 config.ts 注释）
 #   enablePerspective / enableFeedback: true
 #   perspectiveActiveSessionMax: 3    # §25.4 主动触发：只在最早 3 个会话
 #   perspectiveDeepTriggerRepeats: 3  # §25.4 深度触发：连续 3 次同维度
 #   feedbackRetentionDays: 90         # §25.7 保留期（读取时惰性裁剪）
+#
+# DEC-028：本包**走热挂**（这个 insert 行落盘即装载，不需要重启 App）；换机器/重置 profile 时
+# 需要把下面这段重新追加到 %USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml 末尾。
 # ============================================================
 
 - insert:

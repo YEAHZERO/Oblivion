@@ -107,10 +107,14 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
       const result = await deps.knowledge.capture(qa);
       if (!result.pass || !result.item) return;
 
-      await writeMD(mdRoot, {
-        action: result.action as MdAction,
-        item: result.item,
-      });
+      await writeMD(
+        mdRoot,
+        {
+          action: result.action as MdAction,
+          item: result.item,
+        },
+        config.mdClassify,
+      );
       await deps.graph.recordCooccurrence(qa);
       await deps.profile.updateFromQA(qa);
 

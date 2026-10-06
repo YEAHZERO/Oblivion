@@ -50,23 +50,29 @@
 - **自带设置页**（设置 → Oblivion 键盘导航）：键位文本、滚动、输入框、查找、链接提示、导入、排除规则与只读自检
 - **开销可自证**：真实页面里候选扫描 7.5–19ms（优化前 111.8ms）、按键平均 1.8ms/峰值 3ms；无轮询、无常驻注入 DOM
 
-③ [`@oblivion/core`](oblivion-core/README.md) v0.1.2（**认知层内核**，Host 侧 `object` 插件）：
+③ [`@oblivion/core`](oblivion-core/README.md) v0.1.3（**认知层内核**，Host 侧 `object` 插件）：
 
 - 设计书的 **Phase 2–6 合并成一个包**：knowledge / qa-loop / perspective / feedback / graph / profile
-- **问答即生长**：`turn/end` 单触发 → 四层筛选（精确去重 / 语义重合 / L3 四条规则 / 价值打分）→ JSON 条目 + MD 落盘 + 共现建边 + 档案更新
+- **问答即生长**：`turn/end` 单触发 → 四层筛选（精确去重 / 语义重合 / L3 四条规则 / 价值打分）→ JSON 条目 + 笔记落盘 + 共现建边 + 档案更新
+- **落盘位置（所有者裁定）**：笔记写进既有知识库 **`C:\Library\那些渐渐被遗忘`**，**内部按 `01_问答沉淀/` 分类**
+  （`00_导入文件/` `02_Wiki页面/` `03_创作产物/` `99_其他/` 兜底）；**同名外来笔记绝不覆盖**，改写 `<topic>-oblivion.md`
 - **认知陪伴**：主动（≤3 会话）/ 深度（连续同维度 ≥3 次 → ≥3 候选）/ 陪伴期三通道，走 `systemPrompt` 下一轮注入；档案置信度 <0.3 一律不发
 - **零侵入**：不阻塞主链路、无 cron/Worker/定时器（图衰减与反馈保留期都是**读取时惰性计算**）、防回灌
 - 模型面 5 个工具：`oblivion_query` / `oblivion_capture` / `oblivion_profile` / `oblivion_feedback` / `oblivion_graph_neighbors`
-- 闸门：契约 8/8、test 12/12、selfcheck 17/17；**真实 Host 装载待重启 App 验证**（Host 侧改码不会靠禁用再启用重新导入）
+- 挂载：**热挂**（profile 补丁插入行，落盘即装载，**无需重启**；决策 DEC-028）
+- 闸门：契约 **8/8**、test 12/12、selfcheck **19/19**；**真实 Host 装载待重启 App 验证**（Host 侧改码不会靠禁用再启用重新导入）
 
 > ⚠️ **本仓库目前没有 26 个 `oblivion-*` 能力包。** 那是 **v4.0 及更早**的计划；
 > v4.1 已把它**收敛为 8 个插件**（宿主提供的不再重造）。**不要把旧计划读成现状。**
 >
 > **设计书写的 ≠ 已做的**：哪些做完了、哪些没做、哪些是设计书自己写错（例如 `session:complete` 这个钩子根本不存在），
 > 一律看 [设计书 §33 现状对账与缺口](.design/ARCHITECTURE.MD) 与 [HANDOFF.md](HANDOFF.md)。
-> 当前**未做**的主要是：文档导入解析（anydoc）、向量检索、`oblivion_docs/` 目录结构与 `md_rules.yaml` 分类、
-> MD frontmatter 与 `[[双链]]`、健康度告警、评价入口 UI、内容创作（Phase 6）、Obsidian 适配（Phase 7）、
+> 当前**未做**的主要是：文档导入解析（anydoc）、向量检索、`md_rules.yaml` 式 YAML 阈值配置、
+> MD frontmatter 与 `[[双链]]` 写回、健康度告警、评价入口 UI、内容创作（Phase 6）、Obsidian 适配（Phase 7）、
 > 真机 e2e（Phase 9）、根 `VERSION` 递增器。
+>
+> **已裁定（2026-10-06，设计书 §33.6）**：① 知识库**根 = `C:\Library\那些渐渐被遗忘`**、**内部按 `01_问答沉淀/` 分类**（DEC-029，已落地 core v0.1.3）；
+> ② `@oblivion/core` **走热挂**（DEC-028）。③④⑤（Phase 2 划界 / Phase 6·7 去留 / DSH-COMPAT 是否升格）仍待裁定。
 
 ---
 
@@ -109,6 +115,7 @@
 | **DSH 插件怎么开发**（环境前置、命令、已知限制与踩过的坑） | [`WORKSPACE.md`](WORKSPACE.md) |
 | **`@oblivion/brand` 插件怎么用/怎么改** | [`oblivion-brand/README.md`](oblivion-brand/README.md) |
 | **`@oblivion/vimc` 插件怎么用/怎么改** | [`oblivion-vimc/README.md`](oblivion-vimc/README.md)（设计意图/决策/验收见 [`.design/vimc-键盘导航.md`](.design/vimc-键盘导航.md)） |
+| **`@oblivion/core` 插件怎么用/怎么改** | [`oblivion-core/README.md`](oblivion-core/README.md)（设计书见 [`.design/core-认知内核.md`](.design/core-认知内核.md)，含现状对账） |
 | **Agent 协作规范与业务规则** | [`.action/`](.action/) |
 | **记忆库怎么用（每轮三步固定动作）** | [`.memory/README.md`](.memory/README.md) |
 | **对外版本说明** | [`CHANGELOG.md`](CHANGELOG.md) |
@@ -116,8 +123,9 @@
 | **怎么贡献 / 第三方复用登记** | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
 > **版本有两条轴，别混**：**产品版本**在根 [`VERSION`](VERSION) / [`CHANGELOG.md`](CHANGELOG.md)；
-> **插件版本**在 [`oblivion-brand/VERSION`](oblivion-brand/VERSION) 与 [`oblivion-vimc/VERSION`](oblivion-vimc/VERSION)。
-> 两者独立递增（设计书 §12.13）。
+> **插件版本**在 [`oblivion-brand/VERSION`](oblivion-brand/VERSION)、[`oblivion-vimc/VERSION`](oblivion-vimc/VERSION)
+> 与 [`oblivion-core/VERSION`](oblivion-core/VERSION)（各自 `pnpm run version:bump` 只加第三位）。
+> 两条轴独立递增（设计书 §12.13）。
 
 ---
 

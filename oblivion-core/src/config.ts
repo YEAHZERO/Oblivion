@@ -10,6 +10,14 @@
 export interface Config {
   readonly dataRoot: string;
   readonly mdRoot: string;
+  /**
+   * §25.3 MD 分类规则：**来源类型 → mdRoot 下的子目录**。
+   *
+   * 2026-10-06 所有者裁定：文档根 = `C:/Library/那些渐渐被遗忘`（既有知识库），
+   * **内部按 `01_问答沉淀/` 分类**（即设计书 §25.3 的编号目录方案，不再用 `oblivion_docs/`）。
+   * 未命中任何规则 → `99_其他/`（§25.3 的兜底）。
+   */
+  readonly mdClassify: Readonly<Record<string, string>>;
 
   readonly semanticThreshold: number;
   readonly valueThreshold: number;
@@ -49,7 +57,22 @@ export interface Config {
 
 export const DEFAULT_CONFIG: Config = {
   dataRoot: '~/.oblivion/data',
-  mdRoot: '~/OblivionKB',
+
+  /**
+   * 文档根（所有者裁定 2026-10-06）：直接写进既有的知识库，不再单开 `oblivion_docs/`。
+   * 用正斜杠书写：Windows 上 `path.isAbsolute('C:/…')` 成立，`expandHome()` 原样放行，
+   * 且写进 YAML 时不需要转义反斜杠。
+   */
+  mdRoot: 'C:/Library/那些渐渐被遗忘',
+  mdClassify: {
+    // 问答沉淀（我们的捕获来源是 session；qa_loop 是设计书的原始命名，一并兼容）
+    session: '01_问答沉淀',
+    qa_loop: '01_问答沉淀',
+    // 设计书 §25.3 的其余分类（后续文档导入/创作能力落地后直接生效）
+    doc: '00_导入文件',
+    wiki: '02_Wiki页面',
+    content_creator: '03_创作产物',
+  },
 
   /**
    * 价值阈值 —— **已按实测重标定，不要改回设计书原值 0.5**。

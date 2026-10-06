@@ -15,7 +15,31 @@
 
 ---
 
-## [未发布] — `@oblivion/core` v0.1.2：修掉「捕获恒为空」的根因 + 补齐设计书 4 个差距 + 修正设计书钩子名
+## [未发布] — `@oblivion/core` v0.1.3：知识库落盘位置与分类按所有者裁定落地 + 两份决策记录
+
+### 决策（设计书 §33.6）
+
+| ID | 决策 |
+| --- | --- |
+| **DEC-028** | `@oblivion/core` **走热挂**（用户层 `cordis.patch.yml` insert 行，落盘即装载、不重启），**不声明 `dsh.bundle`**。代价（换机器/重置 profile 静默失效，DSH-COMPAT R1）由所有者接受，缓解措施随包提交 |
+| **DEC-029** | 知识库**根 = `C:/Library/那些渐渐被遗忘`**（既有知识库，不再单开 `oblivion_docs/`），**内部按 `01_问答沉淀/` 分类**（`00_导入文件/` `02_Wiki页面/` `03_创作产物/` `99_其他/` 兜底） |
+
+### 变更
+
+- `config.mdRoot` 默认 `~/OblivionKB` → **`C:/Library/那些渐渐被遗忘`**；新增 **`config.mdClassify`**（来源类型 → 子目录，§25.3）
+- `qa-loop/md-writer` 落盘路径由硬编码 `10-Topics/` 改为 **按 `mdClassify` 分类**；未命中规则落 `99_其他/`
+- **共用知识库防误伤**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，**绝不覆盖**同名笔记
+- 新增两份决策记录与设计书同步：`.design/ARCHITECTURE.MD` §33.5（①② 标记已裁定）+ **§33.6 决策记录**；§12.12 / §25.3 标注 `oblivion_docs/` 已被取代
+- **新增 `.design/core-认知内核.md`**：所有者提供的 `@oblivion/core` 最新设计书入库，文末附「现状对账」（已落地 / 10 条偏差 / 3 项未做）
+- 同步更新：`oblivion-core/README.md`（路径、版本、19 项自检、verify:dsh 8/8）、`oblivion-core/cordis.patch.yml`（调参注释 + DEC-028 说明）、`HANDOFF.md`（验证命令）、`.design/DSH-COMPAT.md`（R1 与 core 行）
+
+### 验收
+
+`build` ✅（v0.1.3）/ `typecheck` ✅ / `test` 12/12 ✅ / `selfcheck` **19/19** ✅（新增：§25.3 分类落盘、共用知识库防误伤）/ `check:version` `0.1.3` ✅ / `verify:dsh` core **8/8** ✅。
+
+---
+
+
 
 ### 修复：`turn/end` 捕获恒为空（插件首版的致命 bug）
 

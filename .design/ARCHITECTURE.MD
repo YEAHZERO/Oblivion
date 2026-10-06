@@ -1309,6 +1309,9 @@ echo "✅ Oblivion 初始化完成！"
 
 ### 12.12 `oblivion_docs/` 目录结构
 
+> ⚠️ **2026-10-06 裁定（DEC-029）**：**不再单开 `oblivion_docs/`** —— 直接写进既有知识库根
+> `C:/Library/那些渐渐被遗忘`，内部目录结构（`00_导入文件/01_问答沉淀/02_Wiki页面/03_创作产物/99_其他/`）与下方一致。
+
 ```
 oblivion_docs/
 ├── 00_导入文件/              # 用户手动上传的原始文档
@@ -1827,6 +1830,10 @@ related_wiki: ['[[相关Wiki页面slug]]']
 
 ### 25.3 MD 分类规则 YAML
 
+> ⚠️ **2026-10-06 裁定（DEC-029）**：`base_dir` **不是** `./oblivion_docs`，而是所有者既有的知识库根
+> **`C:/Library/那些渐渐被遗忘`**；分类规则与下表**逐条一致**（`01_问答沉淀/` 等），已在 `oblivion-core` v0.1.3 落地。
+> 下表保留 YAML 形态的设计意图；实现的载体是 cordis config 的 `mdClassify`（而不是 YAML 文件）—— 见 §33.3 第 8 条。
+
 ```yaml
 md_sync:
   base_dir: './oblivion_docs'
@@ -2236,6 +2243,8 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | **DEC-025** | **品牌接管的让位机制选哪条路** | **Confirmed：`priority` 遮蔽（路 C 修正后）**（2026-10-04）。实测 `ui-slots` 的 `single` 槽规则是「同 priority 重复注册抛错 / 不同 priority 遮蔽 / **lowest renders**」，故 `priority = -10` 稳定覆盖官方（默认 0）。<br>**并且**：关闭接管只需 **dispose 本插件注册**，官方那条立刻重新成为渲染者 —— 零侵入、不重启、不改官方包。<br>**修正**：§5.9 原判断「动态注册 priority 低于 shipped 条目、默认官方会赢」**是错的**（见 §9.6.1）。推荐顺序更新为 priority 遮蔽 > profile patch > 构建期摘除 |
 | **DEC-026** | **插件如何给用户可见的版本凭据** | **Confirmed：日志每行 + 设置面板标题都带版本号**（2026-10-04）。<br>**理由（代价换来的）**：node 半边**只在应用启动时加载**，刷新页面不更新它。v4.1 开发中因此**连续误判两轮**（以为代码没生效，实为旧版仍在跑）。<br>**配套**：`VERSION` 单一真源 + `bump-version.mjs` 正则同步到 `package.json`；客户端由构建期 esbuild `define` 注入（§12.13） |
 | **DEC-027** | **插件能否接管桌面图标** | **Confirmed：不能，且不做替身**（2026-10-04）。窗口/任务栏图标来自 **exe 的 PE 资源**，`resources/icon.png` 只喂 `setAboutPanelOptions`、`resources/tray.ico` 只喂托盘。**拒绝**改写官方安装目录内的资源（越界且升级即失效）。<br>**替代**：改快捷方式 `.lnk` 的 `IconLocation`（`tools/set-shortcut-icon.ps1`，支持 `-Restore`）——明确告知这是**壳层替代**，不是应用图标接管（RISK-129） |
+| **DEC-028** | **`@oblivion/core` 的挂载策略** | **Confirmed：走热挂**（2026-10-06）。用户层 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 的 insert 行，**不声明 `dsh.bundle`** —— 改 config 落盘即装载、不必重启（Host 侧 JS 代码改动仍需重启 App 才重新导入）。<br>**代价**：换机器 / 重置 profile 会静默失效（正命中 `DSH-COMPAT.md` 的 **R1**）。<br>**缓解**：安装片段随包提交（`oblivion-core/cordis.patch.yml` + `oblivion-core/README.md` §9.1）；`pnpm run verify:dsh` 的 `mount profile.dependencies` 断言会在装载缺失时报 FAIL。详见 §33.6 |
+| **DEC-029** | **知识库落盘位置与分类** | **Confirmed：写进既有知识库**（2026-10-06）。文档根 = **`C:/Library/那些渐渐被遗忘`**（**不再**单开 `oblivion_docs/`）；内部按编号目录分类：`01_问答沉淀/`（问答闭环）、`00_导入文件/`（文档导入）、`02_Wiki页面/`、`03_创作产物/`、`99_其他/`（兜底）。<br>**实现**：`config.mdRoot` + `config.mdClassify`（来源类型 → 子目录），已在 `oblivion-core` v0.1.3 落地。<br>**安全约束**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，**绝不覆盖**。详见 §33.6 |
 
 ### 31.3 变更日志 delta 类型
 
@@ -2280,11 +2289,12 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | client | **bundle 层**（`dsh.bundle.patch` + `dsh.profile.bundles`） | 契约 10/10 + 目视（AC-032~035 ✅） |
 | `@oblivion/vimc` | 0.2.9 | client | **bundle 层** | 契约 6/6 + 真实按键计数（RUNTIME_VERIFIED） |
-| `@oblivion/core` | 0.1.2 | object（Host） | ⚠️ **用户层 insert 行**（不在 bundles） | 契约 8/8 + test 12/12 + selfcheck 17/17；**真实 Host 待重启验证** |
+| `@oblivion/core` | 0.1.3 | object（Host） | ✅ **热挂**（用户层 insert 行，落盘即装载，**不重启**；DEC-028） | 契约 8/8 + test 12/12 + selfcheck 19/19；**真实 Host 待重启验证** |
 
 > `@oblivion/core` 把设计书的 Phase 2–6（knowledge / qa-loop / perspective / feedback / graph）**合并成一个包**，
-> 理由与遗留项见 `HANDOFF.md` §六。它**刻意**不声明 `dsh.bundle`（认知层要频繁迭代、bundle 层改一次要重启），
-> 代价正中 `DSH-COMPAT.md` 的 **R1**（挂用户层 → 换机器/重置 profile 即静默失效）——**待裁定**，见 33.5。
+> 理由与遗留项见 `HANDOFF.md` §六。它**按 DEC-028 保持热挂**（不声明 `dsh.bundle`，改参数落盘即生效），
+> 代价正中 `DSH-COMPAT.md` 的 **R1**（挂用户层 → 换机器/重置 profile 即静默失效）——**已由所有者裁定接受**，
+> 缓解措施随包提交（安装片段 + `verify:dsh` 的 mount 断言），见 §33.6 DEC-028。
 
 ### 33.2 已完成（相对设计书的映射）
 
@@ -2306,12 +2316,12 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | --- | --- | --- | --- |
 | 1 | **DSH 升级兼容台账缺 core 一行**（校验已覆盖：**8/8 PASS**，台账只记了 brand/vimc） | `DSH-COMPAT.md` §五 | 无（本节同批补） |
 | 2 | **core 挂载策略不一致**（brand/vimc 走 bundle 层，core 走用户层插入行） | DSH-COMPAT R1 | 换机器即静默失效 vs bundle 层每次改要重启 |
-| 3 | **KB 目录结构与设计不符**：实现是 `~/OblivionKB/10-Topics/<topic>.md`；设计是 `md_sync.base_dir: ./oblivion_docs` + `00_导入文件/01_问答沉淀/02_Wiki页面/03_创作产物/99_其他/` | §25.3、§12.3、REQ-002/003/006 | **需裁定哪边为准**（设计书里 0 处 `10-Topics`） |
+| 3 | **KB 目录结构已裁定并对齐**：**根 = `C:/Library/那些渐渐被遗忘`**（既有知识库），**内部按 `01_问答沉淀/` 分类**（`00_导入文件/` `02_Wiki页面/` `03_创作产物/` `99_其他/` 兜底） | §25.3、§12.3、REQ-002/003/006 | ✅ **已落地**（`oblivion-core` v0.1.3：`mdRoot` + `mdClassify`；见 §33.5 ①、§33.6） |
 | 4 | **MD 格式规范未落地**：无 YAML frontmatter（`title/source/created_at/tags/related_wiki`）、无「摘要」段、无 `[[slug]]` 互链 | §25.2、REQ-006、AC-009a/b | 需要 LLM 摘要能力（能力缺口） |
 | 5 | **图谱双链写回未实现**（`graph/backlink.ts` 不存在） | §25.6、§12.4 | 小改动，可与 4 同批 |
 | 6 | **文档导入与解析未实现**（PDF/Word → MD、anydoc WASM） | REQ-002、§12.3、D1 | 依赖选型 + **许可证登记** |
 | 7 | **向量检索未实现** | F5/D2、AC-006 | 依赖选型 + **许可证登记** + 与 core 的 knowledge 模块划界 |
-| 8 | **筛选/分类参数未走 YAML**（现状是 TS 默认值 + cordis config） | REQ-013、AC-017、`md_rules.yaml`/`qa_rules.yaml` | 需先定 3 的目录结构 |
+| 8 | **筛选/分类参数未走 YAML**（现状是 TS 默认值 + cordis config，分类已可配：`mdClassify`） | REQ-013、AC-017、`md_rules.yaml`/`qa_rules.yaml` | 分类规则**已可配**；阈值仍在 `config.ts`（cordis config 可覆盖） |
 | 9 | **健康度告警 4 项未实现** | REQ-011、AC-016 | 需要可观测面（§26） |
 | 10 | **20 条标注样本准确率 >90% 未做** | AC-014 | 需要标注集（人工） |
 | 11 | **评价入口 UI 缺失**（👍/👎/⏺）—— 现只有 `oblivion_feedback` 工具 | §12.6、§25.7、REQ-019 | 需要 client 插件（object 插件无 UI） |
@@ -2320,7 +2330,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | 14 | **发布工程学剩余部分**：破坏性变更契约文档化、迁移工具 | Phase 8 | DSH-COMPAT 已实现「契约声明 + 校验 + 台账」，缺「写进设计书 + 迁移工具」 |
 | 15 | **跨插件/真机 e2e 未做**（Phase 9） | Phase 9 | 各插件已独立 test/selfcheck |
 | 16 | **根 `VERSION` 递增器未做** | OPEN-113、REQ-001 | 倾向方案 ①：只同步根 `VERSION` + CHANGELOG |
-| 17 | **`oblivion_docs/` 目录结构未落地** | §12.12 | 与 3 同批 |
+| 17 | **`oblivion_docs/` 目录结构** | §12.12 | ✅ **已被裁定取代**：不再单开 `oblivion_docs/`，直接写进既有知识库根（见 3 与 §33.5 ①） |
 | 18 | **双部署 / Web 通道未落地**（§5.7 落地顺序、§5.8 HTTP `/api` 一元面） | DEC-017、§5 | 另见 `.design/web通道与webserver形态.md` |
 | 19 | **预置 Profile / 条件加载 / 根配置重写未落地**（仓库 `profiles/` 为空） | §11.2·11.3·11.4 | 需要 profile 分发模型 |
 | 20 | **Agent Presets 未落地** | §6.3 | 依赖 Host 平面能力 |
@@ -2341,11 +2351,18 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 
 | # | 待裁定 | 选项 |
 | --- | --- | --- |
-| ① | **KB 目录结构以哪边为准** | (a) 改设计书为现状 `~/OblivionKB/10-Topics/`；(b) 改实现为 `oblivion_docs/` + `00_/01_/99_` 分类；(c) 折中：根沿用 OblivionKB，内部按 `01_问答沉淀/` 分类 |
-| ② | **core 挂载策略** | (a) 迁 bundle 层（与另两个插件统一、换机器不丢，代价：改一次要重启）；(b) 保持用户层 + 把插入行写进仓库文档（保持热挂，代价：换机器要重装） |
+| ① | ~~**KB 目录结构以哪边为准**~~ | ✅ **已裁定（2026-10-06）**：根 = **`C:/Library/那些渐渐被遗忘`**（既有知识库），**内部按 `01_问答沉淀/` 分类**（`00_导入文件/02_Wiki页面/03_创作产物/99_其他`）。已落地 v0.1.3（`mdRoot` + `mdClassify`），见 §33.6 |
+| ② | ~~**core 挂载策略**~~ | ✅ **已裁定（2026-10-06）**：**走热挂**（用户层 `cordis.patch.yml` 的 insert 行，落盘即装载、不重启）；**不声明 `dsh.bundle`**。代价：换机器/重置 profile 需重装 —— 安装片段已写进 `oblivion-core/cordis.patch.yml` 与 README §9.1，见 §33.6 |
 | ③ | **Phase 2 与已有 knowledge 模块的划界** | (a) 并入式（向量检索/anydoc 作为 core 的可选子模块，`enableVector: false` 默认关）；(b) 拆分式（新包只做解析+检索，先设计服务接口） |
 | ④ | **Phase 6/7 是否保留** | 保留（先补前置：notex 实测、服务存在性对账）／降级为 `Superseded` 并写明理由 |
 | ⑤ | **DSH-COMPAT 是否升格为设计书正式机制**（§8 Phase 8 的「破坏性变更契约」） | 是（推荐：它已在运行，含 PASS 矩阵与证据 `文件:行`）／否（仅作运维台账） |
+
+### 33.6 决策记录（2026-10-06）
+
+| ID | 决策 | 内容与代价 |
+| --- | --- | --- |
+| **DEC-028** | **`@oblivion/core` 走热挂** | 用户层 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 的 insert 行；**不声明 `dsh.bundle`**。收益：改代码落盘即装卸载载（Host 侧代码改动仍需重启 App 才重新导入）。代价：换机器 / 重置 profile 会**静默失效**（DSH-COMPAT R1）→ 缓解：安装片段随包提交（`oblivion-core/cordis.patch.yml` + README §9.1），并由 `pnpm run verify:dsh` 的 `mount profile.dependencies` 断言兜底 |
+| **DEC-029** | **知识库落盘位置与分类** | 文档根 = **`C:/Library/那些渐渐被遗忘`**（所有者既有知识库，不再单开 `oblivion_docs/`）；内部按编号目录分类：`01_问答沉淀/`（问答闭环）、`00_导入文件/`（文档导入）、`02_Wiki页面/`、`03_创作产物/`、`99_其他/`（兜底）。实现：`config.mdRoot` + `config.mdClassify`。**安全约束**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，绝不覆盖 |
 
 ---
 
