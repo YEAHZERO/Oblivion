@@ -6,6 +6,8 @@ import { join } from "node:path";
 var RESTART_PATH = "/obl-brand/restart";
 var SCRIPT_PATH = join(tmpdir(), "obl-brand-restart.ps1");
 var LOG_PATH = join(tmpdir(), "obl-brand-restart.log");
+var MARKET_REGISTRY_ENV = "DSHM_NPM_MIRROR";
+var MARKET_REGISTRY_MIRROR = "https://registry.npmmirror.com";
 var RESTART_SCRIPT = String.raw`
 param(
   [Parameter(Mandatory = $true)][int]$HostPid,
@@ -287,14 +289,30 @@ function installRestartRoute(ctx, warn) {
     ctx.logger?.("@oblivion/brand").info(`\u91CD\u542F\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${RESTART_PATH}`);
   });
 }
+function installMarketRegistryOverride(ctx) {
+  const logger = ctx.logger?.("@oblivion/brand");
+  const current = process.env[MARKET_REGISTRY_ENV];
+  if (current !== void 0 && current.trim() !== "") {
+    logger?.info(
+      `\u63D2\u4EF6\u5E02\u573A registry \u5DF2\u7531 ${MARKET_REGISTRY_ENV}=${current.trim()} \u6307\u5B9A\uFF0C\u672C\u63D2\u4EF6\u4E0D\u8986\u76D6`
+    );
+    return;
+  }
+  process.env[MARKET_REGISTRY_ENV] = MARKET_REGISTRY_MIRROR;
+  logger?.info(`\u63D2\u4EF6\u5E02\u573A registry \u5DF2\u6307\u5411 ${MARKET_REGISTRY_MIRROR}`);
+}
 function apply(ctx) {
   const logger = ctx.logger?.("@oblivion/brand");
   const warn = (message) => {
     logger?.warn(message);
   };
+  installMarketRegistryOverride(ctx);
   installRestartRoute(ctx, warn);
 }
 export {
+  MARKET_REGISTRY_ENV,
+  MARKET_REGISTRY_MIRROR,
   RESTART_PATH,
-  apply
+  apply,
+  installMarketRegistryOverride
 };

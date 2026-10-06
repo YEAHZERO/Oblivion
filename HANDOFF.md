@@ -11,7 +11,7 @@
 
 | 插件 | 版本 | 形态 | 状态 |
 | --- | --- | --- | --- |
-| `@oblivion/brand` | 0.1.0 | client | 已现役（侧栏与会话 Hero 品牌） |
+| `@oblivion/brand` | 0.1.1 | client | 已现役（侧栏与会话 Hero 品牌 + 重启按钮 + **插件市场 registry 覆盖为 npmmirror**） |
 | `@oblivion/vimc` | 0.2.9 | client | 已现役（Vimium 式键盘导航 + 页面内查找） |
 | `@oblivion/core` | **0.1.6** | **object（Host 侧）** | 已修掉「捕获恒为空」的根因；**观测面已真机验证**（`status.json` 写着 v0.1.6、分类目录已自动创建、只读路由 200）；⚠️ **`turn/end` 是否真到我们这里仍未确认**（见下）；**DEC-028 热挂 / DEC-029 知识库位置** |
 | `@oblivion/panel` | **0.0.1** | **client（双半）** | **Node 半边已真机验证**（`GET /oblivion-panel/status` → 200 + `host-mount.json`）；浏览器半边待硬刷新目视 |
@@ -365,6 +365,22 @@ Cordis 的守卫：`ctx.agents` / `ctx.slots` 这类服务，只要没在插件 
 
 **规矩**：仓库文件只用**内容锚点**编辑；真要脚本改，先备份 + 改完立刻用解析器验证
 （YAML 用 `yaml` 包 parse、Markdown 查标题计数）。profile 补丁改完必须 `yaml.parse` 通过再重启。
+
+### 坑 12：插件市场热挂 `@` 作用域插件**一定会失败**（市场自身缺陷，换 registry 治不了）
+
+- `dshmarket/lib/hot.js` 的**同一个解析器里两行不一致**：`:161` 解析 `id` 用 `\S+`（把引号一起吃进去），
+  而 `:168` 解析 `name` 正确剥掉了可选引号。YAML 里 `@` 开头的标量**必须加引号**，于是
+  `- id: '@oblivion/panel'` 被解析成含引号的 `'@oblivion/panel'`，写回时（`:568`）拼成
+  `- id: 'mkt-'@oblivion/panel''` → **YAML 坏** → `bad indentation of a mapping entry` → 热挂失败、退化成重启。
+- 实测证据：市场日志 `log.ndjson` 里同一形态 **9 次**（01:55 / 02:14 / 02:35×2 / 02:36×2 / 03:34 / 03:38 / 03:42）。
+- 读取路径：`hot.js:525` 读被热挂的那个包**自己的** `cordis.patch.yml`（或它声明的 `dsh.bundle.patch`）
+  → `:534 parseSimplePatch`。所以只要那份 patch 里有带引号的 `insert` 行就会踩到。
+- 同一文件里读 profile 行的另一个解析器（`:659`）写法是**对的**（`['"]?([A-Za-z0-9._/@-]+)`）——
+  同一文件两个解析器不一致，这就是缺陷的形状。
+- **不要去改市场的 `node_modules`**：改安装包 = 升级即丢，且越界。两条出路（待裁定）：
+  ① 上游把 `:161` 改成与 `:168` 一致的剥引号写法；
+  ② 让 core/panel 各自带 `dsh.bundle.patch`，并把带引号的 `insert` 行从 `@oblivion/bundle` 的 patch 里撤掉
+  ——让市场看不到带引号的 id（代价：这两个包失去热挂）。
 
 ### 工程基建
 

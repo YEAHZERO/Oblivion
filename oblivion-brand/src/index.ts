@@ -42,6 +42,12 @@ export const RESTART_PATH = '/obl-brand/restart';
 const SCRIPT_PATH = join(tmpdir(), 'obl-brand-restart.ps1');
 const LOG_PATH = join(tmpdir(), 'obl-brand-restart.log');
 
+/** 市场读取 npm 镜像用的环境变量名 —— 市场自己的逃生口，不是我们发明的。 */
+export const MARKET_REGISTRY_ENV = 'DSHM_NPM_MIRROR';
+
+/** 覆盖后市场与它派生的 pnpm 一起使用的 npm 镜像。 */
+export const MARKET_REGISTRY_MIRROR = 'https://registry.npmmirror.com';
+
 /**
  * 游离重启脚本。
  *
@@ -444,11 +450,61 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
   });
 }
 
+/**
+ * 把插件市场（`dshmarket`）的 npm registry 指到 npmmirror。
+ *
+ * ## 为什么需要这一手
+ *
+ * 市场自己会探测「下载区域」，本机探测结果是 `china`
+ * （`profiles/desktop/.dsh-market/state.json` 的 `region: "china"`），
+ * 对应 `dshmarket/lib/regions.js` 里的 `NPM_CHINA = mirrors.cloud.tencent.com/npm`。
+ * 想用 npmmirror 就得**覆盖**，而区域表本身没有 npmmirror 这个选项。
+ *
+ * ## 为什么用环境变量而不是改市场源码
+ *
+ * `regions.js` 的 `routesFor()` 是 `npmMirror ?? base.npmRegistry` ——
+ * 环境变量**优先于区域表**，而且市场在文件头注释里就把这条逃生口写成了
+ * 设计意图（「a user whose routes have died needs a way out that is not
+ * wait for the next release」）。所以走它有两个好处：不改任何安装包
+ * （市场升级后本覆盖依然有效），以及**运营者优先** —— 见下。
+ *
+ * ## 覆盖范围（这是它值钱的地方）
+ *
+ * 一个变量同时管住三处，因为它们都问 `routesFor()`：
+ *
+ *   1. 市场自己的浏览/搜索/更新检查；
+ *   2. `dsh-cli.js` 派生 pnpm 时写入的 `npm_config_registry` —— **安装**也走它；
+ *   3. 目录源 `dsh-plugin-catalog`（`base.catalog` 按解析结果重建）。
+ *
+ * 而 GitHub 那三条路由**不受影响**：本函数不碰 `DSHM_GITHUB_PROXY`，
+ * 所以 `githubProxy` 仍然是区域表里的 `gh-proxy.com`。只换 npm 镜像。
+ *
+ * ## 非破坏性
+ *
+ * 已经有人设过（非空）就**一个字都不改**并记一行日志。运营者的环境变量是
+ * 「对自己网络的声明」，优先级高于本插件 —— 想换回去，把它设成空串或别的镜像即可。
+ */
+export function installMarketRegistryOverride(ctx: HostCtx): void {
+  const logger = ctx.logger?.('@oblivion/brand');
+  const current = process.env[MARKET_REGISTRY_ENV];
+  // 空白视同未设，与市场自己的 override() 语义一致。
+  if (current !== undefined && current.trim() !== '') {
+    logger?.info(
+      `插件市场 registry 已由 ${MARKET_REGISTRY_ENV}=${current.trim()} 指定，本插件不覆盖`,
+    );
+    return;
+  }
+  process.env[MARKET_REGISTRY_ENV] = MARKET_REGISTRY_MIRROR;
+  logger?.info(`插件市场 registry 已指向 ${MARKET_REGISTRY_MIRROR}`);
+}
+
 /** Cordis 插件入口。 */
 export function apply(ctx: HostCtx): void {
   const logger = ctx.logger?.('@oblivion/brand');
   const warn = (message: string): void => {
     logger?.warn(message);
   };
+  // 先于重启路由：只写一个环境变量，越早越好（市场第一次发请求前生效）。
+  installMarketRegistryOverride(ctx);
   installRestartRoute(ctx, warn);
 }

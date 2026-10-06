@@ -8,10 +8,93 @@
 > 此后**每次只加第三位**（patch，例如 `0.2.0 → 0.2.1`）；第二位/第一位**只在明确要求时**才动
 > （`--minor` / `--major`），不再由提交类型自动推断。规则同时记在 [`.action/AGENTS.MD`](.action/AGENTS.MD)。
 >
-> 注：`oblivion-brand/scripts/bump-version.mjs` 的注释里仍写着旧映射（`feat → minor`），
-> 该插件下次改动时一并同步；`oblivion-vimc` 的脚本已按新规则实现（`--minor` / `--major` 需显式开关）。
+> 注：三个插件的 `bump-version.mjs` 现已**全部**按新规则实现 —— 默认只加第三位，`--minor` / `--major`
+> 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
+> （此前它仍写着旧映射 `feat → minor`）。
 
----
+## [未发布] — `@oblivion/brand` v0.1.1：插件市场 registry 覆盖为 npmmirror（另报一处市场自身缺陷）
+
+按所有者指令落地：「修复插件市场，使用 `registry.npmmirror.com`。或者在我的 `oblivion/brand` 里面对此进行覆盖」。
+
+### 先查清楚：市场没坏，是它按「下载区域」选了**腾讯云**镜像
+
+`profiles/desktop/.dsh-market/state.json` 里 `region: "china"` / `regionAuto: true`（2026-10-04 自动探测决定）。
+对应 `dshmarket/lib/regions.js:35` 的 `const NPM_CHINA = 'https://mirrors.cloud.tencent.com/npm';`
+—— **区域表里根本没有 npmmirror 这个选项**，想用它只能覆盖。
+
+市场自己留了逃生口，且优先级高于区域表（`regions.js:176`）：
+
+```js
+const npmMirror = override(env, 'DSHM_NPM_MIRROR');
+// routesFor() 里：npmRegistry = npmMirror ?? base.npmRegistry
+```
+
+`regions.js` 的文件头注释把这条口子写成了**设计意图**：
+「a user whose routes have died needs a way out that is not wait for the next release」。
+
+### 实测（直接跑市场自己的模块，不靠推断）
+
+```
+routesFor('china', {})                                  → https://mirrors.cloud.tencent.com/npm
+routesFor('china', { DSHM_NPM_MIRROR: '…npmmirror…' })  → https://registry.npmmirror.com
+```
+
+一个变量同时管住三处，因为它们都问 `routesFor()`：
+
+| 处 | 效果 |
+| --- | --- |
+| 市场自己的浏览 / 搜索 / 更新检查 | 走 npmmirror |
+| **安装** | `dsh-cli.js:140` 派生 pnpm 时写入 `npm_config_registry` → 走 npmmirror |
+| 目录源 `dsh-plugin-catalog` | `base.catalog` 按解析结果重建 → 也走 npmmirror |
+
+GitHub 那三条路由**不受影响**（本覆盖不碰 `DSHM_GITHUB_PROXY`），仍是区域表的 `gh-proxy.com`。
+
+### 实现：覆盖写在 brand 里，但用的是市场文档化的那个变量
+
+`oblivion-brand/src/index.ts`：
+
+- `export const MARKET_REGISTRY_ENV = 'DSHM_NPM_MIRROR'`（:46）
+- `export const MARKET_REGISTRY_MIRROR = 'https://registry.npmmirror.com'`（:49）
+- `installMarketRegistryOverride(ctx)`（:487），在 `apply()` 的**第一步**调用（:508）—— 越早越好，赶在市场第一次发请求前
+- **非破坏性**：已经有人设过（非空白）就**一个字都不改**，只记一行日志 —— 运营者的环境变量是「对自己网络的声明」，优先级高于本插件；想换回去，把它设成空串或别的镜像即可
+- **不改任何安装包**：走环境变量 → 市场升级后本覆盖依然有效
+
+### 自证
+
+`oblivion-brand/scripts/selfcheck.mjs`（新增；纯 node，不依赖 DSHX）：**8 项，失败 0** ——
+导出形状 / 重启路由已挂载 / 未设时填 npmmirror / 运营者优先 / 空白视同未设 / 幂等 /
+**交叉验证：拿刚 `apply()` 过的 `process.env` 去喂市场自己的 `routesFor()`，断言 npmRegistry 真的换成了 npmmirror、且 `githubProxy` 没被动**。
+`check:version` ✅ `0.1.1`。
+
+### 附带发现：市场自身有一处缺陷（**与 registry 无关，换镜像治不了**）
+
+`dshmarket/lib/hot.js` 的**同一个解析器里两行不一致**：
+
+```js
+// :161  解析 id：\S+ 会把引号一起吃进去
+const id = /^\s+-\s+id:\s*(\S+)\s*$/.exec(line);
+// :168  解析 name：这里正确地剥掉了可选引号
+const name = /^\s+name:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line);
+// :170
+rows.push({ id: pending, name: name[1] });
+// :568  写回热点文件
+.map(row => `- id: 'mkt-${row.id}'\n  name: '${resolveProfileEntry(profileDir, row.name)}'\n`)
+```
+
+读取路径：`hot.js:525` 读**被热挂的那个包自己的** `cordis.patch.yml`（或它声明的 `dsh.bundle.patch`），
+`:534` 交给 `parseSimplePatch`。于是**带引号的 `@` 作用域 id**（`- id: '@oblivion/panel'`，YAML 里 `@` 开头必须加引号）
+被解析成 `'@oblivion/panel'`（含引号），写回时拼出 `- id: 'mkt-'@oblivion/panel''` → **YAML 坏掉** →
+`bad indentation of a mapping entry` → 热挂失败、退化成重启。市场日志 `log.ndjson` 里**同一形态出现 9 次**
+（01:55 / 02:14 / 02:35×2 / 02:36×2 / 03:34 / 03:38 / 03:42）。
+
+同一文件里另一个读 profile 行的解析器（`:659`）用的却是**正确**写法
+`/^\s*-?\s*id:\s*['"]?([A-Za-z0-9._/@-]+)/` —— 两个解析器不一致，这正是缺陷的形状。
+
+- **影响面**：任何 `@` 作用域插件（我们的 `@oblivion/*` 全是）经市场热挂都会踩到。
+- **本包没有去改市场的 `node_modules`**（改安装包 = 升级即丢，且越界）；
+  修法留给所有者裁定，见 `HANDOFF.md` 坑 12：① 上游把 `:161` 改成与 `:168` 一致的剥引号写法；
+  ② 让 core/panel 各自带 `dsh.bundle.patch`、并从 `@oblivion/bundle` 的 patch 里撤掉带引号的 `insert` 行，
+  使市场再也看不到带引号的 id。
 
 ---
 

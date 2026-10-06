@@ -17,16 +17,21 @@
  * 客户端（浏览器半边）拿不到 `package.json`，由 `scripts/build.mjs` 在打包时经
  * esbuild 的 `define` 注入，因此**不需要**第三个同步点。
  *
- * 级别约定（与主仓一致）：
- *   fix / docs / chore → patch；feat → minor；破坏性改动 / 正式发版 → major。
+ * 级别约定（2026-10-05 所有者裁定）：
+ *   - 默认（无参数）= **只加第三位**（patch）：`0.1.0 → 0.1.1`
+ *   - 第二位 / 第一位**必须显式开关**：`--minor` / `--major`
+ *   - 位置参数只接受 `patch`；写 `minor` / `major` 会被拒绝（避免「顺手 minor」把版本线拉走）
+ *
+ * 级别约定（旧规则，已废弃）：`fix → patch`、`feat → minor`、破坏性 → major。
  *
  * ⚠️ 用**正则替换**而不是 `JSON.parse` + `JSON.stringify` —— 后者会把整个
  *    package.json 重排缩进与键序，产生与版本无关的巨大 diff，review 时看不出改了什么。
  *
  * 用法：
- *   node scripts/bump-version.mjs patch
- *   node scripts/bump-version.mjs minor --tag
- *   node scripts/bump-version.mjs --check     # 只校验一致性，不改动
+ *   node scripts/bump-version.mjs            # patch（默认）
+ *   node scripts/bump-version.mjs --minor    # 仅在明确要求时
+ *   node scripts/bump-version.mjs --major --tag
+ *   node scripts/bump-version.mjs --check    # 只校验一致性，不改动
  */
 
 import { execFileSync } from 'node:child_process';
@@ -42,8 +47,23 @@ const LEVELS = ['patch', 'minor', 'major'];
 const argv = process.argv.slice(2);
 const checkOnly = argv.includes('--check');
 const tag = argv.includes('--tag');
-const level = argv.find((arg) => LEVELS.includes(arg)) ?? 'patch';
-const unknown = argv.filter((arg) => !LEVELS.includes(arg) && !['--check', '--tag'].includes(arg));
+// 新规则：默认 patch；第二位/第一位必须用显式开关，位置参数写 minor/major 直接拒绝。
+const positional = argv.filter((arg) => LEVELS.includes(arg));
+const rejected = positional.find((arg) => arg !== 'patch');
+if (rejected !== undefined) {
+  process.stderr.write(
+    `拒绝按位置参数递增 ${rejected}：本项目规则是「每次先加第三位」，`
+      + `第二位/第一位要用显式开关（--minor / --major）并在明确要求时才动。\n`,
+  );
+  process.exit(2);
+}
+const flagged = ['minor', 'major'].filter((level) => argv.includes(`--${level}`));
+if (flagged.length > 1) {
+  process.stderr.write('同时给了 --minor 与 --major：请只选一个。\n');
+  process.exit(2);
+}
+const level = flagged[0] ?? 'patch';
+const unknown = argv.filter((arg) => !LEVELS.includes(arg) && !['--check', '--tag', '--minor', '--major'].includes(arg));
 if (unknown.length > 0) {
   process.stderr.write(`未知参数：${unknown.join(' ')}\n`);
   process.exit(2);

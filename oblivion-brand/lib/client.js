@@ -319,7 +319,7 @@ function createEmbeddedPanel(getProvider, label) {
 }
 
 // src/client/version.ts
-var PLUGIN_VERSION = true ? "0.1.0" : "dev";
+var PLUGIN_VERSION = true ? "0.1.1" : "dev";
 
 // src/client/BrandSettingsPanel.tsx
 var import_jsx_runtime3 = require("react/jsx-runtime");
