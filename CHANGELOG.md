@@ -12,7 +12,44 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/core` v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.13：主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+## [未发布] — `@oblivion/core` v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.13：主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+
+### `@oblivion/core` v0.2.7 —— 双链巡检脚本 `normalize-links.mjs`（把「26 段重复」这类旧账一次扫平）
+
+所有者报的 bug（引）：
+
+> bug：appendRelatedLinks 每批追加一个新段而不是合并，一篇笔记里堆了 26 个重复的 ## 关联知识（自动）（激活排查…md 226 行里大半是这个），双链里还混进 [[OK]]、[[继续]] 这种垃圾。把「合并成一段 + 去重 + 过滤弱标题」一起修掉
+
+**核实**：这段话是**旧进展报告被当成待办读到了** —— 那段文字逐字出自笔记
+`01_问答沉淀/① 存量改名回填 + ② 清理 .28424- .tmp.md` 第 91 行（第 34 行也有一份），
+是我在 0.2.4 之前写下的「发现但没动的问题」。磁盘现状（实测）：
+
+| 文件 | 报告里的样子 | 现在 |
+| --- | --- | --- |
+| `激活排查：schema 方言与 inject 服务名.md` | 226 行 / 26 段 | **142 行 / 1 段 / 19 条链接** |
+| `① 存量改名回填 + ② 清理 .28424- .tmp.md` | 混 `[[OK]]`/`[[继续]]` | 106 行 / 1 段 / 6 条（剩下两处 `[[OK]]` 在第 34/91 行的**正文引用**里） |
+
+代码侧确认：全仓只有 `src/qa-loop/md-writer.ts` 的 `appendRelatedLinks()` 写 `## 关联知识（自动）`
+（`src/digest/index.ts:165` 写的是另一个标题 `## 关联知识`），**单段合并 + 去重 + `isWeakTitle()` 过滤**
+都在里面（v0.2.4 起），`src/graph/backlink.ts` 的候选池也已过滤弱标题；v0.2.6 起还能
+`{ prune: true }` 清掉改名回填后悬空的旧链接。
+
+**新增**：`oblivion-core/scripts/normalize-links.mjs` —— 把这件事做成可随时重跑的巡检入口：
+
+```bash
+node scripts/normalize-links.mjs                 # 干跑：段 N → 1 / 链接 X → Y（丢 Z 条指不到文件的）
+node scripts/normalize-links.mjs --apply         # 执行
+node scripts/normalize-links.mjs --json          # 结构化报告（含整库复核 audit）
+```
+
+扫 `--root`（默认 `C:/Library/那些渐渐被遗忘`）下 `--dirs`（默认 `01_问答沉淀,02_Wiki页面`）里
+带 `oblivion:` 标记且非 `oblivion:digest` 的笔记，`keep = links ∩ 文件名集合`，写盘走
+`appendRelatedLinks(path, keep, { prune: true })`（幂等：没变化不写），末尾复核多段 / 悬空 / 弱标题。
+
+现场结果：**多段笔记 0 篇、悬空链接 0 条、相关链接 388 条**；`--apply` 再跑写盘 0 篇。
+
+闸门：typecheck 0 错、`node --test` **34/34**、selfcheck **32 项失败 0**、`check:version` `0.2.7` 一致、
+`lib/index.js` 132,862 B。
 
 ### `@oblivion/core` v0.2.6 —— 双链只指向**真实存在的笔记文件**（现场 513 条里 478 条点不开）
 

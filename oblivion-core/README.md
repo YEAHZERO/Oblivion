@@ -169,11 +169,11 @@ oblivion-core/
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` 132,862 B + `lib/testkit.js`（v0.2.6） |
+| `pnpm run build` | ✅ `lib/index.js` 132,862 B + `lib/testkit.js`（v0.2.7） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **34/34**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 9 工具注册 + 整理结构 + 改名打标签 + **双链单段化** + **双链按文件名** + **prune 清陈旧双链** + **主题页落盘/回链/重跑**」） |
+| `pnpm run test` | ✅ **34/34**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 9 工具注册 + 整理结构 + 改名打标签 + **双链单段化** + **双链按文件名** + **prune 清陈旧双链** + **主题页落盘/回链/重跑** + **`normalize-links.mjs` 巡检**」） |
 | `pnpm run selfcheck` | ✅ **32/32**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、**会话整理落盘**、**盲区修正（superseded + 00-Index）**、**冲突并列页**、**图谱双链**、**命名与打标签**、**关联知识单段化**、**双链按文件名**、**主题页**） |
-| `pnpm run check:version` | ✅ `0.2.6` 一致 |
+| `pnpm run check:version` | ✅ `0.2.7` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **8/8**（host / `tools`·`systemPrompt` / `session/event`·`turn/end` / `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 | 真实 Host 装载 | ⏳ **仍未验证**：`agent/created` + `agents.list()` 两条作用域订阅已上线（v0.1.7/v0.1.8），但探针仍为空；v0.1.10 的 `mount-diag.json` 需要**重启一次 App** 才能上机 |
@@ -343,6 +343,19 @@ node scripts/rename-notes.mjs --dirs 01_问答沉淀 --apply --clean-tmp --tmp-a
 留下的。维护时用 `appendRelatedLinks(path, titles, { prune: true })` **重建**该段
 （丢掉不在 `titles` 里的旧链接；`titles` 为空则把段整个去掉）；重建后现场剩 381 条、全部可解析、
 复跑写盘 0 篇。
+
+整库巡检与就地修好（幂等，可随时重跑）：
+
+```bash
+node scripts/normalize-links.mjs                                    # 干跑：只打印「段 N → 1 / 链接 X → Y」
+node scripts/normalize-links.mjs --apply                            # 执行（并段 + 丢悬空 + 丢弱标题）
+node scripts/normalize-links.mjs --json                             # 结构化报告（含整库复核 audit）
+node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,02_Wiki页面"
+```
+
+它扫 `--root`（默认 `C:/Library/那些渐渐被遗忘`）下 `--dirs`（默认 `01_问答沉淀,02_Wiki页面`）里
+**带 `oblivion:` 标记**的笔记，只保留「文件真的在盘上」的链接，末尾复核多段数 / 悬空数 / 弱标题数。
+现场（2026-10-06）复核：多段笔记 0 篇、悬空链接 0 条、相关链接 388 条。
 
 ### 9.4 调参（改 config，不写代码）
 
