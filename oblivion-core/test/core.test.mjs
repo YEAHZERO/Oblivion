@@ -60,8 +60,8 @@ describe('产物形状', () => {
     assert.ok(pkg.dsh?.compat?.host, '应声明宿主兼容范围 dsh.compat.host');
     assert.deepEqual(
       pkg.dsh?.compat?.requires?.events,
-      ['session/event', 'turn/end'],
-      '应声明依赖的事件（turn/end 是实测存在的那个，session:complete 不存在）',
+      ['agent/created', 'session/event', 'turn/end'],
+      '应声明依赖的事件（0.1.19 起含 agent/created：它由 scopeTarget 按作用域派发）',
     );
   });
 

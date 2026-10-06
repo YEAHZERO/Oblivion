@@ -56,6 +56,37 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
   const ctx = rawCtx as AppContext;
   const config: Config = { ...DEFAULT_CONFIG, ...(rawConfig ?? {}) };
 
+  /**
+   * **面朝宿主的那一面一律走根上下文**（`0.1.19` 的关键修正）。
+   *
+   * DSH 的事件派发是**按作用域过滤**的（`@deepseek-ai/dsh-scope` 的 `scopeTarget`）：
+   * 监听者所在 ctx 若带作用域标签（`kScope`），只有它的标签在**派发键的祖先链**上才收得到；
+   * 而**未带标签的监听者是全局放行的**（`const tag = scopeOf(ctx); if (tag === undefined) return true`）。
+   *
+   * 实测后果：本插件挂在 profile 补丁的插入行下，位置**不在任何 agent 的链上**，
+   * 于是 `agent/created`、`session/event`、`turn/start` 一个都收不到（`lifecycleSeen: {}`、
+   * `rootSeen: 0`），注册的段落与工具也进不了 agent 的分层视图。
+   *
+   * 根上下文既无作用域标签、又是所有 agent 链的共同祖先 —— 事件收得到，分层视图也继承得到，
+   * 两个问题一次解决。`fallback` 分支保证在没有 `root` 的宿主里行为不变。
+   */
+  const rootCtx = (ctx as { root?: AppContext }).root;
+  /**
+   * **只有在根上下文确实长得像 Context 时才用它**。
+   *
+   * 教训来源：`0.1.12` 那次「裸读未声明服务」把整个 App 打崩（`cannot get property "agents" without inject`）。
+   * `ctx.root` 在 Cordis 里可能指向内部 Root 对象而不是 Context —— 直接拿它取 `systemPrompt` 就是同类风险。
+   * 所以这里逐项验证：`on` / `systemPrompt.section` / `tools.register` 三者齐备才切换，否则保持原 ctx。
+   */
+  const usableHost = (value: unknown): value is AppContext => {
+    if (value === null || typeof value !== 'object') return false;
+    const candidate = value as AppContext;
+    return typeof candidate.on === 'function'
+      && typeof (candidate.systemPrompt as { section?: unknown } | undefined)?.section === 'function'
+      && typeof (candidate.tools as { register?: unknown } | undefined)?.register === 'function';
+  };
+  const host: AppContext = usableHost(rootCtx) ? rootCtx : ctx;
+
   const knowledge = registerKnowledge(ctx, config);
   const profile = registerProfile(ctx, config);
   const graph = registerGraph(ctx, config);
@@ -81,9 +112,9 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
   // 认知规则常驻；陪伴内容只在队列里有时才追加，且下一轮才生效。
   ctx.effect(
     () =>
-      ctx.systemPrompt.section({
+      host.systemPrompt.section({
         name: OBLIVION_SECTION,
-        order: ctx.systemPrompt.getSectionOrder(OBLIVION_SECTION),
+        order: host.systemPrompt.getSectionOrder(OBLIVION_SECTION),
         text: (context: { agent?: unknown }) => {
           // **先记录形状再判断**：上一版把记录写在 `context.agent === undefined` 的守卫之后，
           // 于是"section 到底有没有被调用、context 里有什么"完全看不出来（diag 里 lifecycleSeen 一直是空的）。
@@ -110,7 +141,7 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
    */
   const toolsCtx = Object.create(ctx) as typeof ctx;
   const wrappedRegister = ((definition: { execute?: unknown }) =>
-    ctx.tools.register({
+    host.tools.register({
       ...(definition as object),
       execute: (args: unknown, exec: unknown) => {
         attachAgentFromPayload(exec ?? args);
@@ -178,13 +209,13 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
 
   // ① 已经在跑的 agent（根上 `ctx.agents` 现在可读 —— `agents` 已声明）
   try {
-    const registry = (ctx as unknown as { agents?: { list?: () => unknown[] } }).agents;
+    const registry = (host as unknown as { agents?: { list?: () => unknown[] } }).agents;
     for (const agent of registry?.list?.() ?? []) installForAgent(agent);
   } catch {
     // 服务还没就绪：交给 ② ③
   }
-  // ② 以后创建的 agent
-  ctx.on('agent/created', (...args: never[]) => {
+  // ② 以后创建的 agent —— 必须听**根**上的事件（未带作用域标签才全局放行）
+  host.on('agent/created', (...args: never[]) => {
     installForAgent(args[0]);
     attachAgentFromPayload(args[0]);
   });

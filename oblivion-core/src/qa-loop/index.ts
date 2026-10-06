@@ -78,6 +78,26 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   let warnedNoEvents = false;
 
   /**
+   * **事件一律听根上下文**（`0.1.19`）。
+   *
+   * DSH 的派发按作用域过滤（`@deepseek-ai/dsh-scope` 的 `scopeTarget`）：带作用域标签的 ctx
+   * 只在标签落在派发键的祖先链上时才收得到；**未带标签的监听者全局放行**。本插件不在任何
+   * agent 的链上，所以挂在自身 ctx 上的 `agent/created` / `session/event` / `turn/start`
+   * 一个都没到过（`lifecycleSeen: {}`、`rootSeen: 0`）。根上下文无标签且是所有链的祖先。
+   */
+  const rootCtx = (ctx as { root?: AppContext }).root;
+  /**
+   * 根上下文必须**先验证**再使用：`ctx.root` 在 Cordis 里可能指向内部 Root 对象，
+   * 直接在上面注册监听会抛错、进而把整个插件装载拖垮（`0.1.12` 的崩溃就是这么来的）。
+   * 只有 `on` 齐备才切到根；否则保持原 ctx（行为与旧版一致，至少不会更差）。
+   */
+  const usableEventHost = (value: unknown): value is AppContext => {
+    if (value === null || typeof value !== 'object') return false;
+    return typeof (value as AppContext).on === 'function';
+  };
+  const host: AppContext = usableEventHost(rootCtx) ? rootCtx : ctx;
+
+  /**
    * 装载即建目录（所有者要求）：`mdRoot` 一经配置，`01_问答沉淀\` 等分类目录立即就位。
    * 非阻塞：失败只记日志（知识库可能在不可写的盘/需要权限），不影响插件装载与问答链路。
    */
@@ -413,6 +433,71 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
    * 探针里的 `origin` 字段会把「到底是谁收到了」写下来，便于以后一眼看清。
    */
   /**
+   * **作用域/挂载位置取证**（`0.1.19` 新增，用于一次定位"事件为什么收不到"）。
+   *
+   * 三个事实必须同时看到：
+   * ① `ctx` 自带或继承的**符号键**（DSH 的作用域标签 `kScope` 就是一个符号键）——
+   *    根上下文没有、我们这层有，就证明我们被打了标签、被派发过滤挡在外面；
+   * ② **fiber 祖先链**（谁挂的我们，离 agent 的链有多远）；
+   * ③ 同一进程里的 **loader 条目名**（确认"拥有 agent 的应用"与"我们所在的应用"是不是同一个）。
+   */
+  function describeScopeRouting(self: AppContext, root: AppContext): Record<string, unknown> {
+    const symbolsOf = (value: unknown): string[] => {
+      const out: string[] = [];
+      let cursor: unknown = value;
+      for (let depth = 0; depth < 8 && cursor !== null && typeof cursor === 'object'; depth += 1) {
+        const names = ((): string[] => {
+          try {
+            return Object.getOwnPropertySymbols(cursor).map((s) => String(s));
+          } catch {
+            return ['(throws)'];
+          }
+        })();
+        out.push(`depth${depth}:${names.length > 0 ? names.join('|') : '-'}`);
+        cursor = Object.getPrototypeOf(cursor);
+      }
+      return out;
+    };
+    const nameOfFiber = (fiber: unknown): string => {
+      const anyFiber = fiber as { name?: unknown; runtime?: { name?: unknown }; entry?: { options?: { name?: unknown } } } | undefined;
+      const candidates = [anyFiber?.name, anyFiber?.runtime?.name, anyFiber?.entry?.options?.name];
+      for (const candidate of candidates) if (typeof candidate === 'string' && candidate !== '') return candidate;
+      return typeof fiber;
+    };
+    const chain: string[] = [];
+    let fiber: unknown = (self as { fiber?: unknown }).fiber;
+    for (let depth = 0; depth < 24 && fiber !== null && fiber !== undefined; depth += 1) {
+      const anyFiber = fiber as { parent?: unknown };
+      chain.push(nameOfFiber(fiber));
+      if (anyFiber.parent === fiber) break;
+      fiber = anyFiber.parent;
+    }
+    let loaderEntries: string[] = [];
+    try {
+      const loader = (root as unknown as { loader?: { entries?: () => Iterable<{ options?: { name?: unknown } }> } }).loader;
+      const rows = loader?.entries?.();
+      if (rows !== undefined) {
+        for (const row of rows) {
+          const name = row?.options?.name;
+          if (typeof name === 'string' && name !== '') loaderEntries.push(name);
+        }
+        if (loaderEntries.length > 60) loaderEntries = loaderEntries.slice(0, 60);
+      }
+    } catch {
+      loaderEntries = ['(throws)'];
+    }
+    return {
+      rootIsSelf: self === root,
+      selfSymbols: symbolsOf(self),
+      rootSymbols: symbolsOf(root),
+      fiberChain: chain,
+      loaderEntryCount: loaderEntries.length,
+      loaderHasAgentLoop: loaderEntries.some((n) => /agent-loop|agent\/|session|tool/i.test(n)),
+      loaderEntries,
+    };
+  }
+
+  /**
    * **临时挂载自诊断**（`enableEventProbe` 同时控制）：写 `<dataRoot>/mount-diag.json`。
    *
    * 为什么需要它：`console` 日志在本机读不到，而「事件收不到」这件事有四种可能
@@ -428,6 +513,8 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     hasGet: typeof (ctx as { get?: unknown }).get === 'function',
     /** ctx 形状全量 dump（core 侧） */
     ctxShape,
+    /** 作用域路由取证（0.1.19）：谁是根、我们带没带作用域标签、fiber 链、loader 条目 */
+    routing: safeRead(() => describeScopeRouting(ctx, host)) ?? null,
     /**
      * 直接读 `ctx.agents` 的结果 —— **必须 safeRead**。
      *
@@ -469,7 +556,7 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
 
   // 挂载即落一次诊断（此刻还没有任何事件）
   const initialAgents = safeRead(() => {
-    const direct = (ctx as { agents?: { list?: () => unknown[] } }).agents;
+    const direct = (host as { agents?: { list?: () => unknown[] } }).agents;
     return direct && typeof direct.list === 'function' ? direct.list().length : -1;
   });
   if (typeof initialAgents === 'number' && initialAgents >= 0) diag.agentsDirectCount = initialAgents;
@@ -533,7 +620,7 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   }
 
   // ① 以后新建的 agent：听 `agent/created`（官方 `file-reference-local` 的写法）。
-  ctx.on('agent/created', (...args: never[]) => {
+  host.on('agent/created', (...args: never[]) => {
     noteLifecycle('agent/created', args[0]);
     attachAgent(pickAgent(args[0]));
   });
@@ -542,7 +629,7 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   //     实测动机：agent 在 App 启动之后才创建，装载时 `agents.list()` 是空的（injectAgentCount=0），
   //     而根上下文的 `session/event` 又收不到任何东西 —— 必须有别的入口把订阅补上。
   for (const event of ['session/created', 'turn/start'] as const) {
-    ctx.on(event, (...args: never[]) => {
+    host.on(event, (...args: never[]) => {
       noteLifecycle(event, args[0]);
       reconcileAgents();
     });
@@ -564,8 +651,8 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   }
 
   // ② **已经**在跑的 agent：装载时补挂一次（此刻通常为空，靠上面的生命周期兜底）。
-  if (typeof ctx.inject === 'function') {
-    ctx.inject(['agents'], (scope: unknown) => {
+  if (typeof host.inject === 'function') {
+    host.inject(['agents'], (scope: unknown) => {
       diag.injectFired = true;
       agentsScope = scope;
       reconcileAgents();
@@ -574,7 +661,7 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     });
   }
 
-  ctx.on('session/event', (...args: never[]) => {
+  host.on('session/event', (...args: never[]) => {
     diag.rootSeen += 1;
     diagDirty = true;
     void diagOnce();

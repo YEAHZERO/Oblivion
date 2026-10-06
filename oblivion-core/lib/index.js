@@ -1762,6 +1762,12 @@ function registerQaLoop(ctx, config, deps) {
   const buffers = /* @__PURE__ */ new Map();
   const mdRoot = expandHome(config.mdRoot);
   let warnedNoEvents = false;
+  const rootCtx = ctx.root;
+  const usableEventHost = (value) => {
+    if (value === null || typeof value !== "object") return false;
+    return typeof value.on === "function";
+  };
+  const host = usableEventHost(rootCtx) ? rootCtx : ctx;
   void ensureMdDirs(mdRoot, config.mdClassify).then((dirs) => {
     ctx.logger?.info?.(config.logPrefix + " \u77E5\u8BC6\u5E93\u76EE\u5F55\u5C31\u4F4D\uFF1A%s\uFF08%d \u4E2A\u5206\u7C7B\uFF09", mdRoot, dirs.length);
   }).catch((error) => {
@@ -1984,15 +1990,72 @@ function registerQaLoop(ctx, config, deps) {
       if (buffer.events.length < MAX_EVENTS_PER_TURN) buffer.events.push(event);
     }
   }
+  function describeScopeRouting(self, root) {
+    const symbolsOf = (value) => {
+      const out = [];
+      let cursor = value;
+      for (let depth = 0; depth < 8 && cursor !== null && typeof cursor === "object"; depth += 1) {
+        const names = (() => {
+          try {
+            return Object.getOwnPropertySymbols(cursor).map((s) => String(s));
+          } catch {
+            return ["(throws)"];
+          }
+        })();
+        out.push(`depth${depth}:${names.length > 0 ? names.join("|") : "-"}`);
+        cursor = Object.getPrototypeOf(cursor);
+      }
+      return out;
+    };
+    const nameOfFiber = (fiber2) => {
+      const anyFiber = fiber2;
+      const candidates = [anyFiber?.name, anyFiber?.runtime?.name, anyFiber?.entry?.options?.name];
+      for (const candidate of candidates) if (typeof candidate === "string" && candidate !== "") return candidate;
+      return typeof fiber2;
+    };
+    const chain = [];
+    let fiber = self.fiber;
+    for (let depth = 0; depth < 24 && fiber !== null && fiber !== void 0; depth += 1) {
+      const anyFiber = fiber;
+      chain.push(nameOfFiber(fiber));
+      if (anyFiber.parent === fiber) break;
+      fiber = anyFiber.parent;
+    }
+    let loaderEntries = [];
+    try {
+      const loader = root.loader;
+      const rows = loader?.entries?.();
+      if (rows !== void 0) {
+        for (const row of rows) {
+          const name2 = row?.options?.name;
+          if (typeof name2 === "string" && name2 !== "") loaderEntries.push(name2);
+        }
+        if (loaderEntries.length > 60) loaderEntries = loaderEntries.slice(0, 60);
+      }
+    } catch {
+      loaderEntries = ["(throws)"];
+    }
+    return {
+      rootIsSelf: self === root,
+      selfSymbols: symbolsOf(self),
+      rootSymbols: symbolsOf(root),
+      fiberChain: chain,
+      loaderEntryCount: loaderEntries.length,
+      loaderHasAgentLoop: loaderEntries.some((n) => /agent-loop|agent\/|session|tool/i.test(n)),
+      loaderEntries
+    };
+  }
   const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.18",
+    version: "0.1.19",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
     hasGet: typeof ctx.get === "function",
     /** ctx 形状全量 dump（core 侧） */
     ctxShape,
+    /** 作用域路由取证（0.1.19）：谁是根、我们带没带作用域标签、fiber 链、loader 条目 */
+    routing: safeRead(() => describeScopeRouting(ctx, host)) ?? null,
     /**
      * 直接读 `ctx.agents` 的结果 —— **必须 safeRead**。
      *
@@ -2031,7 +2094,7 @@ function registerQaLoop(ctx, config, deps) {
     await flushDiag();
   }
   const initialAgents = safeRead(() => {
-    const direct = ctx.agents;
+    const direct = host.agents;
     return direct && typeof direct.list === "function" ? direct.list().length : -1;
   });
   if (typeof initialAgents === "number" && initialAgents >= 0) diag.agentsDirectCount = initialAgents;
@@ -2079,12 +2142,12 @@ function registerQaLoop(ctx, config, deps) {
     diagDirty = true;
     void diagOnce();
   }
-  ctx.on("agent/created", (...args) => {
+  host.on("agent/created", (...args) => {
     noteLifecycle("agent/created", args[0]);
     attachAgent(pickAgent(args[0]));
   });
   for (const event of ["session/created", "turn/start"]) {
-    ctx.on(event, (...args) => {
+    host.on(event, (...args) => {
       noteLifecycle(event, args[0]);
       reconcileAgents();
     });
@@ -2098,8 +2161,8 @@ function registerQaLoop(ctx, config, deps) {
     diagDirty = true;
     void diagOnce();
   }
-  if (typeof ctx.inject === "function") {
-    ctx.inject(["agents"], (scope) => {
+  if (typeof host.inject === "function") {
+    host.inject(["agents"], (scope) => {
       diag.injectFired = true;
       agentsScope = scope;
       reconcileAgents();
@@ -2107,7 +2170,7 @@ function registerQaLoop(ctx, config, deps) {
       ctx.logger?.info?.(config.logPrefix + " \u88C5\u8F7D\u65F6\u5DF2\u7ED9 %d \u4E2A\u5728\u8DD1\u7684 agent \u6302\u4E0A\u4F1A\u8BDD\u4E8B\u4EF6\u8BA2\u9605", count);
     });
   }
-  ctx.on("session/event", (...args) => {
+  host.on("session/event", (...args) => {
     diag.rootSeen += 1;
     diagDirty = true;
     void diagOnce();
@@ -2600,11 +2663,18 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt", "agents"];
-var VERSION = "0.1.18";
+var VERSION = "0.1.19";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
   const config = { ...DEFAULT_CONFIG, ...rawConfig ?? {} };
+  const rootCtx = ctx.root;
+  const usableHost = (value) => {
+    if (value === null || typeof value !== "object") return false;
+    const candidate = value;
+    return typeof candidate.on === "function" && typeof candidate.systemPrompt?.section === "function" && typeof candidate.tools?.register === "function";
+  };
+  const host = usableHost(rootCtx) ? rootCtx : ctx;
   const knowledge = registerKnowledge(ctx, config);
   const profile = registerProfile(ctx, config);
   const graph = registerGraph(ctx, config);
@@ -2622,9 +2692,9 @@ function apply(rawCtx, rawConfig) {
     }
   });
   ctx.effect(
-    () => ctx.systemPrompt.section({
+    () => host.systemPrompt.section({
       name: OBLIVION_SECTION,
-      order: ctx.systemPrompt.getSectionOrder(OBLIVION_SECTION),
+      order: host.systemPrompt.getSectionOrder(OBLIVION_SECTION),
       text: (context) => {
         attachAgentFromPayload(context);
         if (context?.agent === void 0) return "";
@@ -2636,7 +2706,7 @@ function apply(rawCtx, rawConfig) {
     "oblivion-core: system prompt section"
   );
   const toolsCtx = Object.create(ctx);
-  const wrappedRegister = ((definition) => ctx.tools.register({
+  const wrappedRegister = ((definition) => host.tools.register({
     ...definition,
     execute: (args, exec) => {
       attachAgentFromPayload(exec ?? args);
@@ -2686,11 +2756,11 @@ function apply(rawCtx, rawConfig) {
     }
   }
   try {
-    const registry = ctx.agents;
+    const registry = host.agents;
     for (const agent of registry?.list?.() ?? []) installForAgent(agent);
   } catch {
   }
-  ctx.on("agent/created", (...args) => {
+  host.on("agent/created", (...args) => {
     installForAgent(args[0]);
     attachAgentFromPayload(args[0]);
   });
