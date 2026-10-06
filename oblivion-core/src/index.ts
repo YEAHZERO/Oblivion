@@ -78,10 +78,11 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
         name: OBLIVION_SECTION,
         order: ctx.systemPrompt.getSectionOrder(OBLIVION_SECTION),
         text: (context: { agent?: unknown }) => {
+          // **先记录形状再判断**：上一版把记录写在 `context.agent === undefined` 的守卫之后，
+          // 于是"section 到底有没有被调用、context 里有什么"完全看不出来（diag 里 lifecycleSeen 一直是空的）。
+          // 诊断的第一原则：先留痕，再分支。
+          attachAgentFromPayload(context);
           if (context?.agent === undefined) return '';
-          // **唯一可靠的 agent 订阅入口**：宿主每次请求都会把当前 agent 交给我们。
-          // 根上下文的事件派发整体不生效（实测 lifecycleSeen 为空），所以补挂只能从这里发生。
-          attachAgentFromPayload(context.agent);
           // 陪伴内容（有队列时才追加）+ 上一轮捕获检索到的相关既有知识（③ 检索注入）
           const extra = perspective?.takePending() ?? '';
           const related = readRelatedHint();

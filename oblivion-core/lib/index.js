@@ -1978,7 +1978,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.15",
+    version: "0.1.16",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -2592,7 +2592,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.15";
+var VERSION = "0.1.16";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
@@ -2618,8 +2618,8 @@ function apply(rawCtx, rawConfig) {
       name: OBLIVION_SECTION,
       order: ctx.systemPrompt.getSectionOrder(OBLIVION_SECTION),
       text: (context) => {
+        attachAgentFromPayload(context);
         if (context?.agent === void 0) return "";
-        attachAgentFromPayload(context.agent);
         const extra = perspective?.takePending() ?? "";
         const related2 = readRelatedHint();
         return [OBLIVION_SYSTEM_PROMPT, extra, related2].filter((part) => part !== "").join("\n\n");
