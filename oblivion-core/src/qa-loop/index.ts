@@ -4,6 +4,7 @@ import type { GraphService } from '../graph/index.js';
 import type { KnowledgeService } from '../knowledge/index.js';
 import type { ProfileService } from '../profile/index.js';
 import { expandHome } from '../util/paths.js';
+import type { DecisionRecord } from '../stats/trace.js';
 import { extractQAPair, type TurnEventLike } from './extract.js';
 import { ensureMdDirs, writeMD, type MdAction } from './md-writer.js';
 
@@ -32,6 +33,8 @@ export interface QaLoopDeps {
   knowledge: KnowledgeService;
   graph: GraphService;
   profile: ProfileService;
+  /** 判定留痕（可选）：每一轮都记一条 —— 包括「本轮没有问答」与「被拦下」。 */
+  stats?: { record(entry: DecisionRecord): Promise<void> };
   /** 捕获成功后通知上层（perspective 用它做维度覆盖记账）。 */
   onCaptured?(info: {
     question: string;
@@ -111,12 +114,71 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     return typeof data?.turn === 'number' ? data.turn : fallback;
   }
 
+  /**
+   * 记一条判定留痕。**每一轮都记**，包括：
+   *   - `no-qa`：本轮没有「真人提问 + 回答」（纯工具轮、纯注入轮、定时唤醒）；
+   *   - 被拦下的：`ignored` / `duplicate` / `conflict` —— 设计书 AC-008 要求「不注入但留痕」。
+   * 失败只静默（留痕不该影响问答链路）。
+   */
+  async function trace(entry: {
+    sessionId: string;
+    turn: number;
+    action: DecisionRecord['action'];
+    pass: boolean;
+    reason: string;
+    score?: number;
+    questionChars?: number;
+    answerChars?: number;
+    sources?: number;
+    startedAt: number;
+  }): Promise<void> {
+    if (!deps.stats) return;
+    await deps.stats.record({
+      at: Date.now(),
+      session: entry.sessionId.slice(0, 12),
+      turn: entry.turn,
+      action: entry.action,
+      pass: entry.pass,
+      reason: entry.reason,
+      score: entry.score,
+      questionChars: entry.questionChars ?? 0,
+      answerChars: entry.answerChars ?? 0,
+      sources: entry.sources ?? 0,
+      ms: Math.max(0, Date.now() - entry.startedAt),
+    });
+  }
+
   async function handle(sessionId: string, turn: number, events: readonly TurnEventLike[]): Promise<void> {
+    const startedAt = Date.now();
     const qa = extractQAPair({ sessionId, turn, events: [...events] });
-    if (!qa) return;
+    if (!qa) {
+      await trace({
+        sessionId,
+        turn,
+        action: 'no-qa',
+        pass: false,
+        reason: '本轮没有「真人提问 + 回答」（工具轮/注入轮/无回答）',
+        startedAt,
+      });
+      return;
+    }
 
     try {
       const result = await deps.knowledge.capture(qa);
+
+      await trace({
+        sessionId,
+        turn,
+        action: result.action,
+        pass: Boolean(result.pass && result.item),
+        reason: result.reason ?? (result.pass ? 'captured' : 'rejected'),
+        score: result.score,
+        questionChars: qa.question.length,
+        answerChars: qa.answer.length,
+        sources: qa.sources.length,
+        startedAt,
+      });
+
       if (!result.pass || !result.item) return;
 
       await writeMD(
@@ -139,6 +201,17 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
       });
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + ' qa-loop failed: %o', error);
+      await trace({
+        sessionId,
+        turn,
+        action: 'ignored',
+        pass: false,
+        reason: 'exception: ' + String(error),
+        questionChars: qa.question.length,
+        answerChars: qa.answer.length,
+        sources: qa.sources.length,
+        startedAt,
+      });
     }
   }
 

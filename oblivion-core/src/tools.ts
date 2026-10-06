@@ -4,6 +4,7 @@ import type { FeedbackService } from './feedback/index.js';
 import type { GraphService } from './graph/index.js';
 import type { KnowledgeService } from './knowledge/index.js';
 import type { ProfileService } from './profile/index.js';
+import type { StatsService } from './stats/index.js';
 import type { Source, UserProfile } from './types.js';
 import { sha1 } from './util/hash.js';
 
@@ -41,6 +42,10 @@ export interface ToolDeps {
   profile: ProfileService;
   feedback: FeedbackService | null;
   graph: GraphService;
+  /** 观测面（判定留痕 + 统计 + 调参建议）。 */
+  stats?: StatsService | null;
+  /** 陪伴模块的运行计数（触发闸门命中情况）。 */
+  perspectiveStats?: () => Record<string, number> | null;
 }
 
 export function registerTools(ctx: AppContext, deps: ToolDeps): void {
@@ -174,6 +179,43 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
         reinforce_count: row.reinforce_count,
         last_reinforced_at: row.last_reinforced_at,
       })));
+    },
+  }));
+
+  /**
+   * 观测面入口：**回答「怎么感知 / 该调哪个参数」**。
+   *
+   * 返回三样东西：① 生效中的完整配置（这就是可调参数清单）；
+   * ② 由真实留痕算出的统计（捕获率、被谁拦下、价值分分布）；
+   * ③ 最近若干条判定（含 `no-qa` 与各条 reason）。
+   */
+  ctx.tools.register(defineTool({
+    name: 'oblivion_status',
+    description:
+      'Inspect the Oblivion cognition layer: effective config, capture stats from real decision traces (capture rate, rejection reasons, value-score distribution), tuning hints (which key to change and why), and the most recent per-turn decisions.',
+    parameters: {
+      recent: {
+        type: 'number',
+        description: 'How many recent decisions to include (default from config, max 100).',
+      },
+      include_config: {
+        type: 'boolean',
+        description: 'Include the full effective config (default true).',
+      },
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.stats) {
+        return asCanonical({ enabled: false, reason: 'enableStats is false —— 判定留痕被关闭' });
+      }
+      const recentLimit =
+        typeof args.recent === 'number' && args.recent > 0 ? Math.min(100, Math.floor(args.recent)) : undefined;
+      const snapshot = await deps.stats.status({
+        recentLimit,
+        perspective: deps.perspectiveStats?.() ?? undefined,
+      });
+      const { config, ...rest } = snapshot;
+      return asCanonical(args.include_config === false ? rest : { ...rest, config });
     },
   }));
 }

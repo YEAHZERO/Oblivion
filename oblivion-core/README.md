@@ -169,11 +169,11 @@ oblivion-core/
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` ~53 KB + `lib/testkit.js`（v0.1.4） |
+| `pnpm run build` | ✅ `lib/index.js` ~67 KB + `lib/testkit.js`（v0.1.5） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **13/13**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒」） |
-| `pnpm run selfcheck` | ✅ **22/22**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、时钟保护、去重、阈值分布） |
-| `pnpm run check:version` | ✅ `0.1.4` 一致 |
+| `pnpm run test` | ✅ **13/13**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 6 工具注册」） |
+| `pnpm run selfcheck` | ✅ **25/25**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、时钟保护、去重、阈值分布） |
+| `pnpm run check:version` | ✅ `0.1.5` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **8/8**（host / `tools`·`systemPrompt` / `session/event`·`turn/end` / `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 | 真实 Host 装载 | ⏳ **仍未验证**（需要 App 重启后才能验证 v0.1.2 起的修复，见第九节） |
@@ -240,10 +240,11 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
         dataRoot: '~/.oblivion/data'
 ```
 
-### 9.3 用五个模型面工具
+### 9.3 用六个模型面工具
 
 | 工具 | 用途 | 例 |
 | --- | --- | --- |
+| `oblivion_status` | **观测与调参入口**：生效配置 + 真实统计 + 「该改哪个键」建议 + 最近判定 | 「这几天的捕获率多少？该调什么？」 |
 | `oblivion_query` | 关键词 + 共现扩展检索，带来源 | 「库里关于 cordis 注入的记录」 |
 | `oblivion_capture` | 手工沉淀一条问答（走同一套四层筛选） | 把一段读书笔记沉淀成条目 |
 | `oblivion_profile` | 读/改思维档案（`user_override` 优先） | 查当前风格画像 |
@@ -266,9 +267,33 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
 | `perspectiveDeepMinCandidates` | `3` | 深度触发至少给几个候选视角 |
 | `perspectiveDeepSessionMax` | `5` | 单会话激荡次数上限 |
 | `feedbackRetentionDays` | `90` | §25.7 反馈保留期（读取时惰性裁剪） |
+| `enableStats` | `true` | 判定留痕开关（关掉就没有统计，也就没法调参） |
+| `statsRetentionDays` / `statsMaxEntries` / `statusRecentLimit` | `90` / `5000` / `20` | 留痕保留期（读取时惰性裁剪）、最多几条、`oblivion_status` 默认返回几条 |
 | `graphInitialWeight` / `graphReinforceDelta` / `graphWeightCap` / `graphDecayBase` / `graphDecayPeriodDays` | `0.3` / `0.05` / `1.0` / `0.95` / `30` | §25.6 共现图权重规则 |
 
-### 9.5 故障排查
+### 9.5 观测与调参（先跑够几天，再动阈值）
+
+**留在磁盘上的三样东西**（都在 `dataRoot`）：
+
+| 文件 | 内容 |
+| --- | --- |
+| `decisions.jsonl` | **判定留痕**：一轮一行 —— `action` / `pass` / `reason` / `score` / 问题与答案字数 / 判定耗时。含被拦下的轮次（AC-008）与「本轮没有问答」的 `no-qa` |
+| `status.json` | **装载快照**：生效配置 + 现有统计 + 调参建议（每次装载刷新） |
+| `profile.json` / `<ts-*>.json` / `feedback.json` / `graph*.json` | 档案 / 知识条目 / 反馈 / 共现图 |
+
+**在会话里问模型即可**（它会调 `oblivion_status`）：
+
+> 「看一下 oblivion 的捕获率，这几天都拦下了什么，我该调哪个参数？」
+
+返回的是三件东西：① **生效配置全清单**（31 个键 —— 这就是「需要修改的参数」）；② 统计（捕获率、被谁拦下、价值分 p50/p90、
+`no-qa` 占比）；③ **建议**（`{key, current, suggested, why}` —— 例如「valueThreshold 0.3 → 0.25，因为捕获率 0.03 且 78% 被价值层拦下」）。
+
+**调参闭环**：`oblivion_status` 看建议 → 改 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 的 `config:` →
+**落盘即生效**（补丁层被监视，改 config 不需要重启 App；只有改 JS 代码才要重启）→ 过几天再看一次。
+
+**建议的两个边界**（避免拿三四轮数据瞎调）：样本 <20 个可评估轮**不开口**；「完全重复」占比高时**明确告诉你不用调**。
+
+### 9.6 故障排查
 
 | 症状 | 先查 | 常见原因 |
 | --- | --- | --- |

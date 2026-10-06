@@ -24,6 +24,7 @@ import { registerPerspective } from './perspective/index.js';
 import { OBLIVION_SYSTEM_PROMPT } from './prompt.js';
 import { registerProfile } from './profile/index.js';
 import { registerQaLoop } from './qa-loop/index.js';
+import { registerStats } from './stats/index.js';
 import { registerTools } from './tools.js';
 
 /** Cordis 插件名。与 dshx.yml 的 id、package.json 的 name 对齐。 */
@@ -49,6 +50,7 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
   const knowledge = registerKnowledge(ctx, config);
   const profile = registerProfile(ctx, config);
   const graph = registerGraph(ctx, config);
+  const stats = config.enableStats ? registerStats(ctx, config, { version: VERSION }) : null;
 
   const feedback = config.enableFeedback ? registerFeedback(ctx, config, profile) : null;
   const perspective = config.enablePerspective
@@ -59,10 +61,12 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
     knowledge,
     graph,
     profile,
+    stats: stats ?? undefined,
     onCaptured: (info) => {
       // 覆盖记账与陪伴生成都在 fire-and-forget 链路里，不阻塞捕获本身。
       void perspective?.onTurn(info);
-    },  });
+    },
+  });
 
   // 认知规则常驻；陪伴内容只在队列里有时才追加，且下一轮才生效。
   ctx.effect(
@@ -79,12 +83,20 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
     'oblivion-core: system prompt section',
   );
 
-  registerTools(ctx, { knowledge, profile, feedback, graph });
+  registerTools(ctx, { knowledge, profile, feedback, graph, stats, perspectiveStats: () => perspective?.stats() ?? null });
 
   // 首次装载索引与目录；失败只记日志，不阻塞装载（此刻缓存与磁盘都可能还不存在）。
   void knowledge.init().catch((error: unknown) => {
     ctx.logger?.warn?.(config.logPrefix + ' init failed: %o', error);
   });
+
+  // 装载时落一份 status.json：生效配置 + 现有统计 + 调参建议（「该改哪个键」一眼可见）。
+  void stats
+    ?.writeBootSnapshot({
+      perspective: perspective?.stats() ?? null,
+      feedback: config.enableFeedback ? 'enabled' : 'disabled',
+    })
+    .catch(() => undefined);
 
   console.log('[oblivion-core] loaded');
 }

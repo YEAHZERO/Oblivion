@@ -13,7 +13,7 @@
 | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | client | 已现役（侧栏与会话 Hero 品牌） |
 | `@oblivion/vimc` | 0.2.9 | client | 已现役（Vimium 式键盘导航 + 页面内查找） |
-| `@oblivion/core` | **0.1.4** | **object（Host 侧）** | 源码与自检完成，**已修掉「捕获恒为空」的根因**；真实 Host 待重启验证；**DEC-028：走热挂（不迁 bundle 层）**；**DEC-029：知识库位置可自定义 + 装载即自动建分类目录** |
+| `@oblivion/core` | **0.1.5** | **object（Host 侧）** | 源码与自检完成，**已修掉「捕获恒为空」的根因**；真实 Host 待重启验证；**DEC-028：走热挂（不迁 bundle 层）**；**DEC-029：知识库位置可自定义 + 装载即自动建分类目录**；**v0.1.5 起有观测面（留痕 + `oblivion_status` 调参建议）** |
 
 ### `@oblivion/core` 完成了什么
 

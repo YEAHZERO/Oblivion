@@ -2289,7 +2289,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | client | **bundle 层**（`dsh.bundle.patch` + `dsh.profile.bundles`） | 契约 10/10 + 目视（AC-032~035 ✅） |
 | `@oblivion/vimc` | 0.2.9 | client | **bundle 层** | 契约 6/6 + 真实按键计数（RUNTIME_VERIFIED） |
-| `@oblivion/core` | 0.1.4 | object（Host） | ✅ **热挂**（用户层 insert 行，落盘即装载，**不重启**；DEC-028） | 契约 8/8 + test 13/13 + selfcheck 22/22；**真实 Host 待重启验证** |
+| `@oblivion/core` | 0.1.5 | object（Host） | ✅ **热挂**（用户层 insert 行，落盘即装载，**不重启**；DEC-028） | 契约 8/8 + test 13/13 + selfcheck 25/25；**真实 Host 待重启验证** |
 
 > `@oblivion/core` 把设计书的 Phase 2–6（knowledge / qa-loop / perspective / feedback / graph）**合并成一个包**，
 > 理由与遗留项见 `HANDOFF.md` §六。它**按 DEC-028 保持热挂**（不声明 `dsh.bundle`，改参数落盘即生效），
@@ -2308,6 +2308,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | REQ-015 / AC-024 | 图谱权重：0.3 / +0.05 / cap 1.0 / 30 天 ×0.95 + 时钟保护（自检逐条断言） |
 | REQ-016 / REQ-019 / AC-023（部分） | 档案：`profile.json` + `user_override` 优先 + `oblivion_profile` 工具可读可改；**无界面** |
 | REQ-012 / AC-012·013（部分） | 自检测了阈值分布与时钟；**未固化**「入库→落盘 <5s」「L1 <10ms」的正式记录 |
+| REQ-011 / AC-008（留痕部分） | **观测面（v0.1.5）**：`decisions.jsonl` 逐轮留痕（含被拦下与 `no-qa`）、`status.json` 装载快照、`oblivion_status` 工具（生效配置 + 统计 + **调参建议**：键 / 现值 / 建议值 / 依据）。设计意图：**阈值与陪伴频率要靠几天真实数据才敢定**，先把「感知」补上 |
 | — | 超出设计书：`@oblivion/vimc`（Vimium 式键盘导航 + 页面内查找）、pnpm workspace、DSH-COMPAT 三件套 |
 
 ### 33.3 未完成清单（按建议优先级）
@@ -2322,7 +2323,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | 6 | **文档导入与解析未实现**（PDF/Word → MD、anydoc WASM） | REQ-002、§12.3、D1 | 依赖选型 + **许可证登记** |
 | 7 | **向量检索未实现** | F5/D2、AC-006 | 依赖选型 + **许可证登记** + 与 core 的 knowledge 模块划界 |
 | 8 | **筛选/分类参数未走 YAML**（现状是 TS 默认值 + cordis config，分类已可配：`mdClassify`） | REQ-013、AC-017、`md_rules.yaml`/`qa_rules.yaml` | 分类规则**已可配**；阈值仍在 `config.ts`（cordis config 可覆盖） |
-| 9 | **健康度告警 4 项未实现** | REQ-011、AC-016 | 需要可观测面（§26） |
+| 9 | **健康度告警 4 项** | REQ-011、AC-016 | ⚠️ **部分落地（v0.1.5）**：判定留痕 `decisions.jsonl` + `status.json` + `oblivion_status` 给出捕获率 / 拦截原因分布 / 价值分 p50·p90 / 调参建议（键·现值·建议值·依据）；**仍无主动告警通道**（不推送、不打扰），4 项告警各自的阈值判定未做 |
 | 10 | **20 条标注样本准确率 >90% 未做** | AC-014 | 需要标注集（人工） |
 | 11 | **评价入口 UI 缺失**（👍/👎/⏺）—— 现只有 `oblivion_feedback` 工具 | §12.6、§25.7、REQ-019 | 需要 client 插件（object 插件无 UI） |
 | 12 | **内容创作未做**（播客脚本/学习指南/FAQ/摘要） | Phase 6、G1、§25.9 | 设计书自注「默认不加载」「需先实测 notex REST API」 |

@@ -53,6 +53,15 @@ export interface Config {
 
   readonly minAnswerLength: number;
   readonly logPrefix: string;
+
+  /** 判定留痕（「为什么没收 / 为什么收了」）总开关。 */
+  readonly enableStats: boolean;
+  /** 留痕保留期（天）；读取时惰性裁剪，与反馈保留期同一招。 */
+  readonly statsRetentionDays: number;
+  /** 留痕最多保留多少条（超出丢最旧的）。 */
+  readonly statsMaxEntries: number;
+  /** `oblivion_status` 默认返回多少条最近判定。 */
+  readonly statusRecentLimit: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -124,6 +133,12 @@ export const DEFAULT_CONFIG: Config = {
    */
   minAnswerLength: 5,
   logPrefix: '[oblivion-core]',
+
+  // 观测面（调参要靠真实数据：先跑够几天，再用 oblivion_status 看建议）
+  enableStats: true,
+  statsRetentionDays: 90,
+  statsMaxEntries: 5000,
+  statusRecentLimit: 20,
 };
 
 /** 部分覆盖：只接受显式给出的键，缺省落回 DEFAULT_CONFIG。 */

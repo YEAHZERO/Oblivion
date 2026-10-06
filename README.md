@@ -50,7 +50,7 @@
 - **自带设置页**（设置 → Oblivion 键盘导航）：键位文本、滚动、输入框、查找、链接提示、导入、排除规则与只读自检
 - **开销可自证**：真实页面里候选扫描 7.5–19ms（优化前 111.8ms）、按键平均 1.8ms/峰值 3ms；无轮询、无常驻注入 DOM
 
-③ [`@oblivion/core`](oblivion-core/README.md) v0.1.4（**认知层内核**，Host 侧 `object` 插件）：
+③ [`@oblivion/core`](oblivion-core/README.md) v0.1.5（**认知层内核**，Host 侧 `object` 插件）：
 
 - 设计书的 **Phase 2–6 合并成一个包**：knowledge / qa-loop / perspective / feedback / graph / profile
 - **问答即生长**：`turn/end` 单触发 → 四层筛选（精确去重 / 语义重合 / L3 四条规则 / 价值打分）→ JSON 条目 + 笔记落盘 + 共现建边 + 档案更新
@@ -59,9 +59,11 @@
   **同名外来笔记绝不覆盖**，改写 `<topic>-oblivion.md`
 - **认知陪伴**：主动（≤3 会话）/ 深度（连续同维度 ≥3 次 → ≥3 候选）/ 陪伴期三通道，走 `systemPrompt` 下一轮注入；档案置信度 <0.3 一律不发
 - **零侵入**：不阻塞主链路、无 cron/Worker/定时器（图衰减与反馈保留期都是**读取时惰性计算**）、防回灌
-- 模型面 5 个工具：`oblivion_query` / `oblivion_capture` / `oblivion_profile` / `oblivion_feedback` / `oblivion_graph_neighbors`
+- **观测与调参（v0.1.5）**：每轮判定留痕 `decisions.jsonl` + 装载快照 `status.json` + `oblivion_status` 工具
+  （生效配置 + 捕获率/拦截原因/分值分布 + 「该改哪个键、建议多少、依据」）—— **先在真实数据里看几天，再决定阈值**
+- 模型面 **6 个工具**：`oblivion_status` / `oblivion_query` / `oblivion_capture` / `oblivion_profile` / `oblivion_feedback` / `oblivion_graph_neighbors`
 - 挂载：**热挂**（profile 补丁插入行，落盘即装载，**无需重启**；决策 DEC-028）
-- 闸门：契约 **8/8**、test **13/13**、selfcheck **22/22**；**真实 Host 装载待重启 App 验证**（Host 侧改码不会靠禁用再启用重新导入）
+- 闸门：契约 **8/8**、test **13/13**、selfcheck **25/25**；**真实 Host 装载待重启 App 验证**（Host 侧改码不会靠禁用再启用重新导入）
 
 > ⚠️ **本仓库目前没有 26 个 `oblivion-*` 能力包。** 那是 **v4.0 及更早**的计划；
 > v4.1 已把它**收敛为 8 个插件**（宿主提供的不再重造）。**不要把旧计划读成现状。**

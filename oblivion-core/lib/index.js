@@ -61,7 +61,12 @@ var DEFAULT_CONFIG = {
    * 5 字以下直接判无意义；「短但可能有用」留给 L4 价值评估（`valueThreshold`）兜底。
    */
   minAnswerLength: 5,
-  logPrefix: "[oblivion-core]"
+  logPrefix: "[oblivion-core]",
+  // 观测面（调参要靠真实数据：先跑够几天，再用 oblivion_status 看建议）
+  enableStats: true,
+  statsRetentionDays: 90,
+  statsMaxEntries: 5e3,
+  statusRecentLimit: 20
 };
 
 // src/feedback/index.ts
@@ -549,8 +554,8 @@ function compareByOverlap(qa, candidates, threshold) {
   const qaTokens = new Set(tokenize(qa.question + "\n" + qa.answer));
   let best;
   for (const item of candidates) {
-    const ratio = jaccard(qaTokens, new Set(tokenize(item.title + "\n" + item.content)));
-    if (!best || ratio > best.ratio) best = { item, ratio };
+    const ratio2 = jaccard(qaTokens, new Set(tokenize(item.title + "\n" + item.content)));
+    if (!best || ratio2 > best.ratio) best = { item, ratio: ratio2 };
   }
   if (!best || best.ratio <= 0) return { action: "new" };
   if (best.ratio >= threshold) {
@@ -1274,11 +1279,50 @@ function registerQaLoop(ctx, config, deps) {
     const data = event.data;
     return typeof data?.turn === "number" ? data.turn : fallback;
   }
+  async function trace(entry) {
+    if (!deps.stats) return;
+    await deps.stats.record({
+      at: Date.now(),
+      session: entry.sessionId.slice(0, 12),
+      turn: entry.turn,
+      action: entry.action,
+      pass: entry.pass,
+      reason: entry.reason,
+      score: entry.score,
+      questionChars: entry.questionChars ?? 0,
+      answerChars: entry.answerChars ?? 0,
+      sources: entry.sources ?? 0,
+      ms: Math.max(0, Date.now() - entry.startedAt)
+    });
+  }
   async function handle(sessionId, turn, events) {
+    const startedAt = Date.now();
     const qa = extractQAPair({ sessionId, turn, events: [...events] });
-    if (!qa) return;
+    if (!qa) {
+      await trace({
+        sessionId,
+        turn,
+        action: "no-qa",
+        pass: false,
+        reason: "\u672C\u8F6E\u6CA1\u6709\u300C\u771F\u4EBA\u63D0\u95EE + \u56DE\u7B54\u300D\uFF08\u5DE5\u5177\u8F6E/\u6CE8\u5165\u8F6E/\u65E0\u56DE\u7B54\uFF09",
+        startedAt
+      });
+      return;
+    }
     try {
       const result = await deps.knowledge.capture(qa);
+      await trace({
+        sessionId,
+        turn,
+        action: result.action,
+        pass: Boolean(result.pass && result.item),
+        reason: result.reason ?? (result.pass ? "captured" : "rejected"),
+        score: result.score,
+        questionChars: qa.question.length,
+        answerChars: qa.answer.length,
+        sources: qa.sources.length,
+        startedAt
+      });
       if (!result.pass || !result.item) return;
       await writeMD(
         mdRoot,
@@ -1299,6 +1343,17 @@ function registerQaLoop(ctx, config, deps) {
       });
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + " qa-loop failed: %o", error);
+      await trace({
+        sessionId,
+        turn,
+        action: "ignored",
+        pass: false,
+        reason: "exception: " + String(error),
+        questionChars: qa.question.length,
+        answerChars: qa.answer.length,
+        sources: qa.sources.length,
+        startedAt
+      });
     }
   }
   ctx.on("session/event", (subject, event) => {
@@ -1339,6 +1394,253 @@ function registerQaLoop(ctx, config, deps) {
     processed.clear();
     buffers.clear();
   }, "oblivion-core: qa-loop teardown");
+}
+
+// src/stats/index.ts
+import { writeFile as writeFile7, mkdir as mkdir7 } from "node:fs/promises";
+import { dirname as dirname4, join as join8 } from "node:path";
+
+// src/stats/summary.ts
+function ratio(part, whole) {
+  return whole <= 0 ? 0 : Math.round(part / whole * 1e3) / 1e3;
+}
+function percentile(sorted, p) {
+  if (sorted.length === 0) return 0;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p / 100 * sorted.length) - 1));
+  return Math.round(sorted[idx] * 1e3) / 1e3;
+}
+function summarize(records, config, windowDays = 0) {
+  const byAction = {};
+  const byReason = {};
+  const scores = [];
+  let captured = 0;
+  let noQa = 0;
+  let belowThreshold = 0;
+  for (const record of records) {
+    byAction[record.action] = (byAction[record.action] ?? 0) + 1;
+    const reason = record.reason || "(none)";
+    byReason[reason] = (byReason[reason] ?? 0) + 1;
+    if (record.action === "no-qa") {
+      noQa += 1;
+      continue;
+    }
+    if (record.pass) captured += 1;
+    if (typeof record.score === "number") {
+      scores.push(record.score);
+      if (!record.pass) belowThreshold += 1;
+    }
+  }
+  const evaluated = records.length - noQa;
+  scores.sort((a, b) => a - b);
+  const ats = records.map((r) => r.at).filter((v) => typeof v === "number");
+  return {
+    windowDays,
+    firstAt: ats.length ? Math.min(...ats) : null,
+    lastAt: ats.length ? Math.max(...ats) : null,
+    turns: records.length,
+    evaluated,
+    noQa,
+    captured,
+    rejected: evaluated - captured,
+    captureRate: ratio(captured, evaluated),
+    byAction,
+    byReason,
+    score: scores.length ? {
+      min: Math.round(scores[0] * 1e3) / 1e3,
+      p50: percentile(scores, 50),
+      p90: percentile(scores, 90),
+      max: Math.round(scores[scores.length - 1] * 1e3) / 1e3,
+      belowThreshold
+    } : null,
+    thresholds: {
+      valueThreshold: config.valueThreshold,
+      semanticThreshold: config.semanticThreshold,
+      minAnswerLength: config.minAnswerLength
+    }
+  };
+}
+function topReason(summary) {
+  const entries = Object.entries(summary.byReason).sort((a, b) => b[1] - a[1]);
+  return entries.length ? entries[0] : null;
+}
+function round(value, digits = 2) {
+  const f = Math.pow(10, digits);
+  return Math.round(value * f) / f;
+}
+function suggest(summary, config, extra = {}) {
+  const minSample = extra.minSample ?? 20;
+  const hints = [];
+  if (summary.evaluated < minSample) return hints;
+  const top = topReason(summary);
+  const share = (reason) => Math.round((summary.byReason[reason] ?? 0) / summary.evaluated * 1e3) / 1e3;
+  if (summary.captureRate < 0.05) {
+    if (top && top[0].includes("below value threshold")) {
+      hints.push({
+        key: "valueThreshold",
+        current: config.valueThreshold,
+        suggested: round(Math.max(0.15, config.valueThreshold - 0.05)),
+        why: "\u6355\u83B7\u7387 " + summary.captureRate + "\uFF0C\u4E14\u5927\u591A\u88AB\u4EF7\u503C\u5C42\u62E6\u4E0B\uFF08" + share(top[0]) + "\uFF09\u3002\u5F53\u524D\u9608\u503C " + config.valueThreshold + " \u504F\u9AD8\uFF0C\u53EF\u5148\u964D 0.05 \u89C2\u5BDF\u51E0\u5929\u3002"
+      });
+    } else if (top && top[0] === "answer-too-short") {
+      hints.push({
+        key: "minAnswerLength",
+        current: config.minAnswerLength,
+        suggested: 1,
+        why: "\u6355\u83B7\u7387 " + summary.captureRate + "\uFF0C\u4E14\u5927\u591A\u56E0\u300C\u7B54\u6848\u592A\u77ED\u300D\u88AB L3 \u62E6\u4E0B\uFF08" + share(top[0]) + "\uFF09\u3002\u82E5\u4F60\u5E38\u95EE\u300C\u662F/\u5426\u300D\u578B\u77ED\u95EE\u9898\uFF0C\u628A minAnswerLength \u8C03\u5230 1\uFF08\u4EA4\u7ED9\u4EF7\u503C\u5C42\u5224\u65AD\uFF09\u3002"
+      });
+    } else if (top && top[0] === "exact hash match") {
+      hints.push({
+        key: "semanticThreshold",
+        current: config.semanticThreshold,
+        why: "\u6355\u83B7\u7387\u4F4E\u4E3B\u8981\u662F**\u5B8C\u5168\u91CD\u590D**\u63D0\u95EE\uFF08" + share(top[0]) + "\uFF09\u2014\u2014 \u8FD9\u662F\u6B63\u5E38\u73B0\u8C61\uFF0C\u4E0D\u5FC5\u8C03\u53C2\u3002"
+      });
+    }
+  }
+  if (summary.score && summary.score.p50 > 0) {
+    const gap = config.valueThreshold - summary.score.p50;
+    if (Math.abs(gap) <= 0.05) {
+      hints.push({
+        key: "valueThreshold",
+        current: config.valueThreshold,
+        suggested: round(round(config.valueThreshold + (gap >= 0 ? -0.05 : 0.05))),
+        why: "\u4EF7\u503C\u5206\u4E2D\u4F4D\u6570 " + summary.score.p50 + " \u7D27\u8D34\u9608\u503C " + config.valueThreshold + "\uFF08p90=" + summary.score.p90 + "\uFF09\u2014\u2014\u9608\u503C\u6B63\u843D\u5728\u5206\u5E03\u4E2D\u592E\uFF0C\xB10.05 \u5C31\u4F1A\u660E\u663E\u6539\u53D8\u6355\u83B7\u91CF\u3002"
+      });
+    }
+  }
+  if (typeof extra.perspectiveQueued === "number" && summary.evaluated >= minSample) {
+    const perTurn = extra.perspectiveQueued / summary.evaluated;
+    if (extra.perspectiveQueued === 0) {
+      hints.push({
+        key: "perspectiveActiveSessionMax / perspectiveMinConfidence",
+        current: {
+          perspectiveActiveSessionMax: config.perspectiveActiveSessionMax,
+          perspectiveMinConfidence: config.perspectiveMinConfidence
+        },
+        why: summary.evaluated + " \u4E2A\u53EF\u8BC4\u4F30\u8F6E\u91CC\u966A\u4F34\u4E00\u6B21\u90FD\u6CA1\u89E6\u53D1\u3002\u82E5\u4F60\u5E0C\u671B\u5B83\u5F00\u53E3\uFF0C\u5148\u770B\u6863\u6848\u7F6E\u4FE1\u5EA6\u662F\u5426 \u2265 " + config.perspectiveMinConfidence + "\uFF08\u65B0\u5E93\u901A\u5E38\u4E0D\u591F\uFF09\uFF0C\u6216\u628A perspectiveActiveSessionMax \u8C03\u5927\uFF08\u4E3B\u52A8\u901A\u9053\u53EA\u5728\u6700\u65E9\u51E0\u6B21\u4F1A\u8BDD\u5F00\u95E8\uFF09\u3002"
+      });
+    } else if (perTurn > 0.3) {
+      hints.push({
+        key: "maxPerspectivePerTurn / perspectiveMinMisses",
+        current: { maxPerspectivePerTurn: config.maxPerspectivePerTurn, perspectiveMinMisses: config.perspectiveMinMisses },
+        why: "\u966A\u4F34\u89E6\u53D1\u7387 " + round(perTurn) + "\uFF08\u6BCF\u6B21\u53EF\u8BC4\u4F30\u8F6E\uFF09\uFF0C\u504F\u9AD8\u3002\u53EF\u628A perspectiveMinMisses \u8C03\u5927\u6216 maxPerspectivePerTurn \u8C03\u5230 1\u3002"
+      });
+    }
+  }
+  return hints;
+}
+
+// src/stats/trace.ts
+import { appendFile, mkdir as mkdir6, readFile as readFile6, writeFile as writeFile6 } from "node:fs/promises";
+import { dirname as dirname3, join as join7 } from "node:path";
+function createTraceStore(dataRoot, options) {
+  const path = join7(dataRoot, "decisions.jsonl");
+  const MS_PER_DAY3 = 864e5;
+  async function readRaw() {
+    try {
+      const raw = await readFile6(path, "utf8");
+      const out = [];
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed === "") continue;
+        try {
+          out.push(JSON.parse(trimmed));
+        } catch {
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+  return {
+    path,
+    async record(entry) {
+      try {
+        await mkdir6(dirname3(path), { recursive: true });
+        await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
+      } catch (error) {
+        options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u5199\u5165\u5931\u8D25\uFF1A%o", error);
+      }
+    },
+    async read(limit) {
+      const all = await readRaw();
+      const cutoff = now() - options.retentionDays * MS_PER_DAY3;
+      const fresh = all.filter((entry) => typeof entry.at === "number" && entry.at >= cutoff);
+      const kept = fresh.length > options.maxEntries ? fresh.slice(fresh.length - options.maxEntries) : fresh;
+      if (kept.length !== all.length) {
+        try {
+          await writeFile6(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
+        } catch (error) {
+          options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u88C1\u526A\u843D\u76D8\u5931\u8D25\uFF1A%o", error);
+        }
+      }
+      return typeof limit === "number" && limit > 0 ? kept.slice(kept.length - limit) : kept;
+    }
+  };
+}
+
+// src/stats/index.ts
+function registerStats(ctx, config, meta) {
+  const dataRoot = expandHome(config.dataRoot);
+  const trace = createTraceStore(dataRoot, {
+    retentionDays: config.statsRetentionDays,
+    maxEntries: config.statsMaxEntries,
+    logger: ctx.logger,
+    logPrefix: config.logPrefix
+  });
+  ctx.effect(() => () => {
+  }, "oblivion-core: stats teardown");
+  async function summary() {
+    const records = await trace.read();
+    return summarize(records, config, config.statsRetentionDays);
+  }
+  return {
+    tracePath: trace.path,
+    record: (entry) => trace.record(entry),
+    read: (limit) => trace.read(limit),
+    summary,
+    async status(options = {}) {
+      const records = await trace.read();
+      const stats = summarize(records, config, config.statsRetentionDays);
+      const perspective = options.perspective ?? {};
+      return {
+        version: meta.version,
+        generatedAt: now(),
+        dataRoot,
+        mdRoot: expandHome(config.mdRoot),
+        config,
+        hints: suggest(stats, config, {
+          perspectiveQueued: typeof perspective.queued === "number" ? perspective.queued : void 0
+        }),
+        stats,
+        recent: records.slice(-(options.recentLimit ?? 20)),
+        perspective,
+        tracePath: trace.path
+      };
+    },
+    async writeBootSnapshot(extra) {
+      try {
+        const path = join8(dataRoot, "status.json");
+        await mkdir7(dirname4(path), { recursive: true });
+        const stats = await summary();
+        const payload = {
+          version: meta.version,
+          generatedAt: now(),
+          dataRoot,
+          mdRoot: expandHome(config.mdRoot),
+          config,
+          stats,
+          hints: suggest(stats, config),
+          tracePath: trace.path,
+          ...extra
+        };
+        await writeFile7(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        return;
+      } catch (error) {
+        ctx.logger?.warn?.(config.logPrefix + " status.json \u5199\u5165\u5931\u8D25\uFF1A%o", error);
+      }
+    }
+  };
 }
 
 // src/tools.ts
@@ -1474,12 +1776,39 @@ function registerTools(ctx, deps) {
       })));
     }
   }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_status",
+    description: "Inspect the Oblivion cognition layer: effective config, capture stats from real decision traces (capture rate, rejection reasons, value-score distribution), tuning hints (which key to change and why), and the most recent per-turn decisions.",
+    parameters: {
+      recent: {
+        type: "number",
+        description: "How many recent decisions to include (default from config, max 100)."
+      },
+      include_config: {
+        type: "boolean",
+        description: "Include the full effective config (default true)."
+      }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.stats) {
+        return asCanonical({ enabled: false, reason: "enableStats is false \u2014\u2014 \u5224\u5B9A\u7559\u75D5\u88AB\u5173\u95ED" });
+      }
+      const recentLimit = typeof args.recent === "number" && args.recent > 0 ? Math.min(100, Math.floor(args.recent)) : void 0;
+      const snapshot = await deps.stats.status({
+        recentLimit,
+        perspective: deps.perspectiveStats?.() ?? void 0
+      });
+      const { config, ...rest } = snapshot;
+      return asCanonical(args.include_config === false ? rest : { ...rest, config });
+    }
+  }));
 }
 
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.4";
+var VERSION = "0.1.5";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
@@ -1487,12 +1816,14 @@ function apply(rawCtx, rawConfig) {
   const knowledge = registerKnowledge(ctx, config);
   const profile = registerProfile(ctx, config);
   const graph = registerGraph(ctx, config);
+  const stats = config.enableStats ? registerStats(ctx, config, { version: VERSION }) : null;
   const feedback = config.enableFeedback ? registerFeedback(ctx, config, profile) : null;
   const perspective = config.enablePerspective ? registerPerspective(ctx, config, { profile }) : null;
   registerQaLoop(ctx, config, {
     knowledge,
     graph,
     profile,
+    stats: stats ?? void 0,
     onCaptured: (info) => {
       void perspective?.onTurn(info);
     }
@@ -1509,10 +1840,14 @@ function apply(rawCtx, rawConfig) {
     }),
     "oblivion-core: system prompt section"
   );
-  registerTools(ctx, { knowledge, profile, feedback, graph });
+  registerTools(ctx, { knowledge, profile, feedback, graph, stats, perspectiveStats: () => perspective?.stats() ?? null });
   void knowledge.init().catch((error) => {
     ctx.logger?.warn?.(config.logPrefix + " init failed: %o", error);
   });
+  void stats?.writeBootSnapshot({
+    perspective: perspective?.stats() ?? null,
+    feedback: config.enableFeedback ? "enabled" : "disabled"
+  }).catch(() => void 0);
   console.log("[oblivion-core] loaded");
 }
 var index_default = { name, inject, apply };

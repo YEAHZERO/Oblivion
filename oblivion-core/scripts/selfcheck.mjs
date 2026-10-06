@@ -81,10 +81,10 @@ function makeCtx() {
   };
 }
 
-await check('apply 注册面完整（5 工具 / 1 段落 / 1 事件 / 各自 effect）', () => {
+await check('apply 注册面完整（6 工具 / 1 段落 / 1 事件 / 各自 effect）', () => {
   const { ctx, reg } = makeCtx();
   mod.apply(ctx, { dataRoot, mdRoot });
-  assert.equal(reg.tools.length, 5, '工具数应为 5');
+  assert.equal(reg.tools.length, 6, '工具数应为 6（含观测面 oblivion_status）');
   assert.deepEqual(reg.sections, ['OBLIVION_COGNITION']);
   assert.ok(reg.events.some((e) => e.event === 'session/event'), '必须监听 session/event');
   assert.ok(reg.effects.length >= 6, '每个模块都要有 effect 清理位');
@@ -475,6 +475,68 @@ await check('分类目录消毒：配置里的目录名不能逃出 mdRoot', () 
   assert.ok(names.includes('01_问答沉淀'), '必须含实际分类目录');
   assert.ok(!names.some((n) => n.includes('..')), '不得含 .. 片段');
   return '消毒后 = ' + names.join(' , ');
+});
+
+await check('判定留痕：每一轮都记（含 no-qa 与被拦下），且能算出捕获率与被拦原因', async () => {
+  const tracePath = join(dataRoot, 'decisions.jsonl');
+  assert.ok(existsSync(tracePath), '应生成 decisions.jsonl（判定留痕）');
+  const records = readFileSync(tracePath, 'utf8').split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l));
+  assert.ok(records.length >= 3, '前面的用例跑过多轮，留痕应至少 3 条，实际 ' + records.length);
+  const actions = [...new Set(records.map((r) => r.action))];
+  assert.ok(actions.includes('created'), '应记到成功捕获，实际动作：' + actions.join(','));
+  assert.ok(records.some((r) => r.pass === false), '被拦下的轮次也必须留痕（AC-008）');
+  assert.ok(records.every((r) => typeof r.reason === 'string' && r.reason !== ''), '每条都要有 reason');
+  assert.ok(records.every((r) => typeof r.ms === 'number'), '每条都要记判定耗时');
+
+  const stats = kit.registerStats(
+    { effect: () => () => {}, logger: { warn() {}, info() {} } },
+    { ...kit.DEFAULT_CONFIG, dataRoot, mdRoot },
+    { version: 'selfcheck' },
+  );
+  const summary = await stats.summary();
+  assert.ok(summary.turns >= records.length - 1, '统计条数应覆盖留痕');
+  assert.ok(summary.evaluated > 0, '应有可评估轮次');
+  assert.equal(summary.thresholds.valueThreshold, kit.DEFAULT_CONFIG.valueThreshold);
+  const top = Object.entries(summary.byReason).sort((a, b) => b[1] - a[1])[0];
+  return '留痕 ' + records.length + ' 条 / 动作 ' + actions.join(',') + ' / 主要拦截原因 ' + (top ? top[0] + '×' + top[1] : '无');
+});
+
+await check('观测面：oblivion_status 给出生效配置 + 统计 + 调参建议', async () => {
+  const stats = kit.registerStats(
+    { effect: () => () => {}, logger: { warn() {}, info() {} } },
+    { ...kit.DEFAULT_CONFIG, dataRoot, mdRoot },
+    { version: 'selfcheck' },
+  );
+  const snapshot = await stats.status({ recentLimit: 5, perspective: { turns: 3, queued: 1 } });
+  assert.equal(snapshot.version, 'selfcheck');
+  assert.ok(snapshot.config && snapshot.config.valueThreshold !== undefined, '必须给出生效配置（可调参数清单）');
+  assert.ok(Array.isArray(snapshot.hints), '必须给出调参建议数组');
+  assert.ok(snapshot.recent.length <= 5, 'recent 应遵守 limit');
+  assert.ok(snapshot.tracePath.endsWith('decisions.jsonl'));
+  const keys = ['valueThreshold', 'semanticThreshold', 'minAnswerLength', 'mdRoot', 'statsRetentionDays'];
+  for (const k of keys) assert.ok(k in snapshot.config, '生效配置应含 ' + k);
+  return '配置项 ' + Object.keys(snapshot.config).length + ' 个 / 建议 ' + snapshot.hints.length + ' 条 / 最近 ' + snapshot.recent.length + ' 条';
+});
+
+await check('调参建议的边界：样本不足不开口；阈值贴着分布中位数才建议动', () => {
+  const cfg = kit.DEFAULT_CONFIG;
+  const rec = (n, reason, score) => Array.from({ length: n }, () => ({
+    at: Date.now(), session: 's', turn: 1, action: 'ignored', pass: false,
+    reason, score, questionChars: 20, answerChars: 40, sources: 1, ms: 1,
+  }));
+  const few = kit.summarize(rec(5, 'below value threshold', 0.2), cfg);
+  assert.deepEqual(kit.suggest(few, cfg), [], '样本 <20 不该给建议');
+
+  const many = kit.summarize(rec(100, 'below value threshold', 0.28), cfg);
+  assert.ok(many.captureRate === 0);
+  const hints = kit.suggest(many, cfg);
+  assert.ok(hints.some((h) => h.key === 'valueThreshold'), '应建议调 valueThreshold，实际 ' + JSON.stringify(hints));
+  assert.ok(hints.every((h) => h.why && h.why.length > 10), '每条建议都要说清依据');
+
+  const dup = kit.summarize(rec(50, 'exact hash match', 0.4), cfg);
+  const dupHints = kit.suggest(dup, cfg);
+  assert.ok(dupHints.every((h) => h.suggested === undefined), '完全重复不该建议改任何值');
+  return '样本不足=0 条 / 低捕获= ' + hints.length + ' 条 / 重复= ' + dupHints.length + ' 条（无 suggested）';
 });
 
 rmSync(tmp, { recursive: true, force: true });

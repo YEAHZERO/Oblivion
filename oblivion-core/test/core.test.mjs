@@ -97,7 +97,7 @@ function fakeCtx() {
 }
 
 describe('装配（apply）', () => {
-  it('注册 5 个模型面工具', () => {
+  it('注册 6 个模型面工具（含观测面 oblivion_status）', () => {
     const { ctx, seen } = fakeCtx();
     mod.apply(ctx, { dataRoot: join(ROOT, '.tmp-test-data'), mdRoot: join(ROOT, '.tmp-test-kb') });
     assert.deepEqual(seen.tools.sort(), [
@@ -106,6 +106,7 @@ describe('装配（apply）', () => {
       'oblivion_graph_neighbors',
       'oblivion_profile',
       'oblivion_query',
+      'oblivion_status',
     ]);
   });
 
