@@ -45,6 +45,24 @@ export { createTraceStore } from './stats/trace.js';
 export { registerStats } from './stats/index.js';
 export { registerTools } from './tools.js';
 export type { ToolDeps } from './tools.js';
+export {
+  MCP_API_VERSION,
+  MCP_CHANNEL,
+  MCP_OWNER,
+  PROTOCOL_VERSION,
+  channelKey,
+  clearMcpChannel,
+  createMcpEndpoint,
+  describeMcpChannel,
+  handleMcpMessage,
+  publishMcp,
+  registerMcp,
+  resolveMcp,
+  TOOLS as MCP_TOOLS,
+  toolNames as mcpToolNames,
+  toolSchemas as mcpToolSchemas,
+} from './mcp/index.js';
+export type { McpEndpoint, McpEndpointInfo, McpFacade, McpTool } from './mcp/index.js';
 export { DEFAULT_CONFIG, resolveConfig } from './config.js';
 export { expandHome } from './util/paths.js';
 export { normalizeForHash, sha1, shortHash } from './util/hash.js';

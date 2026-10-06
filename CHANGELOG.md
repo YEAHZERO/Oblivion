@@ -12,9 +12,100 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/core` v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.13：主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+## [未发布] — `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.13：MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+
+### `@oblivion/core` v0.2.8 —— MCP 成为 core 的内部模块 + 进程内通道（修掉桥接插件从未激活的根因）
+
+所有者指令（引，m04080）：『针对 `C:\Projects\Oblivion\oblivion-core` 这个插件……按照这个构建 mcp 插件，看看哪个方案好』
+『mcp 变成 oblivion 的内部模块，bridge 还是外部插件。固定 42081』。
+
+**为什么必须改**：`@oblivion/http-bridge` 从装上那天起就**从未激活过**（`apply()` 一次没跑）。两条独立证据：
+`C:\Users\liveu\.oblivion\bridge-heartbeat.json` 不存在、`Get-NetTCPConnection -LocalPort 42081` 无监听；
+Cordis 4.0.4 的 `@deepseek-ai/cordis/src/fiber.ts:597-623` 里 `_refresh()` 遍历 `Object.keys(fiber.inject)`，
+任一服务在自己作用域解析不到就把 epoch 置 INACTIVE ⇒ 插件停在 pending。而 `src/reflect.ts:277-289`
+的 `provide()` 把 key 写在 `ctx.root[symbols.isolate]`、`:233-243` 的 `_getImpl()` 按 `this.ctx[symbols.isolate][name]`
+取 ⇒ **服务可见性随作用域而变**：core 把门面 provide 到自己所在上下文（并且历史上就是为了"别人也能取到"
+才往根上挂），桥在自己的 fiber 里读同一个名字却拿到 undefined。两条修法方向相反，合起来是死锁。
+
+**决策（回答所有者让我定的 A/B/C）**：选 **A 改良版** —— 桥 `inject: []`，端点经
+`globalThis[Symbol.for('@oblivion/core/mcp')]` 的**进程内通道**传递。B（端点写文件、桥读文件）因每请求 IO
+与陈旧风险被否；C（把 core 的 provide 挪到 bundle group 共享 scope）因**未验证、历史上正是它失败**、
+并且把「桥能不能激活」重新耦合回加载顺序而被否。风格上**沿用仓库既有 TS + esbuild**，但采纳所有者贴的
+参考里真正有价值的那条：桥**不依赖任何 DSH 服务**（自带 `node:http` + 固定端口），于是它永远能激活。
+
+**新增**（core 内部模块，`oblivion-core/src/mcp/`）：
+
+| 文件 | 职责 |
+| --- | --- |
+| `types.ts` | `McpFacade` / `McpKnowledge` / `McpTool` / `McpEndpoint` / `McpEndpointInfo`（刻意不 import cordis 与 dsh 类型） |
+| `channel.ts` | `MCP_CHANNEL = '@oblivion/core/mcp'`、`MCP_API_VERSION = 1`、`channelKey()`、`publishMcp()`、`resolveMcp()`、`describeMcpChannel()`、`clearMcpChannel()` |
+| `tools.ts` | 两个浏览器场景工具：`oblivion_capture_page`、`oblivion_search`（从桥搬来，走同一个 `knowledge` 门面 ⇒ 去重/建图/画像照常） |
+| `protocol.ts` | `handleMcpMessage({ facade, rawBody, log })`：与传输无关的 JSON-RPC 分发 |
+| `index.ts` | `createMcpEndpoint()` / `registerMcp()` + re-export |
+
+**通道的四条不变量**：① `Symbol.for` 是跨 realm 的全局注册表键 ⇒ 谁调都拿到同一个键；
+② 槽里放的是**端点对象**（不是快照数据）⇒ core 重载后桥下一次请求就拿新端点，不会拿旧门面写盘；
+③ `publishMcp()` 返回 disposer 并被 core 挂进 `ctx.effect` ⇒ 重挂/卸载不留僵尸端点；
+④ 契约有版本（`apiVersion` 1），传输层只认版本匹配的槽、**不猜着调**，两侧各自的测试都断言这两个字面量。
+
+**协议口径**：`initialize` 回 `protocolVersion '2025-06-18'` + `serverInfo.version` = core 版本；
+通知（无 `id`）不回；未知工具 **-32602**（invalid params）、未知方法 -32601、坏 JSON -32700、
+门面未就绪 **-32603**；**工具异常回 `isError: true` 的正常响应**（MCP 规范：业务失败不是协议错误）。
+
+**顺带修的一处**：`QAPair` 新增 `tagsHint?: string[]`，`oblivion_capture_page` 的 `tags` 走它合流进
+`tagsFromQA()`（仍过形状闸门：ASCII、单项 ≤40 字）——历史上出现过"整句问句被当标签打上"的坏数据。
+
+**接线**：`oblivion-core/src/index.ts` 在 `provide('oblivion', facade)` 之后
+`const mcpDispose = publishMcp(createMcpEndpoint({ facade, log: … })); ctx.effect(() => mcpDispose, 'oblivion-core: mcp channel');`。
+端到端探针（假 ctx 跑 `apply()`，再从**全局通道**视角驱动协议，`mdRoot`/`dataRoot` 都指临时目录）实测：
+槽 `{ apiVersion: 1, owner: '@oblivion/core', at: number }`、`describe()` 报
+`{"version":"0.2.8","tools":["oblivion_capture_page","oblivion_search"],"ready":true}`、`initialize` 回
+`{ name: 'oblivion', version: '0.2.8' }` + `2025-06-18`、`tools/list` 两个工具、通知 `null`、
+未知工具 `-32602`、`effect` 注册 10 个、跑完 disposer 后通道为空。
+
+**闸门**：`tsc -p tsconfig.json` 0 错误（曾报 `src/mcp/tools.ts(63,9) TS2353 … 'tagsHint' does not exist`，
+把门面的 `tags` 改名 `tagsHint` 后消失）；`node --test` = **51/51**（新增 `test/mcp.test.mjs` 17 项：
+协议分发 / 工具面 / 进程内通道）；`node scripts/selfcheck.mjs` = **33 项失败 0**（新增「MCP 端点：发布到
+进程内通道 → 协议应答 → 契约版本把关」）；`build` ⇒ `lib/index.js` 141,305 B；`check:version` = 0.2.8。
+
+### `@oblivion/http-bridge` v0.1.1 —— 只做传输：`inject: []`，端点从进程内通道取
+
+**根因**：本包自装上起**从未激活**（`apply()` 一次没跑）。旧版声明 `inject: ['oblivion']`，
+而 Cordis 的 `fiber._refresh()` 遍历 `Object.keys(this.inject)`，任一服务在自己作用域解析不到就把
+epoch 置 INACTIVE ⇒ 插件停在 pending。`~/.dsh/logs` 里的实证是同一个机制的另一种声明形态：
+`outcome: { kind: 'pending', missing: ['webServer'] }`、`fiberState: 0`，条目挂在
+`Plugins waiting for services (10)` 下。**声明了取不到的服务 = 一次静默的 pending**，端口不开、
+无 error 日志、连「起来又失败」都没有。
+
+**改法**：`inject = []`（永远能激活）＋ 每请求惰性 `resolveOblivionEndpoint()` 从
+`globalThis[Symbol.for('@oblivion/core/mcp')]` 取端点。
+
+| 变化 | 说明 |
+| --- | --- |
+| `src/index.ts` | 重写：`inject = []`；删 `ctx.inject(['oblivion'])` / `ctx.get('oblivion')` / `readFacade()` 及其死代码 `const getter = ctx.get ?? ctx.root?.get; getter.call(ctx.get ? ctx : ctx.root, 'oblivion')`（`ctx.get` 恒存在 ⇒ 退路永不生效）；每请求惰性解析；端点缺席回 **503 + `-32603`**（中文原因）；新增只读健康路由 `GET /oblivion/mcp/health`（免 token，回 `ok/version/port/path/uptimeMs/endpoint`）；心跳文件加 `inject: []` 与 `mcpEndpoint`，端点**首次**解析成功时再刷一次 |
+| `src/channel.ts` | **新增**：读侧契约（`MCP_CHANNEL = '@oblivion/core/mcp'`、`MCP_API_VERSION = 1`、`McpEndpointLike`、`resolveOblivionEndpoint()` 永不抛、`describeOblivionChannel()` 带中文 reason） |
+| `src/types.ts` | 重写：删 `OblivionFacade` / `KnowledgeLike` / `McpTool` 与 `AppContext.get/provide/inject/root` |
+| 删除 | `src/mcp.ts`、`src/tools.ts`（协议与工具面已在 `oblivion-core/src/mcp/`） |
+| `test/bridge.test.mjs` | 重写为纯传输面：**24 用例 / 6 套件**（401 三态、404/405/OPTIONS 204+CORS、413、503+`-32603`、假端点 200、健康路由 present 跟随通道、契约版本不匹配 → null） |
+| `scripts/selfcheck.mjs` | 16 项断言，其中一条**逐字比对**本包与 `oblivion-core/src/mcp/channel.ts` 的契约字面量（改一处忘另一处会当场红），并断言 `inject` 为空、产物里没有 `ctx.get("oblivion")` 残留 |
+| `dsh.compat.requires.workspaceServices: ["oblivion"]` | **删除** —— `inject: []` 后它不再消费 core 的 Cordis 服务（耦合改由契约字面量 + selfcheck 断言承担），留着就是一句与事实不符的声明 |
+
+**实测**（默认配置现场）：`GET /oblivion/mcp/health` → 200 `{"ok":true,"version":"0.1.1","port":42081,…,"endpoint":{"present":false,…,"reason":"未找到通道"}}`；
+`POST /oblivion/mcp/health` → 405 `Allow: GET`；`POST /oblivion/mcp`（Bearer）→ 503 `-32603`；
+无 token → 401；启动日志 `[oblivion-http-bridge] loaded` + `listening · http://127.0.0.1:42081/oblivion/mcp`
++ `MCP 端点尚未就绪：未找到通道（请求会如实回 503）`。
+闸门：`tsc` **exit 0**、`node --test` **24/24**、`build` ⇒ `lib/index.js` **15,087 B**、
+`selfcheck` **16 项失败 0**、`check:version` **0.1.1**、`verify-dsh-compat.ps1 -Plugin oblivion-http-bridge` **2/2**。
+
+> 现场核实的一条**否定结论**：port 42081 不是 DSH 的默认端口（web profile 的 `webserver` 配置是
+> `ctx.webStartup.port ?? 3080`），旧日志里的 `EADDRINUSE 42081` 来自一个残留进程，不是端口方案撞车。
+> 同理那条 `JsonSchemaError: schema.additionalProperties must be explicitly true or false` 出自
+> `profiles/web/node_modules/@oblivion/core` 的**旧安装副本**（该 profile 现已没有 `@oblivion/*`）；
+> 当前 core 的 4 个 DSH 工具 schema 与 2 个 MCP schema 都显式声明了 `additionalProperties`。
 
 ### `@oblivion/core` v0.2.7 —— 双链巡检脚本 `normalize-links.mjs`（把「26 段重复」这类旧账一次扫平）
+
+
 
 所有者报的 bug（引）：
 

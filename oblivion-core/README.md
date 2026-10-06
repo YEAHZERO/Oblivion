@@ -154,26 +154,27 @@ oblivion-core/
 │   ├── config.ts         Config + DEFAULT_CONFIG（含实测标定注释）
 │   ├── prompt.ts         OBLIVION_SYSTEM_PROMPT
 │   ├── core-types.ts     Cordis 的最小结构化类型（不 import 框架包）
-│   ├── knowledge/        store / search / evaluate / filter / index
+│   ├── knowledge/        store / search / evaluate / filter / index / naming / retitle / wiki
+│   ├── mcp/              channel（进程内通道）/ protocol（JSON-RPC 分发）/ tools（浏览器场景两个工具）
 │   ├── qa-loop/          index / extract / md-writer
 │   ├── perspective/      index / sensor / tracker / maker / adapter
 │   ├── feedback/         index / tuner
 │   ├── graph/            index / decay
 │   ├── profile/          index / schema
 │   └── util/             fs（无）/ hash / paths / time
-├── test/core.test.mjs    12 项，测 lib/ 产物
-└── lib/                  构建产物（index.js / testkit.js / VERSION）
+├── test/                 core.test.mjs（34 项）+ mcp.test.mjs（17 项），测 lib/ 产物
+└── lib/                  构建产物（index.js / testkit.js）
 ```
 
 ## 八、验收状态
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` 132,862 B + `lib/testkit.js`（v0.2.7） |
+| `pnpm run build` | ✅ `lib/index.js` 141,305 B + `lib/testkit.js`（v0.2.8） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **34/34**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 9 工具注册 + 整理结构 + 改名打标签 + **双链单段化** + **双链按文件名** + **prune 清陈旧双链** + **主题页落盘/回链/重跑** + **`normalize-links.mjs` 巡检**」） |
-| `pnpm run selfcheck` | ✅ **32/32**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、**会话整理落盘**、**盲区修正（superseded + 00-Index）**、**冲突并列页**、**图谱双链**、**命名与打标签**、**关联知识单段化**、**双链按文件名**、**主题页**） |
-| `pnpm run check:version` | ✅ `0.2.7` 一致 |
+| `pnpm run test` | ✅ **51/51**（core.test.mjs 34 = 装载/落盘/筛选/命名/双链/主题页/巡检；**mcp.test.mjs 17 = 协议分发 + 工具面 + 进程内通道**） |
+| `pnpm run selfcheck` | ✅ **33/33**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、**会话整理落盘**、**盲区修正（superseded + 00-Index）**、**冲突并列页**、**图谱双链**、**命名与打标签**、**关联知识单段化**、**双链按文件名**、**主题页**、**MCP 端点与通道**） |
+| `pnpm run check:version` | ✅ `0.2.8` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **8/8**（host / `tools`·`systemPrompt` / `session/event`·`turn/end` / `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 | 真实 Host 装载 | ⏳ **仍未验证**：`agent/created` + `agents.list()` 两条作用域订阅已上线（v0.1.7/v0.1.8），但探针仍为空；v0.1.10 的 `mount-diag.json` 需要**重启一次 App** 才能上机 |
@@ -408,3 +409,62 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 | 条目很少 | `dataRoot` 里被忽略的条目 | L3/L4 闸门拦下：`valueThreshold` 0.3、答案 <5 字、纯寒暄/不知道/无意义词 |
 | 想让某维度别再提示 | `feedback` 记两次 👎 | 被拒绝 ≥2 次的维度不再提示（写进 `resistant_dimensions`） |
 | 想重置画像 | 删 `~/.oblivion/data/profile.json` | 档案在 `dataRoot`（**不在** KB 目录，避免随笔记外泄） |
+
+## 十、MCP 端点（浏览器扩展接进来的那条路）
+
+**MCP 是本插件的内部模块**（`src/mcp/`），传输由外部插件 `@oblivion/http-bridge` 负责。
+分工来自 C 方案：协议与工具面是「认知能力」（core 的），HTTP / 鉴权 / CORS / 端口是「管道」（桥的）。
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/mcp/tools.ts` | 两个浏览器场景工具：`oblivion_capture_page`、`oblivion_search`（直接调门面上的 `knowledge`，与 qa-loop 同一个对象 ⇒ 照常去重/建图/画像） |
+| `src/mcp/protocol.ts` | `handleMcpMessage({ facade, rawBody, log })`：与传输无关的 JSON-RPC 分发 |
+| `src/mcp/channel.ts` | 进程内通道：发布/解析端点 |
+| `src/mcp/index.ts` | `createMcpEndpoint()` / `registerMcp()` |
+
+### 10.1 为什么走进程内通道，而不是 Cordis 服务
+
+原先的设计是桥接插件 `inject: ['oblivion']` 直接取服务。**实测它从来没激活过**：
+Cordis 的 `fiber._refresh()` 遍历 `Object.keys(fiber.inject)`，任一服务在自己作用域里解析不到就把
+epoch 置 INACTIVE ⇒ 插件停在 pending，**`apply()` 一次都不跑**。证据（2026-10-06）：
+`~/.oblivion/bridge-heartbeat.json` 从不存在、42081 从未监听、日志里没有任何 bridge 记录 ——
+连"起来又失败"都没有，是完全静默的。
+
+根因是**服务可见性随作用域而变**（core 把门面 provide 到自己所在的上下文，桥在自己的 fiber 里读不到），
+而 core 又必须 provide 到根上下文才不会"别人都取不到"。两条修法方向相反。
+
+于是改成**通道**：端点发布在 `globalThis[Symbol.for('@oblivion/core/mcp')]` 上，桥侧 `inject: []`。
+
+- `Symbol.for` 是跨 realm / 跨模块副本的全局注册表键 ⇒ 谁调都拿到同一个键；
+- 槽里放**端点对象**（不是快照数据）⇒ core 重载后桥下一次请求就拿到新端点，不会拿旧门面写盘；
+- 可注销：`publishMcp()` 返回 disposer，core 挂进 `ctx.effect` ⇒ 重挂/卸载不留僵尸端点；
+- 契约有版本：`MCP_API_VERSION`（当前 `1`）。传输层只认版本匹配的槽，**不猜着调**；
+- 桥**永远能激活**：端点缺席时它如实回 503（`-32603`）并写明原因，而不是静默不启动。
+
+契约字面量（两边各自断言，改一处必须改两处）：
+`(@oblivion/core/mcp, apiVersion 1)` ↔ `oblivion-http-bridge/src/channel.ts`。
+
+### 10.2 端点的行为
+
+| 方法 | 行为 |
+| --- | --- |
+| `initialize` | 回 `protocolVersion '2025-06-18'`、`serverInfo.version` = core 版本、`capabilities.tools`、一段 `instructions` |
+| `tools/list` | 两个工具 + `inputSchema` |
+| `tools/call` | 成功 → `{ content: [{ type:'text', text }], isError:false }`；**工具异常 → `isError:true` 的正常响应**（MCP 规范：业务失败不是协议错误） |
+| 无 `id` | 视为通知，**不回复**（返回 `null`，HTTP 层回 204） |
+| 未知工具 | **-32602**（invalid params，与现役 deepseek-pp host 同口径；**不是** -32601） |
+| 未知方法 | -32601 |
+| 坏 JSON / 非对象 | -32700 / -32600 |
+| 门面还没建好 | **-32603**（装载顺序正常现象：端点先于门面存在） |
+
+`oblivion_capture_page` 的 `tags` 走 `QAPair.tagsHint` ⇒ 与自动抽取的标签合流，
+但仍过 `tagsFromQA()` 的形状闸门（ASCII、单项 ≤40 字）—— 历史上出现过"整句问句被当标签打上"的坏数据。
+
+### 10.3 自查
+
+```bash
+node --test                                          # 51/51（含 mcp.test.mjs 17 项）
+node scripts/selfcheck.mjs                           # 33 项（含「MCP 端点与通道」）
+Select-String -Path src/mcp/channel.ts -Pattern MCP_CHANNEL   # 契约字面量
+curl -s http://127.0.0.1:42081/oblivion/mcp/health   # 桥侧健康路由（端点 ready / tools / 版本）
+```

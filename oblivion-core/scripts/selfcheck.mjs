@@ -826,6 +826,60 @@ await check('主题页（oblivion_wiki）：模型判簇 → 落 02_Wiki页面/ 
   return '页 1 / 成员 2 / 回链 2 / 重跑 linked 0';
 });
 
+await check('MCP 端点：发布到进程内通道 → 协议应答 → 契约版本把关', async () => {
+  assert.equal(kit.MCP_CHANNEL, '@oblivion/core/mcp', '通道键字面量不许改（传输层按同一字符串取）');
+  assert.equal(kit.MCP_API_VERSION, 1, '通道契约版本字面量不许改');
+  assert.equal(kit.channelKey(), Symbol.for('@oblivion/core/mcp'), '必须是 Symbol.for：跨模块副本才认同一个键');
+
+  kit.clearMcpChannel();
+  assert.equal(kit.resolveMcp(), null, '空通道要解析成 null（传输层据此回 503）');
+
+  const seen = [];
+  const { endpoint, dispose } = kit.registerMcp({
+    facade: {
+      version: '0.0.0-selfcheck',
+      knowledge: {
+        async capture(input) {
+          seen.push(input);
+          return { pass: true, action: 'created' };
+        },
+        async query() {
+          return { count: 0, results: [] };
+        },
+      },
+    },
+  });
+  assert.equal(kit.resolveMcp(), endpoint, '发布的端点要能被解析到');
+  const info = kit.describeMcpChannel();
+  assert.equal(info.present, true);
+  assert.equal(info.ready, true);
+  assert.equal(info.version, '0.0.0-selfcheck');
+  assert.deepEqual(info.tools, ['oblivion_capture_page', 'oblivion_search']);
+
+  const notification = await endpoint.handle(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }));
+  assert.equal(notification, null, '通知不回复（回了扩展的 streamable_http 会挂住）');
+
+  const unknown = await endpoint.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'nope' } }));
+  assert.equal(unknown.error.code, -32602, '未知工具是 -32602（与现役 host 口径一致）');
+
+  const called = await endpoint.handle(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'oblivion_capture_page', arguments: { url: 'https://sc.test/', title: '自查', content: '正文', tags: ['dsh'] } },
+    }),
+  );
+  assert.equal(called.result.isError, false, '工具要正常返回');
+  assert.equal(seen.length, 1, '工具要真的调到门面');
+  assert.deepEqual(seen[0].tagsHint, ['dsh'], 'tags 透传为 tagsHint');
+  assert.deepEqual(seen[0].sources, [{ type: 'url', ref: 'https://sc.test/' }]);
+
+  dispose();
+  assert.equal(kit.resolveMcp(), null, 'disposer 要清干净（重挂/卸载不留僵尸端点）');
+  return '通道 键 ' + kit.MCP_CHANNEL + ' / 契约 v' + kit.MCP_API_VERSION + ' / 工具 2 / 未知工具 -32602 / 通知 null';
+});
+
 rmSync(tmp, { recursive: true, force: true });
 
 process.stdout.write('\n@oblivion/core selfcheck\n\n');

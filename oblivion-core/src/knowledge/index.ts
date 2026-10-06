@@ -294,5 +294,7 @@ function mergeSources(existing: KnowledgeItem['sources'], qa: QAPair, fp: string
 
 /** 标签：技术词 + 包名 + `#tag` + 中文词表（细则见 `naming.ts`，扫的是问句 + 答案）。 */
 function deriveTags(qa: QAPair): string[] {
-  return tagsFromQA(qa.question, qa.answer, qa.topicHint ? [qa.topicHint] : []);
+  // `tagsHint` 是调用方显式给的（MCP 工具那条路），与 topicHint 合流后一起过形状闸门。
+  const extra = [...(qa.topicHint ? [qa.topicHint] : []), ...(Array.isArray(qa.tagsHint) ? qa.tagsHint : [])];
+  return tagsFromQA(qa.question, qa.answer, extra);
 }

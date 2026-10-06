@@ -41,6 +41,13 @@ export interface QAPair {
   answer: string;
   sources: Source[];
   topicHint?: string;
+  /**
+   * 调用方**显式**给的标签（如 MCP 工具 `oblivion_capture_page` 的 `tags`）。
+   *
+   * 与自动抽取的标签合流，仍过 `tagsFromQA()` 的形状归一化（ASCII、单项 ≤40 字）——
+   * 历史上出现过「整句问句被当标签打上」的坏数据，闸门不能拆。
+   */
+  tagsHint?: string[];
   /** 会话 id + turn 是幂等键的真实来源。 */
   sessionId: string;
   turn: number;
