@@ -8,7 +8,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "check": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/lint-ps1-bom.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1",
+    "check": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/lint-ps1-bom.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-selfcheck.ps1",
+    "selfcheck": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-selfcheck.ps1",
     "lint:bom": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/lint-ps1-bom.ps1",
     "typecheck": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task typecheck",
     "test": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task test",

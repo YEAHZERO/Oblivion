@@ -329,3 +329,46 @@ VISUAL_BEHAVIOR_VERIFIED→ 人眼/实测确认行为
 **落地口径**：`implemented` / `designed` / `placeholder` —— 设计书里「26 个包 vs 8 个插件」那类混淆，根因就是缺这个字段。
 
 **安装入口**：`@oblivion/bundle`（一条命令装齐四个插件；只插 core/panel 两行，brand/vimc 自带 bundle patch 由安装器负责）。
+
+---
+
+## 七、2026-10-06 事故与结论（三次自伤 + 一次真因）
+
+### 坑 9：**未在 `inject` 里声明的服务，属性访问会抛错**（App 起不来 ×1）
+
+Cordis 的守卫：`ctx.agents` / `ctx.slots` 这类服务，只要没在插件 `inject` 里声明，**读取那一刻就抛**
+`cannot get property "agents" without inject`。我把这种读取**直接写在诊断对象字面量里**（无 try/catch），
+结果 core 装载失败、App 崩溃窗口弹出（panel 同时因为 `inject: []` 却读 `ctx.slots` 而失败）。
+
+**规矩**：
+- 诊断代码**一律不得阻断装载** —— 所有服务访问包 `safeRead()`（core 有实现可抄）；
+- 要用的服务就**写进 `inject`**（panel 的客户端半边因此改成 `inject: ['slots']`）；
+- 每次动 `ctx.*` 之前先问一句：这个服务在我的 `inject` 里吗？
+
+### 坑 10：**根上下文的事件派发整体不生效**（收不到事件 ×N）
+
+实测 `mount-diag.json`：`rootSeen: 0`、`agentSeen: 0`、`lifecycleSeen: {}` ——
+不只是 `session/event`，连 `agent/created`、`session/created`、`turn/start` **一个都收不到**。
+所以"在 profile 根上下文挂 `ctx.on(...)` 收事件"这条路是死的（换 bundle 层挂载也一样）。
+
+**唯一可靠的两个入口**（宿主主动回调我们）：
+1. `systemPrompt.section` 的 `text(context)` —— 每轮都会跑，`context.agent` 就是当前 agent；
+2. 工具 `execute(args, exec)` —— 工具调用必在某个 agent 会话内，`exec` 带 caller agent。
+
+拿到 agent 后，在那**它自己的 ctx** 上 `on('session/event')` 才有事件（作用域过滤派发）。
+
+### 坑 11：**仓库文档/配置不要用脚本改**（写坏 ×2）
+
+- 用 `-replace '(?ms)…\s*'` 摘 profile 补丁行 → 吃掉换行 → `parsePatchList` 抛错 → **App 起不来**；
+- 用 PowerShell 切片改 `CHANGELOG.md` → `-like '## [未发布]*'` 把 `[未发布]` 当字符类匹配失败 +
+  `$lines[0..-1]` 反向切片复制全文 → 文件被写坏（靠 `git checkout` 救回）。
+
+**规矩**：仓库文件只用**内容锚点**编辑；真要脚本改，先备份 + 改完立刻用解析器验证
+（YAML 用 `yaml` 包 parse、Markdown 查标题计数）。profile 补丁改完必须 `yaml.parse` 通过再重启。
+
+### 工程基建
+
+- **`status.json` 必须原子写**：实测被写成"一个完整对象 + 另一次写入的碎片"（两个写者交错，面板报 JSON SyntaxError）。
+  已新增 `src/util/fs.ts` 的 `writeTextAtomic` / `writeJsonAtomic`（写临时文件 → 同目录 rename）。
+  `status.json` 已接入；`decisions.jsonl` 裁剪、`feedback`/`profile`/`graph`/知识条目、笔记写入**待接入**。
+- **`selfcheck` 才是抓"装载失败"的那一层**（今天的崩溃、路由数、导入缺失全靠它抓到）→ 已接进根 `check`。
