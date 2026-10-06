@@ -15,6 +15,45 @@
 
 ---
 
+## [未发布] — 新增 `@oblivion/bundle` 安装入口；`@oblivion/core` v0.1.11：盲区修正（status/impl + 00-Index + 50-Conflicts + 双链写回）
+
+### 新增：`@oblivion/bundle`（不是插件，是安装入口）
+
+- 形态与官方 `@deepseek-ai/dsh-base` 一致：**没有 `apply(ctx)`**，`lib/index.js` 就是 `export {};`，只有 `cordis.patch.yml`
+- 一条命令装齐：`dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-bundle'`（依赖声明四个包）
+- **只插 core / panel 两行**：brand 与 vimc 自带 `dsh.bundle.patch`、由安装器写进 `dsh.profile.bundles`；
+  bundle 再插一次同名行 = 挂载两次 = 整棵插件树启动失败（重复前缀路由）→ 对它们只做依赖声明
+- 安装后**必须删掉用户层那两行**（否则就是上面那个重复挂载）——本次已迁走，用户层补丁现在 0 条 insert
+- `content-creator` 已在 patch 里留好注释位；契约断言用 `npmPackages`（四个成员包都在 profile 里）
+
+### `@oblivion/core` v0.1.11：盲区修正
+
+起因是一次真实口径漂移：同一主题在文档里有 26 / 28 / 3 三个版本，读的人无法判断哪个权威。
+解法不是「记得更新」，而是**让每个条目自己带状态**：
+
+| 机制 | 实现 |
+| --- | --- |
+| **文档状态** | 笔记与整理件一律带 **YAML frontmatter**：`status`、`impl`、`topic`、`ref`、`tags`、`superseded_by` |
+| **权威层** | 新增 `00-Index/索引.md`：**只放指针**（主题 / 条目 id / 标题 / 状态 / 落地 / 更新时间），每次写库自动重建 |
+| **落地状态** | `ItemStatus` / `ImplStatus` 落地（`types.ts`），自动捕获与整理都写入 `impl` |
+| **自动降级** | 同一 `topic` 出现新版本 → 旧条目转 `superseded` 并写 `supersededBy`（**不删除**；配置 `autoSupersede`） |
+| **冲突页** | 冲突不再只写 `dataRoot/conflicts/*.json`：同时在知识库写 **`50-Conflicts/<主题>.md`**，新旧并列、**不合并**、幂等 |
+| **双链写回** | 新增 `graph/backlink.ts` + `appendRelatedLinks()`：token Jaccard 找相关条目（只连 `active`、不连自己、上限 5），追加「## 关联知识（自动）」段 |
+
+### 输出模板 T1 / T2 / T3 写进常驻提示词
+
+默认 **T1**（结论 / 要点 / 盲区 / 下一步）；设计决策类 **T2**（方案对比表 + 风险 + 落地状态）；
+文档整理类 **T3**（status / 权威版本 / 冲突 / 归档建议）。写进提示词而不是文档 —— 它必须每轮生效。
+
+### 验证
+
+`typecheck` ✅ / `test` **14/14** ✅ / `selfcheck` **29/29** ✅ / `verify:dsh` **5/5 全 PASS**（brand 10/10 · bundle 7/7 · core 8/8 · panel 5/5 · vimc 6/6）
+
+> 事故留痕：中途用 PowerShell 脚本改本文件时写坏过两次（`-like` 把 `[未发布]` 当字符类、`0..-1` 反向切片复制全文），
+> 均已 `git checkout` 完整恢复，最终改用内容锚点编辑。**仓库文档一律不要用切片/正则脚本改。**
+
+---
+
 ## [未发布] — `@oblivion/core` v0.1.10：**会话整理（`oblivion_digest`）** + 挂载自诊断；附一次 profile 补丁事故
 
 ### 新增：整理当前对话
