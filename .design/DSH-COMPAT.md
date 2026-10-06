@@ -104,7 +104,7 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 
 | # | 风险 | 为什么危险 | 处置 |
 | --- | --- | --- | --- |
-| R1 | **`@oblivion/vimc` 曾挂在机器本地的 `cordis.patch.yml`**（不在 `dsh.profile.bundles`） | 换机器 / 重置 profile 就丢，且**不报错** —— 插件"装好了却完全不生效" | ✅ **已修（2026-10-06）**：vimc 加了 `cordis.patch.yml`（`dsh.bundle.patch`）+ 写进 `dsh.profile.bundles`，并**移除用户层的重复插入**（否则同 id 插两次）。现校验为 **6/6**（多出的就是 bundles 挂载断言） |
+| R1 | **`@oblivion/vimc` 曾挂在机器本地的 `cordis.patch.yml`**（不在 `dsh.profile.bundles`） | 换机器 / 重置 profile 就丢，且**不报错** —— 插件"装好了却完全不生效" | ✅ **vimc/brand 已修（2026-10-06）**：两者都加了 `cordis.patch.yml`（`dsh.bundle.patch`）+ 写进 `dsh.profile.bundles`，并**移除用户层的重复插入**（否则同 id 插两次）。现校验为 6/6 与 10/10。⚠️ **`@oblivion/core` 仍走用户层**（见第五节「挂载方式现状」，待裁定） |
 | R2 | 两个插件原先**都没声明宿主版本范围** | 升级后无法自动发现不兼容 | ✅ **已修**：两者都加了 `dsh.compat.host` |
 | R3 | 契约校验**只覆盖静态契约** | 覆盖不到「渲染结果不对」 | 靠 SOP 第 4 步的目视确认补上 |
 | R4 | **漏跑校验** | 校验再准，不跑等于没有 | ✅ **已修**：`pnpm run check` 现在**第一步**就是契约校验（`-Task compat`） |
@@ -117,7 +117,8 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 | 插件 | 插件版本 | DSH 版本 | 校验日期 | 结果 | 证据源 |
 | --- | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS 10/10 | `deepseek-harness @ dsh-v0.2.0-rc.2` (`639ed01539`) |
-| `@oblivion/vimc` | **0.2.9** | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS **6/6**（迁 bundle 层后） | 同上 |
+| `@oblivion/vimc` | 0.2.9 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS **6/6**（迁 bundle 层后） | 同上 |
+| `@oblivion/core` | **0.1.2** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **8/8** | 同上（host / service `tools`·`systemPrompt` / event `session/event`·`turn/end` / hostPkg `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 
 **校验覆盖的契约**：
 
@@ -125,12 +126,15 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 | --- | --- |
 | `@oblivion/brand` | host 范围；5 个槽位的 kind（`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` = `single`，`sidebar.panellist` = `list`，`main` = `keyed`）；`__ModuleLoader__`；`slots` 服务；profile 挂载（dependencies + bundles） |
 | `@oblivion/vimc` | host 范围；`settings.section` = `list`；客户端包 `@deepseek-ai/dsh-client-ui-settings` 存在；`__ModuleLoader__`；profile 挂载（dependencies + **bundles**） |
+| `@oblivion/core` | host 范围；服务 `tools` / `systemPrompt`；事件 `session/event` / `turn/end`；宿主包 `@deepseek-ai/dsh-tools` / `dsh-system-prompt`；profile 挂载（**仅 dependencies**） |
 
-**两个插件的挂载方式现已统一**：都走 **bundle 层**（各自 `package.json` 的 `dsh.bundle.patch` 指向自己的 `cordis.patch.yml`，并在 `dsh.profile.bundles` 中列出）——
-**包自己声明怎么被组合**，装到哪台机器都一样。
+**挂载方式现状**：
+
+- `@oblivion/brand`、`@oblivion/vimc`：**bundle 层**（各自 `package.json` 的 `dsh.bundle.patch` 指向自己的 `cordis.patch.yml`，并在 `dsh.profile.bundles` 中列出）—— 包自己声明怎么被组合，装到哪台机器都一样。
+- `@oblivion/core`：⚠️ **仍走用户层 `cordis.patch.yml` 的 insert 行**（不在 bundles）→ **正处在 R1 描述的暴露面**。
+  这是**刻意的取舍**（Host 侧认知层要频繁迭代，bundle 层改一次就要重启 App），但换机器 / 重置 profile 会静默失效。
+  **待裁定**：见 `.design/ARCHITECTURE.MD` §33.5 第 ② 条（迁 bundle 层 vs 保持用户层）。
 
 ---
 
-_最后更新：2026-10-06 · 新增机制或改动挂载方式时同步本文件与 `tools/verify-dsh-compat.ps1`。_
-
-_最后更新：2026-10-06 · 新增机制时同步本文件与 `tools/verify-dsh-compat.ps1`。_
+_最后更新：2026-10-06 · 补 `@oblivion/core` 台账行（8/8）与挂载现状说明；新增机制或改动挂载方式时同步本文件与 `tools/verify-dsh-compat.ps1`。_

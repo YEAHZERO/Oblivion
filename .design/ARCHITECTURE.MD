@@ -1581,12 +1581,16 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
 
 **关键原则**：**Phase 3 完成后（约 9 天）**，应该有一个**能跑通"上传文档 → 问答 → 沉淀"的 DSH + Oblivion 插件组**。
 
-### 18.1 已完成（v4.1，2026-10-04）
+### 18.1 已完成（v4.1，2026-10-04；**2026-10-06 补记**）
 
 | 阶段 | 状态 | 证据 |
 |---|---|---|
 | Phase 1 `@oblivion/brand` | ✅ **已落地并装机** | PF-43；三槽位接管、品牌名/图形可配、可关闭接管、侧栏嵌入面板、一键重启 |
 | 超出计划的能力 | ✅ 侧栏嵌入面板 + 面板居中 + 直接重启 DSH | §12.8 |
+| **Phase 2~6（合并）** | ⚠️ **已并入 `@oblivion/core`**（0.1.2）：knowledge / qa-loop / perspective / feedback / graph / profile 六模块 | `oblivion-core`：契约 8/8、test 12/12、selfcheck 17/17；**向量检索 / anydoc / `md_rules.yaml` / `oblivion_docs/` 未做**；真实 Host 待重启验证 |
+| **超出设计书的插件** | ✅ `@oblivion/vimc` 0.2.9（Vimium 式键盘导航 + 页面内查找） | 契约 6/6 + 真实按键计数 |
+| **工程化（Phase 8 的一部分）** | ✅ pnpm workspace（依赖只存一份，`allowBuilds` 审批）；✅ DSH-COMPAT 三件套（`dsh.compat` 契约 + `tools/verify-dsh-compat.ps1` + 升级台账） | 根 `README.md`「构建与测试」；`.design/DSH-COMPAT.md` |
+| 未做 | ❌ Phase 6 内容创作、Phase 7 Obsidian 适配、Phase 9 真机 e2e；详见 **§33.3** | — |
 
 ### 18.2 相对 v4.0 路线图的收敛
 
@@ -1697,6 +1701,10 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
 
 ### 21.1 AC 验收表（四状态轴）
 
+> ⚠️ **本表 AC-001~031（28 条）未随落地更新**：仍全部是 `Not started / Last checked 2026-10-02`。
+> 实际状态以 **§33 现状对账与缺口（2026-10-06）** 为准；AC-032~035 已在表内更新为 ✅。
+> 全表重写属独立修订（涉及 REQ-001~023 重新映射），且必须与 §9.1 插件清单同批修改。
+
 > **四状态轴 + 证据 + 缺口**：Impl.（实现）/ Verif.（验证）/ Owner acceptance（验收）/ Evidence（证据）/ Gap·Blocker（缺口与阻塞项）/ Last checked（最后核对日）
 
 | AC-ID      | 描述                                                                                                                                                              | 关联             | Impl.       | Verif.  | Owner acceptance | Evidence | Gap/Blocker | Last checked |
@@ -1751,9 +1759,9 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
 | OPEN-108     | 图标动画场景              | **做，限定位**                               |
 | OPEN-109     | Desktop 强制更新          | **全开 4 锁**                                |
 | OPEN-110     | oblivion-ref 托管与频率   | **本地 git + skill，暂不上远端；升级后必跑** |
-| **OPEN-022** | **包管理器统一为 npm 还是 pnpm** | **裁定：npm 为运行器**（CI/构建）；`pnpm-workspace.yaml` 仅作目录契约 |
+| **OPEN-022** | **包管理器统一为 npm 还是 pnpm** | ~~裁定：npm 为运行器（CI/构建）；`pnpm-workspace.yaml` 仅作目录契约~~ → ✅ **2026-10-06 改判：pnpm workspace 为唯一运行器**（依赖只存一份、`allowBuilds` 显式审批、`auto-install-peers=false`、`hoist=false`；见根 `README.md` §四·五 与 `.action/AGENTS.MD`《包管理器规范》） |
 | **OPEN-023** | **是否迁移到 `@oblivion/` scope** | **裁定：暂不迁移**，发布公共 npm 前再整体迁 |
-| **OPEN-024** | **lockfile 何时入库** | **关闭**：v0.0.1 已提交 `package-lock.json`，CI 已恢复 `npm ci` |
+| **OPEN-024** | **lockfile 何时入库** | ~~关闭：v0.0.1 已提交 `package-lock.json`，CI 已恢复 `npm ci`~~ → ✅ **2026-10-06 改判**：工作区唯一 `pnpm-lock.yaml` 入库，`package-lock.json` 已删除 |
 | **OPEN-111** | **Oblivion 右栏放什么**（tab 内容清单） | **未裁定** —— 由 `LAYOUT.MD` §12 `OPEN-LAYOUT-03` **上移**而来（2026-10-02）。<br>理由：`LAYOUT.MD` 只管「怎么摆」，已完整给出右栏的**扩展机制**（`sidebar.right.pane.tab` 按类型注册）；「放什么」是**产品决策**。<br>⚠️ 该裁定会反向影响 `RIGHTBAR_DEFAULT_RATIO = 0.45`（现为**暂定**）|
 | **OPEN-113** | **产品版本轴缺递增器** | **未裁定（v4.1 新增）** —— 根 `VERSION` 是真源，但主仓 `bump-version.ps1` 的同步目标（`packages/*/package.json`、`registry.json`、`oblivion-core/src/version.ts`）**在本仓都不存在**。<br>**待定**：① 只同步根 `VERSION` + 自动补一行 `CHANGELOG.md`？② 还是让产品轴跟随插件轴一起递增？<br>**倾向**：方案 ① —— 两条轴独立（§12.13），产品轴管「整个仓库的对外版本」，插件轴管「单个插件包」。<br>**临时对策**：手改 `VERSION` + `CHANGELOG.md`，并在提交信息里注明。 |
 
@@ -1896,14 +1904,20 @@ md_sync:
 
 ### 25.10 事件总线设计（适配 Cordis）
 
-| 事件                 | 触发时机     | 载荷                                          |
-| -------------------- | ------------ | --------------------------------------------- |
-| `turn/end`           | 一轮问答结束 | `{ sessionId, turn, question, answer, references }`（**实测**：`session:complete` 不存在） |
-| `session:thinking`   | 思维激荡生成 | `{ sessionId, perspective }`                  |
-| `knowledge:created`  | 知识创建     | `{ knowledgeId, sourceType }`                 |
-| `knowledge:updated`  | 知识更新     | `{ knowledgeId }`                             |
-| `md:generated`       | MD 落盘      | `{ path, sourceType }`                        |
-| `feedback:collected` | 评价收集     | `{ signal, knowledgeId }`                     |
+> ⚠️ **2026-10-06 实测更正**：下表的 6 个事件名里，`session:thinking` / `knowledge:created` / `knowledge:updated` /
+> `md:generated` / `feedback:collected` 在**真实 DSH 里 0 命中**（与 `session:complete` 同类错误：设计自造了宿主不存在的名字）。
+> 它们只能作为**本插件自定义事件**（自己 `ctx.emit()` / 自己订阅），或者改用现有通道 ——
+> `@oblivion/core` 0.1.2 走的是后者：**陪伴内容通过 `systemPrompt.section` 注入下一轮**，不发自定义事件。
+> 唯一真实存在的是**订阅**方向：`session/event` 的 `turn/end`（§33.4 第 1、2 条）。
+
+| 事件                 | 触发时机     | 载荷                                          | 真实存在？ |
+| -------------------- | ------------ | --------------------------------------------- | --- |
+| `turn/end`（原写 `session:complete`） | 一轮问答结束 | `{ sessionId, turn, question, answer, references }` | ✅ 宿主事件（`dsh-session`） |
+| `session:thinking`   | 思维激荡生成 | `{ sessionId, perspective }`                  | ❌ 需插件自 emit（现状：不做） |
+| `knowledge:created`  | 知识创建     | `{ knowledgeId, sourceType }`                 | ❌ 需插件自 emit（现状：不做） |
+| `knowledge:updated`  | 知识更新     | `{ knowledgeId }`                             | ❌ 需插件自 emit（现状：不做） |
+| `md:generated`       | MD 落盘      | `{ path, sourceType }`                        | ❌ 需插件自 emit（现状：不做） |
+| `feedback:collected` | 评价收集     | `{ signal, knowledgeId }`                     | ❌ 需插件自 emit（现状：不做） |
 
 ### 25.11 知识注入通道
 
@@ -2255,4 +2269,84 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 
 ---
 
-_本文件由 YEAHZERO-Thought-Design 维护；2026-10-02 经用户显式批准转为 Baseline v4.0；2026-10-04 升级为 v4.1（DSH 宿主化决策版）。_
+## 33. 现状对账与缺口（2026-10-06）
+
+> **本节是「设计书 vs 落地」的唯一对账入口**。§21.1 的 AC 表（AC-001~031 共 28 条）**未随落地更新**，
+> 仍全部是 `Not started / Last checked 2026-10-02` —— 实际状态以本节为准；AC-032~035（brand v4.1 特性）在 §21.1 里已是 ✅。
+
+### 33.1 三个插件现状
+
+| 插件 | 版本 | 形态 | 挂载 | 验收层级 |
+| --- | --- | --- | --- | --- |
+| `@oblivion/brand` | 0.1.0 | client | **bundle 层**（`dsh.bundle.patch` + `dsh.profile.bundles`） | 契约 10/10 + 目视（AC-032~035 ✅） |
+| `@oblivion/vimc` | 0.2.9 | client | **bundle 层** | 契约 6/6 + 真实按键计数（RUNTIME_VERIFIED） |
+| `@oblivion/core` | 0.1.2 | object（Host） | ⚠️ **用户层 insert 行**（不在 bundles） | 契约 8/8 + test 12/12 + selfcheck 17/17；**真实 Host 待重启验证** |
+
+> `@oblivion/core` 把设计书的 Phase 2–6（knowledge / qa-loop / perspective / feedback / graph）**合并成一个包**，
+> 理由与遗留项见 `HANDOFF.md` §六。它**刻意**不声明 `dsh.bundle`（认知层要频繁迭代、bundle 层改一次要重启），
+> 代价正中 `DSH-COMPAT.md` 的 **R1**（挂用户层 → 换机器/重置 profile 即静默失效）——**待裁定**，见 33.5。
+
+### 33.2 已完成（相对设计书的映射）
+
+| 设计书条目 | 落地 |
+| --- | --- |
+| Phase 1 / REQ-001 / AC-032~035 | `@oblivion/brand`：三槽位 + 面板嵌入 + 品牌可配 + 一键重启 |
+| REQ-005 L1/L3/L4 / AC-005·AC-007·AC-008 | 四层筛选：SHA256 精确去重、L3 四条规则（<5 字 / 无意义词 / 开头「不知道」/ 纯寒暄）、L4 规则打分（阈值 0.30，实测标定） |
+| REQ-005 L2 / AC-006（部分） | 语义去重为 **token Jaccard + 否定翻转启发式**（LLM 判定留注入点）——**不是**设计的向量检索 |
+| REQ-004 / REQ-006（部分） | `turn/end` 捕获 → 条目 JSON + MD 落盘；**问答三元组**在条目 sources 里（无 UI 呈现） |
+| REQ-014 / AC-020·021 | 思维激荡：一键关闭（`enablePerspective`）+ 主动/深度双通道（§25.4 闸门已按设计实现） |
+| REQ-015 / AC-024 | 图谱权重：0.3 / +0.05 / cap 1.0 / 30 天 ×0.95 + 时钟保护（自检逐条断言） |
+| REQ-016 / REQ-019 / AC-023（部分） | 档案：`profile.json` + `user_override` 优先 + `oblivion_profile` 工具可读可改；**无界面** |
+| REQ-012 / AC-012·013（部分） | 自检测了阈值分布与时钟；**未固化**「入库→落盘 <5s」「L1 <10ms」的正式记录 |
+| — | 超出设计书：`@oblivion/vimc`（Vimium 式键盘导航 + 页面内查找）、pnpm workspace、DSH-COMPAT 三件套 |
+
+### 33.3 未完成清单（按建议优先级）
+
+| # | 缺口 | 设计书出处 | 阻塞/代价 |
+| --- | --- | --- | --- |
+| 1 | **DSH 升级兼容台账缺 core 一行**（校验已覆盖：**8/8 PASS**，台账只记了 brand/vimc） | `DSH-COMPAT.md` §五 | 无（本节同批补） |
+| 2 | **core 挂载策略不一致**（brand/vimc 走 bundle 层，core 走用户层插入行） | DSH-COMPAT R1 | 换机器即静默失效 vs bundle 层每次改要重启 |
+| 3 | **KB 目录结构与设计不符**：实现是 `~/OblivionKB/10-Topics/<topic>.md`；设计是 `md_sync.base_dir: ./oblivion_docs` + `00_导入文件/01_问答沉淀/02_Wiki页面/03_创作产物/99_其他/` | §25.3、§12.3、REQ-002/003/006 | **需裁定哪边为准**（设计书里 0 处 `10-Topics`） |
+| 4 | **MD 格式规范未落地**：无 YAML frontmatter（`title/source/created_at/tags/related_wiki`）、无「摘要」段、无 `[[slug]]` 互链 | §25.2、REQ-006、AC-009a/b | 需要 LLM 摘要能力（能力缺口） |
+| 5 | **图谱双链写回未实现**（`graph/backlink.ts` 不存在） | §25.6、§12.4 | 小改动，可与 4 同批 |
+| 6 | **文档导入与解析未实现**（PDF/Word → MD、anydoc WASM） | REQ-002、§12.3、D1 | 依赖选型 + **许可证登记** |
+| 7 | **向量检索未实现** | F5/D2、AC-006 | 依赖选型 + **许可证登记** + 与 core 的 knowledge 模块划界 |
+| 8 | **筛选/分类参数未走 YAML**（现状是 TS 默认值 + cordis config） | REQ-013、AC-017、`md_rules.yaml`/`qa_rules.yaml` | 需先定 3 的目录结构 |
+| 9 | **健康度告警 4 项未实现** | REQ-011、AC-016 | 需要可观测面（§26） |
+| 10 | **20 条标注样本准确率 >90% 未做** | AC-014 | 需要标注集（人工） |
+| 11 | **评价入口 UI 缺失**（👍/👎/⏺）—— 现只有 `oblivion_feedback` 工具 | §12.6、§25.7、REQ-019 | 需要 client 插件（object 插件无 UI） |
+| 12 | **内容创作未做**（播客脚本/学习指南/FAQ/摘要） | Phase 6、G1、§25.9 | 设计书自注「默认不加载」「需先实测 notex REST API」 |
+| 13 | **Obsidian 适配未做**，且服务存在性未对账 | Phase 7、J1、§12.5 | `ctx.knowledge` / `ctx.ui.ribbonIcon` 在真实 DSH **0 命中**（只有 `activeDocument` 命中）→ 先对账再开工 |
+| 14 | **发布工程学剩余部分**：破坏性变更契约文档化、迁移工具 | Phase 8 | DSH-COMPAT 已实现「契约声明 + 校验 + 台账」，缺「写进设计书 + 迁移工具」 |
+| 15 | **跨插件/真机 e2e 未做**（Phase 9） | Phase 9 | 各插件已独立 test/selfcheck |
+| 16 | **根 `VERSION` 递增器未做** | OPEN-113、REQ-001 | 倾向方案 ①：只同步根 `VERSION` + CHANGELOG |
+| 17 | **`oblivion_docs/` 目录结构未落地** | §12.12 | 与 3 同批 |
+| 18 | **双部署 / Web 通道未落地**（§5.7 落地顺序、§5.8 HTTP `/api` 一元面） | DEC-017、§5 | 另见 `.design/web通道与webserver形态.md` |
+| 19 | **预置 Profile / 条件加载 / 根配置重写未落地**（仓库 `profiles/` 为空） | §11.2·11.3·11.4 | 需要 profile 分发模型 |
+| 20 | **Agent Presets 未落地** | §6.3 | 依赖 Host 平面能力 |
+
+### 33.4 设计书自身失真（本版已更正 4 处，其余待裁定）
+
+| # | 失真 | 处理 |
+| --- | --- | --- |
+| 1 | **`session:complete` 不存在**（Phase 3、§4.4、§12.1、§25.10 共 4 处） | ✅ **已改为 `turn/end`**（实测该事件在官方 287 个包里 0 命中） |
+| 2 | **事件总线 6 个事件名**（`session:thinking` / `knowledge:created` / `knowledge:updated` / `md:generated` / `feedback:collected`）在真实 DSH **0 命中** —— 与 1 同类错误 | ⚠️ **§25.10 加注**：这些是**插件自定义事件**，宿主不会 emit，需要本插件自己 `ctx.emit()` 或改为 systemPrompt 注入（现状即后者） |
+| 3 | **§12.5 的服务映射**（`ctx.knowledge.read/write`、`ctx.ui.ribbonIcon`、`ctx.command`）真实 DSH 0 命中 | ⚠️ 标注为「**待服务存在性对账**」，不得据此开工 |
+| 4 | **§23 OPEN-022 / OPEN-024** 仍裁定「npm 为运行器 / lockfile 用 `package-lock.json`」 | ✅ **已被 2026-10-06 的 pnpm workspace 裁定取代**（`pnpm-lock.yaml` 入库、`allowBuilds` 审批、`auto-install-peers=false`） |
+| 5 | **§21.1 AC 表 28 条未随落地更新** | ⚠️ 本节为对账入口；AC 表重写是一次独立修订 |
+| 6 | **设计书 0 处提到 DSH-COMPAT 机制**（`dsh.compat` 契约 + `verify-dsh-compat.ps1` + 升级台账） | ⚠️ 它就是 Phase 8「破坏性变更契约」的落地物，**待纳入设计书**（见 33.5-⑤） |
+| 7 | **§18.1「已完成」只记 Phase 1** | ✅ 已补记 Phase 2–6（并入 core）、vimc、pnpm workspace、DSH-COMPAT |
+
+### 33.5 待所有者裁定（5 项）
+
+| # | 待裁定 | 选项 |
+| --- | --- | --- |
+| ① | **KB 目录结构以哪边为准** | (a) 改设计书为现状 `~/OblivionKB/10-Topics/`；(b) 改实现为 `oblivion_docs/` + `00_/01_/99_` 分类；(c) 折中：根沿用 OblivionKB，内部按 `01_问答沉淀/` 分类 |
+| ② | **core 挂载策略** | (a) 迁 bundle 层（与另两个插件统一、换机器不丢，代价：改一次要重启）；(b) 保持用户层 + 把插入行写进仓库文档（保持热挂，代价：换机器要重装） |
+| ③ | **Phase 2 与已有 knowledge 模块的划界** | (a) 并入式（向量检索/anydoc 作为 core 的可选子模块，`enableVector: false` 默认关）；(b) 拆分式（新包只做解析+检索，先设计服务接口） |
+| ④ | **Phase 6/7 是否保留** | 保留（先补前置：notex 实测、服务存在性对账）／降级为 `Superseded` 并写明理由 |
+| ⑤ | **DSH-COMPAT 是否升格为设计书正式机制**（§8 Phase 8 的「破坏性变更契约」） | 是（推荐：它已在运行，含 PASS 矩阵与证据 `文件:行`）／否（仅作运维台账） |
+
+---
+
+_本文件由 YEAHZERO-Thought-Design 维护；2026-10-02 经用户显式批准转为 Baseline v4.0；2026-10-04 升级为 v4.1（DSH 宿主化决策版）；2026-10-06 补 §33 现状对账。_

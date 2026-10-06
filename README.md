@@ -20,17 +20,17 @@
 
 ## 一、本仓库现状（先读这一段）
 
-本仓库是**重新生成的开仓**，目前只承载四类东西：
+本仓库是**重新生成的开仓**，目前只承载五类东西：
 
 | 路径 | 内容 | 状态 |
 | --- | --- | --- |
-| `.design/ARCHITECTURE.MD` | **设计书**（v4.1-baseline，2400+ 行） | 权威规范 |
+| `.design/ARCHITECTURE.MD` | **设计书**（v4.1-baseline，2400+ 行；**§33 是「设计书 vs 落地」的对账入口**） | 权威规范 |
+| `.design/DSH-COMPAT.md` | **DSH 升级兼容台账**（契约声明 + 校验矩阵 + 升级 SOP） | 已运行（三插件全 PASS） |
 | `.action/` · `.memory/` | **AI Agent 协作框架**（工作流 / 业务规则 / 记忆库与版本规则） | 已入库（规则与模板） |
-| `oblivion-brand/` | **`@oblivion/brand` 插件** | ✅ 已实现并装机（见下） |
-| `oblivion-vimc/` | **`@oblivion/vimc` 插件**（键盘导航） | ✅ 已实现并装机（见下） |
-| `tools/` | 本机运维脚本 | 可用 |
+| `oblivion-brand/` · `oblivion-vimc/` · `oblivion-core/` | **三个插件**（见下） | ✅ 已实现（core 待重启验证） |
+| `tools/` | 运维脚本（`check-workspace.ps1` / `verify-dsh-compat.ps1` / `lint-ps1-bom.ps1` …） | 可用 |
 
-**已实现的插件（2 个）**：
+**已实现的插件（3 个）**：
 
 ① [`@oblivion/brand`](oblivion-brand/README.md) v0.1.0：
 
@@ -39,22 +39,34 @@
 - 可把「插件市场」这类**可嵌入面板挂到侧栏**「插件」下方（支持多选）
 - 设置页**一键重启 DSH**（自动重新拉起，无控制台窗口，约 2.7 秒）
 
-② [`@oblivion/vimc`](oblivion-vimc/README.md) v0.2.8（**清单外新增**，交互工具类）：
+② [`@oblivion/vimc`](oblivion-vimc/README.md) v0.2.9（**清单外新增**，交互工具类）：
 
 - 把 DSH 当浏览器用：`w/s` 上/下翻页（距离 **0.6 屏**）、`a/d` 横向像素步进、`W/S` 到顶/到底、
   `[`/`]` **上一条/下一条提问**、`/` **页面内查找**（`.`/`,` 前后跳，落点靠上 + 落点标记）、
   `f` **链接提示**（**正文内联引用优先拿单字母**，消息操作按钮其次，外部按钮最后）、`i` 聚焦输入框、**`Esc` 退出输入框**；
   `Ctrl+方向键` 像素级滚动
-- **焦点在输入框里时一个键都不接管**；键位与选项按 [Vimium-C](https://github.com/gdh1995/vimium-c) 语义实现，
-  **可直接导入 `vimium_c-*.json` 选项导出**（已采纳/未采纳逐条给出理由）
+- **焦点在输入框里时一个键都不接管**；键位与选项按 [Vimium-C](https://github.com/gdh1995/vimium-c) 语义实现
+  （**Apache-2.0，未复制代码**，对照表见其 README §11），**可直接导入 `vimium_c-*.json` 选项导出**
 - **自带设置页**（设置 → Oblivion 键盘导航）：键位文本、滚动、输入框、查找、链接提示、导入、排除规则与只读自检
-- **开销可自证**：真实页面里候选扫描 7.5–19ms（优化前 111.8ms）、按键平均 1.8ms/峰值 3ms；
-  无轮询、无常驻注入 DOM
-- 挂载走 profile 补丁插入行，**无需重启应用**；自带诊断证据链（本机 DSHX 验证面不可用，见 [`WORKSPACE.md`](WORKSPACE.md)）
+- **开销可自证**：真实页面里候选扫描 7.5–19ms（优化前 111.8ms）、按键平均 1.8ms/峰值 3ms；无轮询、无常驻注入 DOM
+
+③ [`@oblivion/core`](oblivion-core/README.md) v0.1.2（**认知层内核**，Host 侧 `object` 插件）：
+
+- 设计书的 **Phase 2–6 合并成一个包**：knowledge / qa-loop / perspective / feedback / graph / profile
+- **问答即生长**：`turn/end` 单触发 → 四层筛选（精确去重 / 语义重合 / L3 四条规则 / 价值打分）→ JSON 条目 + MD 落盘 + 共现建边 + 档案更新
+- **认知陪伴**：主动（≤3 会话）/ 深度（连续同维度 ≥3 次 → ≥3 候选）/ 陪伴期三通道，走 `systemPrompt` 下一轮注入；档案置信度 <0.3 一律不发
+- **零侵入**：不阻塞主链路、无 cron/Worker/定时器（图衰减与反馈保留期都是**读取时惰性计算**）、防回灌
+- 模型面 5 个工具：`oblivion_query` / `oblivion_capture` / `oblivion_profile` / `oblivion_feedback` / `oblivion_graph_neighbors`
+- 闸门：契约 8/8、test 12/12、selfcheck 17/17；**真实 Host 装载待重启 App 验证**（Host 侧改码不会靠禁用再启用重新导入）
 
 > ⚠️ **本仓库目前没有 26 个 `oblivion-*` 能力包。** 那是 **v4.0 及更早**的计划；
 > v4.1 已把它**收敛为 8 个插件**（宿主提供的不再重造）。**不要把旧计划读成现状。**
-> 完整的插件清单与路线图见设计书 [§9.1](.design/ARCHITECTURE.MD) 与 [§18](.design/ARCHITECTURE.MD)。
+>
+> **设计书写的 ≠ 已做的**：哪些做完了、哪些没做、哪些是设计书自己写错（例如 `session:complete` 这个钩子根本不存在），
+> 一律看 [设计书 §33 现状对账与缺口](.design/ARCHITECTURE.MD) 与 [HANDOFF.md](HANDOFF.md)。
+> 当前**未做**的主要是：文档导入解析（anydoc）、向量检索、`oblivion_docs/` 目录结构与 `md_rules.yaml` 分类、
+> MD frontmatter 与 `[[双链]]`、健康度告警、评价入口 UI、内容创作（Phase 6）、Obsidian 适配（Phase 7）、
+> 真机 e2e（Phase 9）、根 `VERSION` 递增器。
 
 ---
 
