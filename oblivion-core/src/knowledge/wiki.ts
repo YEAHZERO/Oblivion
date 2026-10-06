@@ -39,6 +39,7 @@ import { writeFile } from '../util/fs.js';
 import { expandHome } from '../util/paths.js';
 import { isoDate } from '../util/time.js';
 import { listNotes, freeName, type NoteRef, type RetitleIndexHost } from './retitle.js';
+import { sanitizeTags } from './naming.js';
 import { safeDirName, safeName, writeIndexNote, type MdClassifyMap } from '../qa-loop/md-writer.js';
 import type { KnowledgeItem } from '../types.js';
 
@@ -51,6 +52,8 @@ export const WIKI_DIR_FALLBACK = '02_Wiki页面';
 const PAGE_MEMBER_MAX = 40;
 /** 一篇笔记最多指回几个主题页。 */
 const NOTE_WIKI_MAX = 5;
+/** 一页主题页最多挂几个标签（比笔记宽，一页要代表它覆盖的范围）。 */
+const WIKI_TAG_MAX = 12;
 
 export interface WikiMember {
   id: string;
@@ -164,7 +167,9 @@ export function renderWikiPage(input: { cluster: WikiCluster; members: WikiMembe
     .map((t) => String(t).trim().replace(/^#+/, '').toLowerCase())
     .filter((t) => t !== '');
   // 主题页的标签 = 模型给的 + 成员笔记的并集（最多 12 个）：一页能代表它覆盖的范围。
-  const tags = [...new Set([...clusterTags, ...members.flatMap((m) => m.tags)])].slice(0, 12);
+  // 过 `sanitizeTags()`：成员笔记的 tags 是历史数据（可能带 `md`/`json`/纯数字这类噪声），
+  // 不清洗就会把 12 个标签位吃光（所有者 2026-10-06：「顺手把标签噪声治掉」）。
+  const tags = sanitizeTags([...clusterTags, ...members.flatMap((m) => m.tags)], WIKI_TAG_MAX);
   const flagged = members.filter((m) => STATUS_NOTE[m.status] !== undefined);
 
   const lines: string[] = [

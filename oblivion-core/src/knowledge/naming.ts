@@ -26,6 +26,8 @@
  *
  * 打标签：技术词 + 包名（`@scope/name`、`dsh-*`）+ 正文里的 `#tag` + 一张中文词表
  * （中文没有词边界，靠 `[/插件/ → plugin]` 这种映射把内容变成能筛的标签）。
+ * 出口一律过 `sanitizeTags()`：格式词（`md`/`json`/`yaml`/`ts`…）、路径碎片（`Users`/`local`…）、
+ * 纯数字（`15044`）都不是标签，只能把标签位吃光（所有者 2026-10-06 点名「标签噪声」）。
  */
 
 /** 答案里那些「是结构、不是内容」的小标题，不该拿来当名字。 */
@@ -125,6 +127,27 @@ const WEAK_TITLES = new Set([
 /** 技术词（与 0.1.x 的旧表兼容，另补了几个本机在用的）。 */
 const TECH =
   /\b(dsh|dshx|cordis|npm|pnpm|docker|sqlite|fts5|json|jsonl|yaml|toml|api|mcp|wsl2?|arkts|flutter|esbuild|vitest|node|nodejs|react|typescript|javascript|playwright|chromium|msedge|edge|chrome|obsidian|markdown|tsx|ts|js|md)\b/gi;
+
+/**
+ * 标签黑名单：**只说明「这是什么格式 / 这是路径上的哪个词」，不说明「讲了什么」**。
+ *
+ * 起因（所有者 2026-10-06）：「顺手把标签噪声治掉」——主题页与笔记实测长出了
+ * `#md #json #ts #js #yaml #untitled #15044 #Users` 这类标签：
+ *   - 格式词来自 `TECH`（`ts|js|md|json` 这些**方言词**在每篇笔记里都命中，等于没打）；
+ *   - `15044` / `Users` 这种来自 `topicHint`（问句里第一个词串）与路径碎片；
+ * 一页只能挂 12 个标签，噪声把真正的主题词挤出去了。
+ */
+const TAG_STOPWORDS = new Set([
+  // 文件格式 / 扩展名：出现了不代表主题
+  'md', 'markdown', 'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini', 'txt', 'csv', 'log',
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'css', 'html', 'xml',
+  // 占位词与路径碎片（实测出现过）
+  'untitled', 'readme', 'read', 'docs', 'tmp', 'temp',
+  'users', 'user', 'projects', 'library', 'appdata', 'programs', 'local', 'home', 'desktop', 'downloads',
+]);
+
+/** 一篇笔记最多挂几个标签（索引页/主题页才不会被标签淹没）。 */
+export const TAG_MAX = 8;
 
 /** 中文 → 英文标签：中文没词边界，命中即打标，让中文笔记也有可筛的标签。 */
 const ZH_TAGS: Array<[RegExp, string]> = [
@@ -242,27 +265,54 @@ export function titleFromQA(question: string, answer: string): string {
 }
 
 /**
+ * 标签清洗（纯函数，`tagsFromQA()` 与主题页渲染共用）。
+ *
+ * 口径：
+ *   ① 去 `#` 前缀与首尾空白；空串丢掉；
+ *   ② `TAG_STOPWORDS` 里的格式词/路径碎片丢掉；
+ *   ③ **必须含字母**（`15044` 这种纯数字是 topic 碎片，不是标签）；
+ *   ④ 大小写不敏感去重（`TS` 与 `ts` 是同一个标签）；
+ *   ⑤ 保留 `cap` 个（默认 8）。
+ */
+export function sanitizeTags(tags: readonly string[], cap: number = TAG_MAX): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of tags ?? []) {
+    const value = squeeze(String(raw ?? '')).replace(/^#+/, '');
+    if (value === '' || value.length > 40) continue;
+    const lower = value.toLowerCase();
+    if (TAG_STOPWORDS.has(lower)) continue;
+    if (!/\p{L}/u.test(value)) continue;
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    out.push(value);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+/**
  * 标签：技术词 + 包名（`@scope/name` / `dsh-*`）+ 正文 `#tag` + 中文词表命中。
  *
  * 扫的是**问句 + 答案**（旧实现只扫答案，于是「问句里点名的插件」反而没被打上）。
- * 上限 8 个（与旧口径一致，索引页才不会被标签淹没）。
+ * 出口统一过 `sanitizeTags()`（上限 8，与旧口径一致）。
  */
 export function tagsFromQA(question: string, answer: string, extra: string[] = []): string[] {
   const haystack = (question ?? '') + '\n' + (answer ?? '');
-  const out = new Set<string>();
+  const out: string[] = [];
   for (const tag of extra) {
     // `extra` 传进来的是 `topicHint`（通常是包名/技术词）。回填时实测到过一条坏标签：
     // 某篇笔记的 topic 就是问句本身（`继续查并修掉这个激活问题`），于是整句话被当标签打上。
     // 标签只收「技术词形状」（ASCII、无空格），其余一律丢掉。
     const value = squeeze(tag);
-    if (value !== '' && value.length <= 40 && /^[A-Za-z0-9@][A-Za-z0-9@._+/-]*$/.test(value)) out.add(value);
+    if (value !== '' && value.length <= 40 && /^[A-Za-z0-9@][A-Za-z0-9@._+/-]*$/.test(value)) out.push(value);
   }
-  for (const match of haystack.matchAll(TECH)) out.add(match[0].toLowerCase());
+  for (const match of haystack.matchAll(TECH)) out.push(match[0].toLowerCase());
   // 包名：@scope/name 与 dsh-* 是这台机器上「最有用的一类标签」（一个包名 = 一个主题域）。
-  for (const match of haystack.matchAll(/@[a-z0-9][\w.-]*\/[\w.-]+/gi)) out.add(match[0].toLowerCase());
-  for (const match of haystack.matchAll(/\bdsh-[\w-]+/gi)) out.add(match[0].toLowerCase());
+  for (const match of haystack.matchAll(/@[a-z0-9][\w.-]*\/[\w.-]+/gi)) out.push(match[0].toLowerCase());
+  for (const match of haystack.matchAll(/\bdsh-[\w-]+/gi)) out.push(match[0].toLowerCase());
   // 正文里手写的 #标签。前面不能是 `#`（否则 markdown 的 `## 内容` 会被认成标签「内容」）。
-  for (const match of haystack.matchAll(/(?<![#\w])#([\p{L}\p{N}_-]{2,20})/gu)) out.add(match[1]);
-  for (const [pattern, tag] of ZH_TAGS) if (pattern.test(haystack)) out.add(tag);
-  return [...out].slice(0, 8);
+  for (const match of haystack.matchAll(/(?<![#\w])#([\p{L}\p{N}_-]{2,20})/gu)) out.push(match[1]);
+  for (const [pattern, tag] of ZH_TAGS) if (pattern.test(haystack)) out.push(tag);
+  return sanitizeTags(out, TAG_MAX);
 }

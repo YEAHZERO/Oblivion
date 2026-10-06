@@ -267,6 +267,28 @@ describe('命名与打标签（由内容决定，不调模型）', () => {
     assert.deepEqual(kit.tagsFromQA('', ''), []);
   });
 
+  /**
+   * 所有者 2026-10-06：「顺手把标签噪声治掉」。
+   *
+   * 实测噪声三类：格式词（`#md #json #ts #js #yaml`，来自 `TECH`）、
+   * 路径碎片（`#Users`，来自 `topicHint`）、纯数字（`#15044`，topic 碎片）。
+   */
+  it('标签噪声：格式词 / 路径碎片 / 纯数字一律不打，且大小写不敏感去重', () => {
+    assert.deepEqual(
+      kit.sanitizeTags(['md', 'JSON', 'yaml', 'ts', 'Users', '15044', 'plugin', '#md', 'PLUGIN', '']),
+      ['plugin'],
+    );
+    const tags = kit.tagsFromQA(
+      '改 cordis.patch.yml 里的 json 与 ts 配置',
+      '跑 npm test，文件在 C:\\Users\\liveu\\Projects\\Oblivion',
+    );
+    for (const noise of ['md', 'json', 'yaml', 'ts', 'js', 'users', 'projects', 'local', '15044']) {
+      assert.ok(!tags.includes(noise), '不该出现噪声标签 ' + noise + '：' + tags.join(','));
+    }
+    assert.ok(tags.includes('npm'), '真标签要留住：' + tags.join(','));
+    assert.ok(tags.length <= kit.TAG_MAX);
+  });
+
   it('deriveTitle 走同一条口径（不再是问句前 60 字）', () => {
     const title = kit.deriveTitle({
       question: '查看这个方案：# Oblivion C 方案完整设计书',

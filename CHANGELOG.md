@@ -12,7 +12,29 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/daily-life` v0.0.1 + `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.14 + v0.0.13：MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写、知识库每篇文档下方显示「相关主题 / 关键词 / 日期」
+## [未发布] — `@oblivion/core` v0.2.9 + `@oblivion/daily-life` v0.0.1 + `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.14 + v0.0.13：标签噪声治理（格式词 / 路径碎片 / 纯数字不再成标签）、14 篇散篇笔记归并进已有主题页、MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写、知识库每篇文档下方显示「相关主题 / 关键词 / 日期」
+
+### `@oblivion/core` v0.2.9 —— 标签噪声治理 + 主题页归并（存量清洗）
+
+所有者指令（引，m05443）：『把那 4 篇新笔记并进已有主题页（外加顺手把标签噪声治掉）』。
+
+主题页与笔记实测长出了 `#md #json #ts #js #yaml #untitled #15044 #Users` 这类标签：格式词来自
+`TECH`（`ts|js|md|json` 这些**方言词**每篇都命中，等于没打），路径碎片与纯数字来自 `topicHint`，
+一页只挂 12 个标签，噪声把真正的主题词挤出去了。
+
+| 位置 | 改动 |
+| --- | --- |
+| `src/knowledge/naming.ts` | 新增 `TAG_STOPWORDS`（格式词 + 路径碎片）、`TAG_MAX = 8`、`sanitizeTags(tags, cap)`：去 `#`、丢黑名单、**必须含字母**（`15044` 不成词）、大小写不敏感去重、截断到 `cap`；`tagsFromQA()` 的出口由 `[...new Set(out)].slice(0, 8)` 改为统一过它 |
+| `src/knowledge/wiki.ts` | 主题页标签并集改走 `sanitizeTags(..., WIKI_TAG_MAX = 12)` —— 成员笔记里的历史脏标签不会再吃满标签位 |
+| `src/testkit.ts` | 导出 `sanitizeTags` / `TAG_MAX`（自检与一次性运维脚本都靠它） |
+| `test/core.test.mjs` | 新增「标签噪声」用例：格式词/路径碎片/纯数字一律不打、真标签（`npm`）留住、大小写去重（52/52 通过） |
+
+存量清洗（一次性运维脚本，**不入库**）：46 篇笔记的 frontmatter `tags:` 与 `>Tags：` 行按新口径重写
+（走 `parseNote` + `renderNote`，即改名那条路的官方写入器）；**10 个主题页全部重渲**（成员 = 页面原成员
++ 归并进来的散篇，`summary` 与模型标签按现值回传），14 篇散篇笔记归进 5 个已有主题页
+（搜索与抓取 9→13、MCP 与 http-bridge 5→9、Oblivion 认知层 8→12、外部工具对接 3→4、侧栏面板 8→9），
+笔记挂页率 **56/76 → 70/76**；无一页掉成员（逐行比对备份）。剩下 6 篇是一簇 DailyLife 笔记，
+没有现成的页可归 ⇒ 另议是否新建主题页。
 
 ### `@oblivion/daily-life` v0.0.1 —— 个人资产账本（**新包**，第四条产品线）
 
