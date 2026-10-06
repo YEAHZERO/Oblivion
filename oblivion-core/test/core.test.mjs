@@ -666,8 +666,10 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
     const page = kit.renderWikiPage({
       cluster: { title: '主题页样板', summary: '合并后的一句话。', members: [], tags: ['GRAPH'] },
       members: [
-        { id: 'a', file: 'a.md', title: '现行那篇', ask: '原来问什么', status: 'active', tags: ['dsh'], excerpt: '' },
-        { id: 'b', file: 'b.md', title: '旧版那篇', ask: '', status: 'superseded', tags: ['plugin'], excerpt: '' },
+        { id: 'a', file: '现行那篇.md', title: '现行那篇', ask: '原来问什么', status: 'active', tags: ['dsh'], excerpt: '' },
+        { id: 'b', file: '旧版那篇.md', title: '旧版那篇', ask: '', status: 'superseded', tags: ['plugin'], excerpt: '' },
+        // 文件名与标题不一致（标题里有 `:`）：链接必须跟着**文件名**走
+        { id: 'c', file: 'cordis_group 形状核对.md', title: 'cordis:group 形状核对', ask: '两层同插', status: 'active', tags: [], excerpt: '' },
       ],
       at: Date.parse('2026-10-06T12:00:00Z'),
     });
@@ -677,9 +679,11 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
     assert.ok(page.includes('合并后的一句话。'));
     assert.ok(page.includes('- [[现行那篇]] —— 原来问什么'), '成员要带原问句：' + page);
     assert.ok(page.includes('- [[旧版那篇]]（已被新版取代）'), '非 active 成员要标出来');
+    assert.ok(page.includes('- [[cordis_group 形状核对]]'), '链接文本用文件名，不用带 : 的标题：' + page);
+    assert.ok(!page.includes('[[cordis:group'), '带 : 的标题不能当链接');
     assert.ok(page.includes('## 口径提示'), '有非 active 成员时要有口径提示');
     assert.ok(page.includes('tags: ["graph", "dsh", "plugin"]'), '标签并集且小写：' + page);
-    assert.ok(/<!-- oblivion:wiki title=主题页样板 members=2 at=\d+ -->/.test(page), '要有幂等尾标');
+    assert.ok(/<!-- oblivion:wiki title=主题页样板 members=3 at=\d+ -->/.test(page), '要有幂等尾标');
   });
 
   it('落地：写主题页 + 给每篇成员笔记补一行 > Wiki + 不动正文；重跑是更新同一页', async () => {
@@ -789,8 +793,40 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
     }
   });
 
-  it('空标题 / 全是陌生 id 的簇按失败回报，不写空文件', async () => {
+  it('双链按文件名：标题里有 : 或 / 时，链接指向消毒后的文件名而不是标题', async () => {
     const f = fixture();
+    try {
+      // 成员标题里带 `:`：落盘文件名会被消毒成 `_`，链接文本必须跟着改，否则 Obsidian 里是悬空链接
+      writeFileSync(
+        join(f.mdDir, '清理死进程残留 + cordis_group 形状核对.md'),
+        noteOf('ts-w-3', '清理死进程残留 + cordis:group 形状核对', '把残留一次清干净', '清完了。'),
+        'utf8',
+      );
+      const cluster = { title: 'A/B：两条工程实践', summary: 'x', members: ['ts-w-1', 'ts-w-3'], tags: [] };
+      const { results } = await serviceOf(f).apply([cluster]);
+      assert.ok(results[0].file.includes('_') && !results[0].file.includes('/'), '页面文件名要消毒：' + results[0].file);
+
+      const page = readFileSync(join(f.mdRoot, '02_Wiki页面', results[0].file), 'utf8');
+      assert.ok(page.includes('- [[清理死进程残留 + cordis_group 形状核对]]'), '成员链接用文件名：' + page);
+      assert.ok(!page.includes('[[清理死进程残留 + cordis:group'), '不能拿带 : 的标题当链接');
+
+      const member = readFileSync(join(f.mdDir, '清理死进程残留 + cordis_group 形状核对.md'), 'utf8');
+      assert.ok(
+        member.includes('> Wiki： [[' + results[0].file.replace(/\.md$/, '') + ']]'),
+        '回链也要用落盘文件名：' + member,
+      );
+
+      // 关联知识双链同理：`appendRelatedLinks` 收的是标题，写出去的是文件名
+      const related = join(f.mdDir, '事件作用域.md');
+      assert.equal(await kit.appendRelatedLinks(related, ['清理死进程残留 + cordis:group 形状核对']), true);
+      const fixed = readFileSync(related, 'utf8');
+      assert.ok(fixed.includes('- [[清理死进程残留 + cordis_group 形状核对]]'), '关联知识也要按文件名：' + fixed);
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('空标题 / 全是陌生 id 的簇按失败回报，不写空文件', async () => {    const f = fixture();
     try {
       const { results } = await serviceOf(f).apply([
         { title: '', summary: 'x', members: ['ts-w-1'] },

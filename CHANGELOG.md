@@ -12,7 +12,24 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/core` v0.2.4 + v0.2.3 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.13：主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+## [未发布] — `@oblivion/core` v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.13：主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链按文件名、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+
+### `@oblivion/core` v0.2.5 —— 双链按文件名（标题里的 `:` `/` 会让链接悬空）
+
+- 真机回归发现：主题页的成员链接与笔记回链用的是**标题**，而文件名是消毒过的
+  （`safeName` 把 `:` `/` 换成 `_`）—— 于是本机出现了
+  `[[清理死进程残留 + cordis:group 形状核对]]`、`[[Oblivion 认知层…（C 方案 → 0.1.x / 0.2.x）]]`
+  这种链接：在 Obsidian 里点开是「未创建的笔记」，所有者要的**双向可追溯当场断掉**。
+- `src/qa-loop/md-writer.ts`：`safeName()` 改为 `export`（文件名消毒只有一套口径），
+  `appendRelatedLinks()` 写出去之前先把链接文本过一遍 `safeName()`（已有链接也一起归一化，
+  于是「同一篇笔记的旧链接」与「新链接」能正确去重）。
+- `src/knowledge/wiki.ts`：新增私有 `linkTargetOf(member)`（**取落盘文件名去掉 `.md`**，
+  没有 `file` 时才退回 `safeName(title)`），`renderWikiPage()` 的来源笔记与口径提示都用它；
+  `writebackWikiLink(raw, wikiLink)` 的参数语义改成「主题页的落盘文件名」，
+  `apply()` 传 `file.replace(/\.md$/i, '')`（同名让路成 `<标题>-oblivion.md` 时链接也跟着对）。
+- 测试 **33/33**（新增一项：标题里带 `:` 的成员 → 页面链接是 `cordis_group 形状核对`、
+  回链用落盘页名、`appendRelatedLinks` 同样按文件名；并把纯函数夹具改成「文件名与标题不一致」）；
+  自检 **32/32**（双链项加一条「链接按文件名」断言）。
 
 ### `@oblivion/core` v0.2.4 —— 第 9 个工具 `oblivion_wiki`（主题页）+ 关联知识不再堆重复段
 

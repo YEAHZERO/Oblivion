@@ -742,8 +742,12 @@ await check('关联知识双链：重复段并成一段 + 丢弱标题 + 幂等�
   );
   assert.ok(!after.includes('[[OK]]') && !after.includes('[[继续]]'), '弱标题要清掉');
   assert.ok(after.includes('正文不能被双链改写。'), '正文一个字不动');
+  // 链接文本必须是**文件名**：标题里带 `:` 时文件名被消毒成 `_`，用标题当链接在 Obsidian 里是悬空的
+  assert.equal(await kit.appendRelatedLinks(path, ['清理死进程残留 + cordis:group 形状核对']), true);
+  const fixed = readFileSync(path, 'utf8');
+  assert.ok(fixed.includes('- [[清理死进程残留 + cordis_group 形状核对]]'), '关联知识要按文件名：' + fixed);
   assert.equal(await kit.appendRelatedLinks(path, ['数据目录归属之谜']), false, '第二次不该再写盘');
-  return '段 1 个 / 链接 2 条 / 弱标题已清';
+  return '段 1 个 / 链接 3 条 / 弱标题已清 / 链接按文件名';
 });
 
 await check('主题页（oblivion_wiki）：模型判簇 → 落 02_Wiki页面/ + 成员回链 + 重跑更新同一页', async () => {

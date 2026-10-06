@@ -21,7 +21,7 @@
  *      （免得重复造页）；
  *   ② 模型回 `clusters: [{ title, summary, members: [id…], tags }]`；
  *   ③ `apply`：每簇写 `<mdRoot>/02_Wiki页面/<标题>.md`（frontmatter + 概述 + 来源笔记双链 +
- *      标签 + 幂等标记），再给**每篇成员笔记**补一行 `> Wiki：[[标题]]`（双向可追溯），
+ *      标签 + 幂等标记），再给**每篇成员笔记**补一行 `> Wiki：[[主题页文件名]]`（双向可追溯），
  *      最后重建 `00-Index/索引.md`。
  *
  * ## 三条不变量（与改名同一套底线）
@@ -39,7 +39,7 @@ import { writeFile } from '../util/fs.js';
 import { expandHome } from '../util/paths.js';
 import { isoDate } from '../util/time.js';
 import { listNotes, freeName, type NoteRef, type RetitleIndexHost } from './retitle.js';
-import { safeDirName, writeIndexNote, type MdClassifyMap } from '../qa-loop/md-writer.js';
+import { safeDirName, safeName, writeIndexNote, type MdClassifyMap } from '../qa-loop/md-writer.js';
 import type { KnowledgeItem } from '../types.js';
 
 const ID_MARKER = 'oblivion:';
@@ -137,6 +137,19 @@ const STATUS_NOTE: Record<string, string> = {
 };
 
 /**
+ * 双链的目标永远是**磁盘文件名**（不含 `.md`）。
+ *
+ * 为什么不能用标题：Obsidian 按文件名解析 `[[…]]`，而文件名是消毒过的
+ * （`safeName` 把 `:` `/` 换成 `_`）。现场就有 `[[清理死进程残留 + cordis:group 形状核对]]`
+ * 这种带 `:` 的链接 —— 点开是「未创建的笔记」，双向可追溯当场断掉。
+ */
+function linkTargetOf(member: WikiMember): string {
+  const stem = String(member.file ?? '').replace(/\\/g, '/').split('/').pop() ?? '';
+  const base = stem.replace(/\.md$/i, '').trim();
+  return base !== '' ? base : safeName(member.title);
+}
+
+/**
  * 渲染一页主题页（纯函数，便于单测与自检）。
  *
  * 版式刻意与笔记同构（frontmatter + `>` 元信息 + 小节 + 尾标），这样 Obsidian 里
@@ -185,7 +198,7 @@ export function renderWikiPage(input: { cluster: WikiCluster; members: WikiMembe
   for (const member of members.slice(0, PAGE_MEMBER_MAX)) {
     const flag = STATUS_NOTE[member.status] ?? '';
     const ask = member.ask !== '' && member.ask !== member.title ? ' —— ' + member.ask.replace(/\s+/g, ' ') : '';
-    lines.push('- [[' + member.title + ']]' + flag + ask);
+    lines.push('- [[' + linkTargetOf(member) + ']]' + flag + ask);
   }
   if (members.length > PAGE_MEMBER_MAX) {
     lines.push('- …（另有 ' + (members.length - PAGE_MEMBER_MAX) + ' 篇，见 `00-Index/索引.md`）');
@@ -196,7 +209,7 @@ export function renderWikiPage(input: { cluster: WikiCluster; members: WikiMembe
       '## 口径提示',
       '',
       '本页成员里有 ' + flagged.length + ' 篇不是 `active`（**旧版不会被删，冲突不会被合并**）：',
-      ...flagged.map((m) => '- [[' + m.title + ']]' + (STATUS_NOTE[m.status] ?? '')),
+      ...flagged.map((m) => '- [[' + linkTargetOf(m) + ']]' + (STATUS_NOTE[m.status] ?? '')),
       '',
     );
   }
@@ -215,11 +228,13 @@ export function renderWikiPage(input: { cluster: WikiCluster; members: WikiMembe
 /**
  * 给一篇笔记写回 `> Wiki：[[主题页]]` 一行（纯函数）。
  *
+ * `wikiLink` 必须是**主题页在磁盘上的文件名**（不含 `.md`），不是簇标题 —— 标题里的
+ * `:` `/` 会被消毒，用标题当链接文本会指向一篇不存在的笔记。
  * 只认我们自己写的笔记（正文含 `oblivion:` 标记）；一行里最多指 5 页；已指过同一页则原样返回。
  * 首次插入点在顶部 `>Date/>Source/>Note/>Tags/>Ask` 元信息块的末尾 —— 双链要显眼，但不打断正文。
  */
-export function writebackWikiLink(raw: string, wikiTitle: string): string {
-  const title = wikiTitle.trim();
+export function writebackWikiLink(raw: string, wikiLink: string): string {
+  const title = wikiLink.trim();
   if (title === '' || raw === '' || !raw.includes(ID_MARKER)) return raw;
   const lines = raw.split(/\r?\n/);
   const at = lines.findIndex((line) => /^>\s*Wiki[:：]/.test(line));
@@ -349,12 +364,14 @@ export function createWikiService(deps: {
         await writeFile(join(wikiDir, file), page, 'utf8');
         taken.add(file);
 
-        // 写回：只在成员笔记顶部元信息块加一行 `> Wiki：[[标题]]`，正文一个字不动。
+        // 写回：只在成员笔记顶部元信息块加一行 `> Wiki：[[主题页文件名]]`，正文一个字不动。
+        // 链接文本用**落盘后的文件名**（可能因为同名让路带上 `-oblivion` 后缀）。
+        const pageLink = file.replace(/\.md$/i, '');
         let wrote = 0;
         for (const note of picked) {
           const raw = await readFile(note.path, 'utf8').catch(() => '');
           if (raw === '') continue;
-          const next = writebackWikiLink(raw, title);
+          const next = writebackWikiLink(raw, pageLink);
           if (next === raw) continue;
           await writeFile(note.path, next, 'utf8');
           wrote += 1;

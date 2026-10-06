@@ -92,7 +92,11 @@ export function classifyDir(item: KnowledgeItem, map: MdClassifyMap | undefined)
   return MD_FALLBACK_DIR;
 }
 
-function safeName(topic: string): string {
+/**
+ * 笔记文件名消毒：**双链的目标也必须是它**（`[[X]]` 在 Obsidian 里按文件名解析，
+ * 用标题当链接文本时，标题里的 `:` `/` 会被消毒成 `_`，链接就悬空了）。
+ */
+export function safeName(topic: string): string {
   const cleaned = (topic || 'untitled')
     .replace(/[\\/:*?"<>|]/g, '_')
     // 首尾的点/空格是**实际踩过的坑**：模型给的名字是「.gitignore 整棵忽略 + 搜索插件分工」，
@@ -437,16 +441,18 @@ function splitRelated(text: string): { head: string; links: string[] } {
  * **只动我们自己写的笔记**（含 `oblivion:` 标记）—— 用户自有笔记一个字都不改（与防误伤同一条原则）。
  */
 export async function appendRelatedLinks(notePath: string, titles: string[]): Promise<boolean> {
+  // 双链写的是**磁盘文件名**：`[[标题]]` 里若带 `:` `/`，Obsidian 找不到那篇笔记（悬空链接）。
+  const target = (t: string): string => safeName(String(t).trim().replace(/^\[\[|\]\]$/g, ''));
   const wanted = titles
-    .map((t) => String(t).trim().replace(/^\[\[|\]\]$/g, ''))
+    .map(target)
     // 弱标题不进双链：回填实测的 `[[OK]]`、`[[继续]]` 就是从这里漏进来的。
-    .filter((t) => t !== '' && !isWeakTitle(t));
+    .filter((t) => t !== '' && t !== 'untitled' && !isWeakTitle(t));
   if (wanted.length === 0) return false;
   const existing = await readFile(notePath, 'utf8').catch(() => '');
   if (existing === '' || !existing.includes(ID_MARKER)) return false;
 
   const { head, links } = splitRelated(existing);
-  const merged = links.filter((t) => t !== '' && !isWeakTitle(t));
+  const merged = links.map(target).filter((t) => t !== '' && t !== 'untitled' && !isWeakTitle(t));
   for (const title of wanted) if (!merged.includes(title)) merged.push(title);
   const final = merged.slice(0, RELATED_MAX);
 
