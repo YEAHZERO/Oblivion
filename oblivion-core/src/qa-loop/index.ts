@@ -7,6 +7,7 @@ import type { KnowledgeService } from '../knowledge/index.js';
 import type { ProfileService } from '../profile/index.js';
 import { expandHome } from '../util/paths.js';
 import { describeCtx } from '../util/ctx-shape.js';
+import { clearRelatedKnowledge, rememberRelatedKnowledge, setAttachHandler } from '../prompt-inject.js';
 import type { DecisionRecord } from '../stats/trace.js';
 import { extractQAPair, type TurnEventLike } from './extract.js';
 import { appendRelatedLinks, ensureMdDirs, notePathFor, writeIndexNote, writeMD, type MdAction } from './md-writer.js';
@@ -125,6 +126,17 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
    * 同样是用户层挂载，形状必然不同。布尔值不够，这里落全量形状。
    */
   const ctxShape = describeCtx(ctx);
+
+  /**
+   * **把"补挂 agent 订阅"的能力交给宿主回调通道**（见 `prompt-inject.ts` 的说明）。
+   *
+   * `attachAgent` / `pickAgent` 都是函数声明（会提升），所以此刻注册闭包是安全的 ——
+   * 真正被调用是在下一轮 `systemPrompt.section` 或工具执行时。
+   */
+  setAttachHandler((payload: unknown) => {
+    noteLifecycle('prompt.agent', payload);
+    attachAgent(pickAgent(payload));
+  });
 
   /**
    * 安全读取可能被宿主守卫拦下的成员。
@@ -309,6 +321,18 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
         sessionId: qa.sessionId,
         sources: qa.sources.length,
       });
+
+      // **③ 检索命中注入下一轮提示词**：拿这次的问题去查库（共现扩展检索），
+      // 命中的标题存进 prompt-inject，由 `systemPrompt.section` 在下一轮追加。
+      // 失败只记日志：注入是锦上添花，绝不影响捕获。
+      try {
+        const hits = await deps.knowledge.query({ query: qa.question, limit: 3 });
+        rememberRelatedKnowledge(
+          hits.results.filter((hit) => hit.id !== result.item?.id).map((hit) => hit.title),
+        );
+      } catch (error) {
+        ctx.logger?.warn?.(config.logPrefix + ' 相关既有知识检索失败：%o', error);
+      }
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + ' qa-loop failed: %o', error);
       await trace({

@@ -23,6 +23,7 @@ import { registerDigest } from './digest/index.js';
 import { registerKnowledge } from './knowledge/index.js';
 import { registerPerspective } from './perspective/index.js';
 import { OBLIVION_SYSTEM_PROMPT } from './prompt.js';
+import { attachAgentFromPayload, readRelatedHint } from './prompt-inject.js';
 import { registerProfile } from './profile/index.js';
 import { registerQaLoop } from './qa-loop/index.js';
 import { registerStats } from './stats/index.js';
@@ -78,8 +79,13 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
         order: ctx.systemPrompt.getSectionOrder(OBLIVION_SECTION),
         text: (context: { agent?: unknown }) => {
           if (context?.agent === undefined) return '';
+          // **唯一可靠的 agent 订阅入口**：宿主每次请求都会把当前 agent 交给我们。
+          // 根上下文的事件派发整体不生效（实测 lifecycleSeen 为空），所以补挂只能从这里发生。
+          attachAgentFromPayload(context.agent);
+          // 陪伴内容（有队列时才追加）+ 上一轮捕获检索到的相关既有知识（③ 检索注入）
           const extra = perspective?.takePending() ?? '';
-          return extra ? OBLIVION_SYSTEM_PROMPT + '\n\n' + extra : OBLIVION_SYSTEM_PROMPT;
+          const related = readRelatedHint();
+          return [OBLIVION_SYSTEM_PROMPT, extra, related].filter((part) => part !== '').join('\n\n');
         },
       }),
     'oblivion-core: system prompt section',

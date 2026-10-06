@@ -449,6 +449,20 @@ function describeCtx(ctx) {
   };
 }
 
+// src/prompt-inject.ts
+var attachHandler;
+function setAttachHandler(handler) {
+  attachHandler = handler;
+}
+var RELATED_TTL_MS = 15 * 60 * 1e3;
+var RELATED_MAX = 3;
+var related;
+function rememberRelatedKnowledge(titles, at = Date.now()) {
+  const cleaned = [...new Set(titles.map((title) => String(title).trim()).filter((title) => title !== ""))].slice(0, RELATED_MAX);
+  if (cleaned.length === 0) return;
+  related = { titles: cleaned, at };
+}
+
 // src/qa-loop/md-writer.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join as join2 } from "node:path";
@@ -758,6 +772,10 @@ function registerQaLoop(ctx, config, deps) {
     return typeof data?.turn === "number" ? data.turn : fallback;
   }
   const ctxShape = describeCtx(ctx);
+  setAttachHandler((payload) => {
+    noteLifecycle("prompt.agent", payload);
+    attachAgent(pickAgent(payload));
+  });
   function safeRead(read) {
     try {
       return read();
@@ -864,11 +882,11 @@ function registerQaLoop(ctx, config, deps) {
       await deps.graph.recordCooccurrence(qa);
       await deps.profile.updateFromQA(qa);
       try {
-        const related = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
-        if (related.length > 0 && notePath !== "") {
-          await appendRelatedLinks(notePath, related.map((item) => item.title));
+        const related2 = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
+        if (related2.length > 0 && notePath !== "") {
+          await appendRelatedLinks(notePath, related2.map((item) => item.title));
         }
-        for (const item of related) {
+        for (const item of related2) {
           const existingItem = deps.knowledge.index.all().find((candidate) => candidate.id === item.id);
           if (!existingItem) continue;
           const path = await notePathFor(mdRoot, existingItem, config.mdClassify);
@@ -886,6 +904,14 @@ function registerQaLoop(ctx, config, deps) {
         sessionId: qa.sessionId,
         sources: qa.sources.length
       });
+      try {
+        const hits = await deps.knowledge.query({ query: qa.question, limit: 3 });
+        rememberRelatedKnowledge(
+          hits.results.filter((hit) => hit.id !== result.item?.id).map((hit) => hit.title)
+        );
+      } catch (error) {
+        ctx.logger?.warn?.(config.logPrefix + " \u76F8\u5173\u65E2\u6709\u77E5\u8BC6\u68C0\u7D22\u5931\u8D25\uFF1A%o", error);
+      }
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + " qa-loop failed: %o", error);
       await trace({
@@ -938,7 +964,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join3(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.14",
+    version: "0.1.15",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",

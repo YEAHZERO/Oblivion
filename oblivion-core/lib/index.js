@@ -1469,6 +1469,34 @@ var OBLIVION_SYSTEM_PROMPT = [
   "> \u4E09\u5957\u6A21\u677F\u5171\u540C\u7684\u786C\u8981\u6C42\uFF1A**\u7ED3\u8BBA\u5148\u884C**\uFF1B\u6709\u5206\u6B67\u5C31\u5E76\u5217\u800C\u975E\u6298\u4E2D\uFF1B\u4E0D\u786E\u5B9A\u5C31\u5199\u300C\u672A\u9A8C\u8BC1\u300D\uFF0C\u4E0D\u8981\u7F16\u9020\u3002"
 ].join("\n");
 
+// src/prompt-inject.ts
+var attachHandler;
+function setAttachHandler(handler) {
+  attachHandler = handler;
+}
+function attachAgentFromPayload(payload) {
+  try {
+    attachHandler?.(payload);
+  } catch {
+  }
+}
+var RELATED_TTL_MS = 15 * 60 * 1e3;
+var RELATED_MAX = 3;
+var related;
+function rememberRelatedKnowledge(titles, at = Date.now()) {
+  const cleaned = [...new Set(titles.map((title) => String(title).trim()).filter((title) => title !== ""))].slice(0, RELATED_MAX);
+  if (cleaned.length === 0) return;
+  related = { titles: cleaned, at };
+}
+function readRelatedHint(now2 = Date.now()) {
+  if (!related) return "";
+  if (now2 - related.at > RELATED_TTL_MS) {
+    related = void 0;
+    return "";
+  }
+  return ["## \u76F8\u5173\u65E2\u6709\u77E5\u8BC6\uFF08\u6765\u81EA\u77E5\u8BC6\u5E93\u68C0\u7D22\uFF09", "", ...related.titles.map((title) => "- " + title)].join("\n");
+}
+
 // src/profile/index.ts
 import { mkdir as mkdir6, readFile as readFile6, writeFile as writeFile6 } from "node:fs/promises";
 import { dirname as dirname2, join as join7 } from "node:path";
@@ -1758,6 +1786,10 @@ function registerQaLoop(ctx, config, deps) {
     return typeof data?.turn === "number" ? data.turn : fallback;
   }
   const ctxShape = describeCtx(ctx);
+  setAttachHandler((payload) => {
+    noteLifecycle("prompt.agent", payload);
+    attachAgent(pickAgent(payload));
+  });
   function safeRead(read) {
     try {
       return read();
@@ -1864,11 +1896,11 @@ function registerQaLoop(ctx, config, deps) {
       await deps.graph.recordCooccurrence(qa);
       await deps.profile.updateFromQA(qa);
       try {
-        const related = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
-        if (related.length > 0 && notePath !== "") {
-          await appendRelatedLinks(notePath, related.map((item) => item.title));
+        const related2 = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
+        if (related2.length > 0 && notePath !== "") {
+          await appendRelatedLinks(notePath, related2.map((item) => item.title));
         }
-        for (const item of related) {
+        for (const item of related2) {
           const existingItem = deps.knowledge.index.all().find((candidate) => candidate.id === item.id);
           if (!existingItem) continue;
           const path = await notePathFor(mdRoot, existingItem, config.mdClassify);
@@ -1886,6 +1918,14 @@ function registerQaLoop(ctx, config, deps) {
         sessionId: qa.sessionId,
         sources: qa.sources.length
       });
+      try {
+        const hits = await deps.knowledge.query({ query: qa.question, limit: 3 });
+        rememberRelatedKnowledge(
+          hits.results.filter((hit) => hit.id !== result.item?.id).map((hit) => hit.title)
+        );
+      } catch (error) {
+        ctx.logger?.warn?.(config.logPrefix + " \u76F8\u5173\u65E2\u6709\u77E5\u8BC6\u68C0\u7D22\u5931\u8D25\uFF1A%o", error);
+      }
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + " qa-loop failed: %o", error);
       await trace({
@@ -1938,7 +1978,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.14",
+    version: "0.1.15",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -2552,7 +2592,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.14";
+var VERSION = "0.1.15";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
@@ -2579,8 +2619,10 @@ function apply(rawCtx, rawConfig) {
       order: ctx.systemPrompt.getSectionOrder(OBLIVION_SECTION),
       text: (context) => {
         if (context?.agent === void 0) return "";
+        attachAgentFromPayload(context.agent);
         const extra = perspective?.takePending() ?? "";
-        return extra ? OBLIVION_SYSTEM_PROMPT + "\n\n" + extra : OBLIVION_SYSTEM_PROMPT;
+        const related2 = readRelatedHint();
+        return [OBLIVION_SYSTEM_PROMPT, extra, related2].filter((part) => part !== "").join("\n\n");
       }
     }),
     "oblivion-core: system prompt section"
