@@ -373,14 +373,17 @@ Cordis 的守卫：`ctx.agents` / `ctx.slots` 这类服务，只要没在插件 
   `- id: '@oblivion/panel'` 被解析成含引号的 `'@oblivion/panel'`，写回时（`:568`）拼成
   `- id: 'mkt-'@oblivion/panel''` → **YAML 坏** → `bad indentation of a mapping entry` → 热挂失败、退化成重启。
 - 实测证据：市场日志 `log.ndjson` 里同一形态 **9 次**（01:55 / 02:14 / 02:35×2 / 02:36×2 / 03:34 / 03:38 / 03:42）。
-- 读取路径：`hot.js:525` 读被热挂的那个包**自己的** `cordis.patch.yml`（或它声明的 `dsh.bundle.patch`）
-  → `:534 parseSimplePatch`。所以只要那份 patch 里有带引号的 `insert` 行就会踩到。
+- 读取路径：`hot.js:522-525` —— `packageRoot = join(profileDir,'node_modules',packageName)`，读**被热挂那个包自己的**
+  `cordis.patch.yml`（或它 `dsh.bundle.patch` 声明的文件）→ `:534 parseSimplePatch`。
 - 同一文件里读 profile 行的另一个解析器（`:659`）写法是**对的**（`['"]?([A-Za-z0-9._/@-]+)`）——
   同一文件两个解析器不一致，这就是缺陷的形状。
-- **不要去改市场的 `node_modules`**：改安装包 = 升级即丢，且越界。两条出路（待裁定）：
-  ① 上游把 `:161` 改成与 `:168` 一致的剥引号写法；
-  ② 让 core/panel 各自带 `dsh.bundle.patch`，并把带引号的 `insert` 行从 `@oblivion/bundle` 的 patch 里撤掉
-  ——让市场看不到带引号的 id（代价：这两个包失去热挂）。
+- **绕不过去**：YAML 里 `@` 开头的标量**必须**加引号，而它读的就是那个包的 patch ——
+  换交付层、把 insert 行搬去 `@oblivion/bundle` 之类的做法都没用，任何 `@` 作用域插件都必然踩到。
+- **不要去改市场的 `node_modules`**：改安装包 = 升级即丢，且越界。出路两条（待裁定）：
+  ① 上游把 `:161` 的 `\S+` 换成与 `:168` 一致的可选引号写法（一处字符类的改动）；
+  ② 本机给 `hot.js:161` 打最小补丁并留 `.orig-backup`（与之前处理 `dsh-creator-mode-plus` 同一手法；
+  代价：市场每次升级都要重打）。
+  在两者落地前，市场热挂 `@` 作用域插件的实际表现是**退化成重启**——功能不受损，只是要重启。
 
 ### 工程基建
 
