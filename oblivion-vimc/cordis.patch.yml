@@ -1,13 +1,20 @@
 # ============================================================
-# @oblivion/vimc — Bundle 层 patch
+# @oblivion/vimc — 热挂（hot-mount）插入行
 #
-# 由 package.json 的 `dsh.bundle.patch` 指向；作用是把本插件的行插进组合树。
+# 本包**刻意不声明** `dsh.bundle`（2026-10-06 用户裁定：从 bundle 层改回热挂）。
+#   有 `dsh.bundle.patch` = 安装器把本包写进 profile 的 `dsh.profile.bundles`，
+#     走 **bundle 层**：组合在启动时算好，改一次要重启 App；
+#   没有它 = 普通依赖，由 profile 的**用户层** `cordis.patch.yml` 的插入行激活，
+#     该补丁层**被监视**，图重算后客户端半边自动重挂，**不必重启**。
+# 代价（当初迁去 bundle 层的理由）：那一行是**机器本地文件、不入库**，换机器或重置
+# profile 就会丢 —— 症状是「装好了却完全不生效，且不报错」。所以它由
+# `tools/verify-dsh-compat.ps1` 的 `patchInsert` 断言把关（profile 里没有这行即 FAIL）。
+#
+# 这份文件有两个用途：
+#   ① 插入行的**正本** —— 照抄到用户层补丁即可（见 README「安装」一节）；
+#   ② 插件市场热挂按钮的**读取源** —— `dshmarket/lib/hot.js:522-525` 取被热挂包
+#      自己的 patch（未声明 `dsh.bundle.patch` 时回退到包根的这份文件）。
 # 注意：patch 会**替换整段 config** 而非合并，因此这里不写 config。
-#
-# 为什么必须走 bundle 层（而不是 profile 的用户层 cordis.patch.yml）：
-#   用户层是**机器本地文件**（~/.dsh/profiles/desktop/cordis.patch.yml），不入库，
-#   换机器或重置 profile 就丢 —— 插件会"装好了却完全不生效"，且不报错。
-#   走 bundle 层后，**包自己声明怎么被组合**，装到哪台机器都一样。
 #
 # id 用**包名**而非 kebab 目录名：`dshx activate-new-client` 有一条硬校验
 # `plugin.id === packageName`（见 tools/dshx/src/internal/new-client.ts），

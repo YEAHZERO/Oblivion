@@ -117,7 +117,7 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 | 插件 | 插件版本 | DSH 版本 | 校验日期 | 结果 | 证据源 |
 | --- | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS 10/10 | `deepseek-harness @ dsh-v0.2.0-rc.2` (`639ed01539`) |
-| `@oblivion/vimc` | 0.2.9 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS **6/6**（迁 bundle 层后） | 同上 |
+| `@oblivion/vimc` | **0.2.10** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **6/6**（改回热挂后） | 同上 + **`patchInsert`**（用户层 insert 行在位） |
 | `@oblivion/core` | **0.1.6** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **8/8** | 同上（host / service `tools`·`systemPrompt` / event `session/event`·`turn/end` / hostPkg `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 | `@oblivion/panel` | **0.0.1** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **5/5** | 同上（host / service `webServer` / **`npmPkg dsh-better-sidebar v0.24.1`** / `__ModuleLoader__` / mount `dependencies`） |
 
@@ -126,7 +126,7 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 | 插件 | 断言的契约 |
 | --- | --- |
 | `@oblivion/brand` | host 范围；5 个槽位的 kind（`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` = `single`，`sidebar.panellist` = `list`，`main` = `keyed`）；`__ModuleLoader__`；`slots` 服务；profile 挂载（dependencies + bundles） |
-| `@oblivion/vimc` | host 范围；`settings.section` = `list`；客户端包 `@deepseek-ai/dsh-client-ui-settings` 存在；`__ModuleLoader__`；profile 挂载（dependencies + **bundles**） |
+| `@oblivion/vimc` | host 范围；`settings.section` = `list`；客户端包 `@deepseek-ai/dsh-client-ui-settings` 存在；`__ModuleLoader__`；profile 挂载（dependencies + **用户层 `cordis.patch.yml` 的 insert 行**，由 `patchInsert` 断言把关） |
 | `@oblivion/core` | host 范围；服务 `tools` / `systemPrompt`；事件 `session/event` / `turn/end`；宿主包 `@deepseek-ai/dsh-tools` / `dsh-system-prompt`；profile 挂载（**仅 dependencies**） |
 | `@oblivion/panel` | host 范围；服务 `webServer`（只读路由）；`__ModuleLoader__`；**`npmPkg dsh-better-sidebar`**（第三方 UI 座位）；profile 挂载（**仅 dependencies**） |
 
@@ -135,14 +135,26 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 > 也不是宿主源码里的服务名（`services` 用不了），所以加了一种断言：**只证明"这个包在本 profile 的 node_modules 里装着"**，
 > 并把版本一并打印出来对账。见 `tools/verify-dsh-compat.ps1` 的 ⑧ 段。
 
+> **新增断言种类 `patchInsert`（2026-10-06）**：`dsh.bundle`（bundle 层，改一次要重启）与「普通依赖 +
+> 用户层补丁插入行」（可热挂）是两条**互斥**的交付路径，而后者落在**机器本地、不入库**的文件里 ——
+> 换机器后它会静默缺失，症状正是「装好了却完全不生效，且不报错」（＝ **R1**）。
+> 包在 `dsh.compat.requires.patchInsert` 里写出自己的 id，本脚本就去
+> `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 找那一行，**找不到即 FAIL**；
+> 同一条断言还拦住「热挂包又出现在 `dsh.profile.bundles` 里」（＝双重挂载，实测会让整棵插件树启动失败）。
+> 见 `tools/verify-dsh-compat.ps1` 的 ⑨ 段与 `mount` 段。
+
 **挂载方式现状**：
 
-- `@oblivion/brand`、`@oblivion/vimc`：**bundle 层**（各自 `package.json` 的 `dsh.bundle.patch` 指向自己的 `cordis.patch.yml`，并在 `dsh.profile.bundles` 中列出）—— 包自己声明怎么被组合，装到哪台机器都一样。
-- `@oblivion/core`：⚠️ **仍走用户层 `cordis.patch.yml` 的 insert 行**（不在 bundles）→ **正处在 R1 描述的暴露面**。
-  ✅ **2026-10-06 所有者裁定：走热挂**（`ARCHITECTURE.MD` §33.6 **DEC-028**）——收益是改参数/落盘即生效、不必重启，
-  代价是换机器 / 重置 profile 会静默失效。缓解：安装片段随包提交（`oblivion-core/cordis.patch.yml` + README §9.1），
-  且本脚本的 `mount profile.dependencies` 断言会在装载缺失时 FAIL。
+- `@oblivion/brand`：**bundle 层**（`package.json` 的 `dsh.bundle.patch` 指向自己的 `cordis.patch.yml`，并在 `dsh.profile.bundles` 中列出）—— 包自己声明怎么被组合，装到哪台机器都一样。
+- `@oblivion/vimc`：**热挂**（**2026-10-06 所有者裁定：从 bundle 层改回**）—— 普通依赖 + 用户层 `cordis.patch.yml` 的 insert 行，**不声明 `dsh.bundle`**。
+  收益：图重算后客户端半边自动重挂，不必重启；代价：换机器 / 重置 profile 会静默失效（同 R1 暴露面）。
+  缓解：安装片段随包提交（`oblivion-vimc/cordis.patch.yml` + `oblivion-vimc/README.md` 第八节），并由本脚本的 **`patchInsert`** 断言把关。
+- `@oblivion/core`：✅ **2026-10-06 所有者裁定：走热挂**（**DEC-028**，见 §33.6）——收益是改参数/落盘即生效、不必重启，
+  代价是换机器 / 重置 profile 会静默失效。缓解：安装片段随包提交（`oblivion-core/cordis.patch.yml` + README §9.1）。
+  ⚠️ **已知不一致（2026-10-06 观测）**：本机 profile 的**用户层补丁里没有 core 的行** —— 它目前由 `@oblivion/bundle`
+  的 patch 提供（该包在 `dsh.profile.bundles` 里，属 **bundle 层**组合），与 DEC-028 声明的「用户层 insert」形式不同；
+  `@oblivion/panel` 同理。待所有者裁定是否统一（统一后 `patchInsert` 断言即可覆盖这两个包）。
 
 ---
 
-_最后更新：2026-10-06 · 补 `@oblivion/core` 台账行（8/8）与挂载现状说明；新增机制或改动挂载方式时同步本文件与 `tools/verify-dsh-compat.ps1`。_
+_最后更新：2026-10-06 · `@oblivion/vimc` 改回热挂（0.2.10）+ 新增 `patchInsert` 断言与台账行；新增机制或改动挂载方式时同步本文件与 `tools/verify-dsh-compat.ps1`。_

@@ -7,7 +7,7 @@
 | 有没有 `apply(ctx)` | **没有** —— `lib/index.js` 就是 `export {};`（与官方 `@deepseek-ai/dsh-base` 一致） |
 | 作用 | 声明「装哪几个插件、按什么顺序、用什么配置」（见 [`cordis.patch.yml`](cordis.patch.yml)） |
 | 类比 | DSH 自身的 `@deepseek-ai/dsh-base` / `@deepseek-ai/dsh-web-app` |
-| 用户收益 | **一条命令装齐**：`brand + vimc + core + panel`（未来的 `content-creator` 已留位） |
+| 用户收益 | **一条命令装齐**：`brand + vimc + core + panel`（未来的 `content-creator` 已留位）；`vimc` 的**挂载行**仍需在本机 profile 用户层补一次（见下） |
 | 可覆盖 | 用户在自己的 profile 补丁层可覆盖 bundle 的行与 config（后写覆盖先写） |
 
 ## 装
@@ -26,9 +26,11 @@ $dsh = 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd'
 | 插件 | 谁负责挂载 | 为什么 |
 | --- | --- | --- |
 | `@oblivion/core`、`@oblivion/panel` | **本 bundle 插行** | 它们**不自带** `dsh.bundle.patch`（原设计走用户层热挂） |
-| `@oblivion/brand`、`@oblivion/vimc` | **它们自己的 `dsh.bundle.patch`** | 自带 patch 的包由安装器写进 `dsh.profile.bundles`；bundle 再插一次同名行 = **挂载两次**，实测会让整棵插件树启动失败（重复前缀路由） |
+| `@oblivion/brand` | **它自己的 `dsh.bundle.patch`** | 自带 patch 的包由安装器写进 `dsh.profile.bundles`；bundle 再插一次同名行 = **挂载两次**，实测会让整棵插件树启动失败（重复前缀路由） |
+| `@oblivion/vimc` | **既不是本 bundle、也不在 bundle 层** —— profile **用户层** `cordis.patch.yml` 的 insert 行 | **2026-10-06 所有者裁定：从 bundle 层改回热挂**（图重算后客户端半边自动重挂，不必重启）。本包**不能**插它 —— 插了就等于把它按回 bundle 层 |
 
-所以本包对 brand / vimc 只做**依赖声明** —— 一条命令照样把它们装齐，挂载交给它们自己。
+所以本包对 brand / vimc 只做**依赖声明** —— 一条命令照样把它们装齐，挂载分别交给 brand 自己的 patch 与 vimc 的用户层插入行
+（后者是机器本地文件、不入库，缺了会被 `pnpm run verify:dsh` 的 `patchInsert` 断言抓成 FAIL）。
 
 > 换句话说：**bundle 管"装什么"，自带 patch 的包管"自己怎么被装"**，两者不重叠。
 

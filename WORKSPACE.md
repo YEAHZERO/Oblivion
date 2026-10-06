@@ -170,6 +170,7 @@ node --import "file:///$($dshx -replace '\\','/')/node_modules/tsx/dist/esm/inde
 | 客户端半边是否需刷新页面 | **不需要**。图重算后客户端模块表增量重组，插件在活动页面里自动重挂 |
 | 宿主半边改代码 | **需重启 App**（Host 复用 ESM 缓存里的模块命名空间，禁用再启用不会重新导入） |
 | 清单里的 `dsh.bundle` | 有它 = profile 层（改一次要重启）；没有 = 普通依赖 + 补丁插入行（可热挂）。两者别混 |
+| 本仓库怎么选 | `brand` = bundle 层；**`vimc` 2026-10-06 由所有者裁定从 bundle 层改回热挂**（迭代免重启 > 换机器不丢）；`core`/`panel` 的行由 `@oblivion/bundle` 的 patch 提供。热挂缺行由 `verify-dsh-compat.ps1` 的 `patchInsert` 断言抓（包在 `dsh.compat.requires.patchInsert` 里声明自己的 id） |
 | 桌面 profile 的 CLI 权限 | `dsh plugin` 子命令放行（普通 `dsh` 会拒绝「由 Electron 独占管理」） |
 
 ### 2. `dsh-creator-mode-plus` 在本机打了两个 Windows 补丁

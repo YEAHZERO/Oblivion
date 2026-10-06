@@ -12,6 +12,35 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/vimc` v0.2.10：交付层从 bundle 层**改回热挂**
+
+**所有者 2026-10-06 裁定**：vimc 的迭代频率高于「换机器重装一次」的成本，放弃 bundle 层，
+改回「普通依赖 + profile 用户层插入行」。
+
+### 改了什么
+
+- `oblivion-vimc/package.json`：**删掉 `dsh.bundle`** —— 声明它 = 安装器把本包写进 `dsh.profile.bundles`
+  = 启动时组合、改一次要重启。
+- `oblivion-vimc/cordis.patch.yml`：头注释从「为什么**必须**走 bundle 层」改写为「这是**热挂**插入行」。
+  该文件仍是**插入行的正本**，同时是插件市场热挂按钮的读取源 ——
+  `dshmarket/lib/hot.js:522-525` 在未声明 `dsh.bundle.patch` 时**回退到包根的这份文件**，所以必须保留它；
+  配合本机 `hot.js:161` 补丁，市场面板才热挂得动 `@` 作用域插件。
+- 本机 profile：从 `dsh.profile.bundles` 摘掉 `@oblivion/vimc`，用户层 `cordis.patch.yml` 追加 insert 行。
+  改前备份 `*.bak-before-vimc-hot`；两份文件都用**解析器**复验（`JSON.parse` + `yaml.parse` 通过）。
+- **新增契约断言种类 `patchInsert`**：包在 `dsh.compat.requires.patchInsert` 里写出自己的 id，
+  `tools/verify-dsh-compat.ps1` 就去 profile 用户层补丁里找那一行，**找不到即 FAIL**；
+  同一条断言还拦住「热挂包又出现在 `dsh.profile.bundles`」＝双重挂载。
+  这正面回答了当初迁去 bundle 层的理由（换机器静默失效），把「静默」变成 check 阶段就红。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 负向（改 profile **之前**） | `@oblivion/vimc` **FAIL 2/7**、exit 1 —— 新断言确实会红（`patchInsert` 缺行 ＋ 仍在 bundles） |
+| 改 profile **之后** | ✅ PASS **6/6**、exit 0（证据 `patchInsert → cordis.patch.yml:24`） |
+| `verify:dsh` 全量 | brand 10/10 · bundle 7/7 · core 8/8 · panel 6/6 · vimc **6/6** |
+| 版本 | `0.2.9 → 0.2.10`（只加第三位）；`check:version` 一致；构建产物 `lib/client.js` 123189 B |
+
 ## [未发布] — 本机修复：`dshmarket` 热挂 `@` 作用域插件必失败（`hot.js:161` 单行补丁 + 重打工具）
 
 承下一节的「附带发现」，**所有者 2026-10-06 裁定采用本机补丁**：上游修复不可控，而「每次升级重打一次」

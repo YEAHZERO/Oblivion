@@ -359,6 +359,11 @@ $dsh = 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd'
 | 临时关掉按键（不动补丁） | `oblivionVimc.disable()` 或设置页顶部的「启用」开关 |
 | 彻底卸载 | 删掉那段 `insert` 行，再 `& $dsh plugin --profile desktop remove @oblivion/vimc` |
 
+> **交付层：热挂，不是 bundle 层（2026-10-06 所有者裁定）**。本包**刻意不声明** `dsh.bundle`
+> —— 声明它会被安装器写进 profile 的 `dsh.profile.bundles`，走 bundle 层（组合在启动时算好，改一次要重启 App）。
+> 代价是上面第 ② 步那行是**机器本地文件、不入库**，换机器 / 重置 profile 要补一次；
+> 现在由 `pnpm run verify:dsh` 的 **`patchInsert` 断言**把关（profile 用户层缺这行即 FAIL），不会再静默失效。
+
 ---
 
 ## 九、已知边界

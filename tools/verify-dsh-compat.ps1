@@ -276,6 +276,26 @@ foreach ($dir in $pluginDirs) {
     }
   }
 
+  # ⑨ 热挂：声明 `patchInsert` 的包，**必须**出现在 profile 用户层补丁里
+  #
+  # 用途：`dsh.bundle`（bundle 层，改一次要重启）与「普通依赖 + 用户层插入行」（可热挂）
+  # 是两条互斥的交付路径。用户层补丁是**机器本地文件、不入库** —— 换机器后它会静默缺失，
+  # 症状正是「装好了却完全不生效，且不报错」（这正是当初把 vimc 迁去 bundle 层的理由）。
+  # 这条断言把那个静默失效搬回 check 阶段，让它在换机器当场就红。
+  if ($req.patchInsert) {
+    $patchFile = Join-Path $env:USERPROFILE '.dsh\profiles\desktop\cordis.patch.yml'
+    foreach ($want in $req.patchInsert) {
+      $hit = $null
+      if (Test-Path $patchFile) {
+        $hit = Select-String -Path $patchFile -SimpleMatch -Pattern ("'" + $want + "'") -ErrorAction SilentlyContinue |
+          Select-Object -First 1
+      }
+      $ev = '用户层补丁里没有这个 id 的插入行 —— 换机器/重置 profile 会静默不生效'
+      if ($hit) { $ev = 'cordis.patch.yml:' + $hit.LineNumber }
+      Add-Check 'patchInsert' $want ([bool]$hit) $ev
+    }
+  }
+
   # ⑥ 已挂载进 desktop profile（否则插件根本没被加载）
   $profilePkg = Join-Path $env:USERPROFILE '.dsh\profiles\desktop\package.json'
   if (Test-Path $profilePkg) {
@@ -285,6 +305,9 @@ foreach ($dir in $pluginDirs) {
     Add-Check 'mount' ('profile.dependencies') $inDeps $profilePkg
     if ($pkg.dsh.bundle) {
       Add-Check 'mount' ('profile.bundles（自带 bundle patch）') $inBundles $profilePkg
+    } elseif ($req.patchInsert -and $inBundles) {
+      # 热挂包又出现在 bundles 里 = 同一插件被挂载两次（实测会让整棵插件树启动失败）
+      Add-Check 'mount' 'profile.bundles（热挂包不得在 bundles 里：会双重挂载）' $false $profilePkg
     }
   }
 

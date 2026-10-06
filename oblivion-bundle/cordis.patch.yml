@@ -11,13 +11,17 @@
 #
 # ── 为什么这里只插 core / panel，不插 brand / vimc ──────────────
 #
-# brand 与 vimc **自带** `dsh.bundle.patch`（自己声明怎么被组合），
-# 已经由安装器写进 `dsh.profile.bundles`。若本 bundle 再插一次同名行，
-# 同一插件会被挂载两次 —— 第三方生态的实测结论是「两个 Node 半边、
-# 重复注册前缀路由，整棵插件树启动失败」。所以本包对它们只做
-# **依赖声明**（一条命令照样装齐），挂载交给它们自己的 patch。
+# brand **自带** `dsh.bundle.patch`（自己声明怎么被组合），已由安装器写进
+# `dsh.profile.bundles`。若本 bundle 再插一次同名行，同一插件会被挂载两次 ——
+# 第三方生态的实测结论是「两个 Node 半边、重复注册前缀路由，整棵插件树启动失败」。
+# 所以本包对它只做**依赖声明**（一条命令照样装齐），挂载交给它自己的 patch。
 #
-# 只有**不自带 bundle patch** 的包（core / panel，走用户层热挂）才在这里插行。
+# vimc 于 2026-10-06 由所有者裁定**从 bundle 层改回热挂**（不声明 `dsh.bundle`）：
+# 它的行在 profile 的**用户层** `~/.dsh/profiles/desktop/cordis.patch.yml`（机器本地、
+# 不入库）。本包**也不能**插它 —— 插了就等于把它按回 bundle 层。挂载片段见
+# `oblivion-vimc/cordis.patch.yml` 与 `oblivion-vimc/README.md` 第八节。
+#
+# 只有**不自带 bundle patch** 的包（core / panel）才在这里插行。
 #
 # ── 行的语义 ────────────────────────────────────────────────
 #   · patch 会**替换整段的 config**而非合并；这里一律不写 config，

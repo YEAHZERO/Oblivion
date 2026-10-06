@@ -12,7 +12,7 @@
 | 插件 | 版本 | 形态 | 状态 |
 | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.1 | client | 已现役（侧栏与会话 Hero 品牌 + 重启按钮 + **插件市场 registry 覆盖为 npmmirror**） |
-| `@oblivion/vimc` | 0.2.9 | client | 已现役（Vimium 式键盘导航 + 页面内查找） |
+| `@oblivion/vimc` | 0.2.10 | client | 已现役（Vimium 式键盘导航 + 页面内查找）；**挂载走热挂**（profile 用户层 insert 行，2026-10-06 从 bundle 层改回） |
 | `@oblivion/core` | **0.1.6** | **object（Host 侧）** | 已修掉「捕获恒为空」的根因；**观测面已真机验证**（`status.json` 写着 v0.1.6、分类目录已自动创建、只读路由 200）；⚠️ **`turn/end` 是否真到我们这里仍未确认**（见下）；**DEC-028 热挂 / DEC-029 知识库位置** |
 | `@oblivion/panel` | **0.0.1** | **client（双半）** | **Node 半边已真机验证**（`GET /oblivion-panel/status` → 200 + `host-mount.json`）；浏览器半边待硬刷新目视 |
 
@@ -162,6 +162,12 @@ Windows 没有支持该参数的 `ps`，`lsof` 也不存在 → `discoverWebHost
 | 无 | 普通依赖 + profile 插入行，**可热挂** |
 
 `oblivion-core` 刻意不声明 `dsh.bundle`（认知层要频繁迭代）。
+`oblivion-vimc` **2026-10-06 从 bundle 层改回热挂**（同样不声明 `dsh.bundle`）—— 所有者裁定：
+「迭代免重启」优先于「换机器不丢」。`@oblivion/brand` 仍在 bundle 层。
+
+> 换机器后热挂那一行**不会自己出现**。现在有机器断言兜住：包在 `dsh.compat.requires.patchInsert`
+> 里声明自己的 id，`tools/verify-dsh-compat.ps1` 就去 profile 用户层 `cordis.patch.yml` 找那一行，
+> 找不到即 FAIL（同一条断言还会拦住「热挂包又出现在 `dsh.profile.bundles` 里」= 双重挂载）。
 
 ### 5. **Host 侧改代码要重启 App**（原结论正确；我中途改错过，这里更正回来）
 
@@ -328,7 +334,10 @@ VISUAL_BEHAVIOR_VERIFIED→ 人眼/实测确认行为
 **状态口径**：`active` 现行 / `superseded` 已被新版取代（不删，带 `supersededBy`）/ `draft` 草稿 / `conflict` 有冲突 / `archived` 归档。
 **落地口径**：`implemented` / `designed` / `placeholder` —— 设计书里「26 个包 vs 8 个插件」那类混淆，根因就是缺这个字段。
 
-**安装入口**：`@oblivion/bundle`（一条命令装齐四个插件；只插 core/panel 两行，brand/vimc 自带 bundle patch 由安装器负责）。
+**安装入口**：`@oblivion/bundle`（一条命令装齐四个插件；只插 core/panel 两行）——
+`brand` 自带 bundle patch，由安装器写进 `dsh.profile.bundles`；
+`vimc` 走**用户层热挂**，装完要在 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 补一行，
+`pnpm run verify:dsh` 的 `patchInsert` 断言会在缺这行时报 FAIL。
 
 ---
 
