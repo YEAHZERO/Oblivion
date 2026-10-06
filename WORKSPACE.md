@@ -185,6 +185,21 @@ node --import "file:///$($dshx -replace '\\','/')/node_modules/tsx/dist/esm/inde
 两者都是插件自身的跨平台缺陷，与本仓库无关，建议反馈上游
 （`dsh-creator-mode-plus` 0.3.12 为 npm 最新版，尚未修复）。
 
+### 4. `dshmarket` 在本机打了一个补丁（热挂 `id` 引号解析）
+
+`~/.dsh/profiles/desktop/node_modules/dshmarket/lib/hot.js:161` 把解析 `id` 的 `\S+`
+改成与同文件 `:168` 一致的可选引号写法；原文件备份为同目录 `lib/hot.js.orig-backup`。
+**市场升级会覆盖它**，重打用脚本（幂等、自动备份、上游改写了那一行时拒绝执行并 exit 1）：
+
+```powershell
+pwsh -File tools\patch-dshmarket-hot-id.ps1            # 默认 desktop
+pwsh -File tools\patch-dshmarket-hot-id.ps1 -DryRun    # 只看不做
+```
+
+不打补丁的症状：经市场热挂**任何 `@` 作用域插件**都会失败（它写回的热点 YAML 被拼坏），
+表现为「退化成重启」，功能不受损但每次都要重启。补丁在 App 重启后生效。
+细节与实证见 [`HANDOFF.md`](HANDOFF.md) 坑 12 与 [`CHANGELOG.md`](CHANGELOG.md)。
+
 ## 应用图标：只能改快捷方式，改不了窗口/任务栏
 
 DSH 桌面端有三处「图标」，来源各不相同（依据 `app.asar/lib/main.js`）：

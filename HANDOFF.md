@@ -379,11 +379,25 @@ Cordis 的守卫：`ctx.agents` / `ctx.slots` 这类服务，只要没在插件 
   同一文件两个解析器不一致，这就是缺陷的形状。
 - **绕不过去**：YAML 里 `@` 开头的标量**必须**加引号，而它读的就是那个包的 patch ——
   换交付层、把 insert 行搬去 `@oblivion/bundle` 之类的做法都没用，任何 `@` 作用域插件都必然踩到。
-- **不要去改市场的 `node_modules`**：改安装包 = 升级即丢，且越界。出路两条（待裁定）：
-  ① 上游把 `:161` 的 `\S+` 换成与 `:168` 一致的可选引号写法（一处字符类的改动）；
-  ② 本机给 `hot.js:161` 打最小补丁并留 `.orig-backup`（与之前处理 `dsh-creator-mode-plus` 同一手法；
-  代价：市场每次升级都要重打）。
-  在两者落地前，市场热挂 `@` 作用域插件的实际表现是**退化成重启**——功能不受损，只是要重启。
+- **默认不要去改市场的 `node_modules`**（越界 + 升级即丢）。本条已被**用户 2026-10-06 显式裁定**接管：
+  用户选「本机打最小补丁」，理由是上游修复不可控，而「升级后重打一次」的成本由脚本兜住。
+  ① 上游修（把 `:161` 的 `\S+` 换成与 `:168` 一致的可选引号写法）仍是**正解**，值得上报；
+  ② 本机补丁 = 已落地的权宜之计，产物与证据见下。
+- **已落地（2026-10-06）**：`dshmarket/lib/hot.js:161` 单行改动
+  `const id = /^\s+-\s+id:\s*(\S+)\s*$/` → `const id = /^\s+-\s+id:\s*['"]?([^'"\s]+)['"]?\s*$/`；
+  备份 `lib/hot.js.orig-backup`（SHA256 `6FDAAB8F…`，改动前与原文件逐字节相同）。
+  实测（`yaml@2.9.1`，把备份整包复制到 `lib/` 内以便动态 import 对比）：
+  **修复前** `parseSimplePatch` 得 `id = "'@oblivion/panel'"`，写回串 `- id: 'mkt-'@oblivion/panel''`
+  → `YAML.parse` 抛 `Unexpected scalar at node end at line 1, column 13`；
+  **修复后** 得 `id = "@oblivion/panel"`，写回串 `- id: 'mkt-@oblivion/panel'` → 解析成
+  `[{id:'mkt-@oblivion/panel',name:'@oblivion/panel'}]`；未加引号的 `id: plain` 修复前后都正常（无回归）。
+  与备份 `Compare-Object` **只有这 1 行**不同。
+- **升级后重打用脚本**：`tools/patch-dshmarket-hot-id.ps1`（`-Profile web` 换 profile、`-Path <包目录>` 指定路径、`-DryRun` 只看不做）。
+  幂等（已打过 → `already patched` 且 exit 0）；改动前按**内容哈希**复用或新建备份（`hot.js.orig-backup-<版本>`）；
+  **上游改写了那一行就拒绝执行并 exit 1**（不盲目打），并打印当前哈希供人工重推；
+  打完再让 node 动态 import 真跑一次 `parseSimplePatch` 断言（文本改了 ≠ 行为对了）。
+  DryRun / 实打 / 幂等 / 上游改写 / 已补丁五种情形均以 `%TEMP%` 下的整包副本实测通过。
+  **补丁在 App 重启后才生效**（市场模块随宿主进程加载）。
 
 ### 工程基建
 

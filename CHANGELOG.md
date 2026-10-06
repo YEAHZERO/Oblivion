@@ -12,6 +12,57 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — 本机修复：`dshmarket` 热挂 `@` 作用域插件必失败（`hot.js:161` 单行补丁 + 重打工具）
+
+承下一节的「附带发现」，**所有者 2026-10-06 裁定采用本机补丁**：上游修复不可控，而「每次升级重打一次」
+的成本由脚本兜住。
+
+### 补丁
+
+`dshmarket/lib/hot.js:161` 一行：
+
+```js
+- const id = /^\s+-\s+id:\s*(\S+)\s*$/.exec(line);
++ const id = /^\s+-\s+id:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line);
+```
+
+改后与同一解析器里 `:168` 的 `name` 解析、`:659` 的 profile 行解析**写法一致**。
+备份 `lib/hot.js.orig-backup`（SHA256 `6FDAAB8F…`，改动前逐字节相同）；与备份 `Compare-Object`
+**只有这 1 行**不同。**补丁在 App 重启后生效**（市场模块随宿主进程加载）。
+
+### 证据（跑市场自己的模块，不靠推断）
+
+探针必须落在包内（`hot.js` 的 import 是相对路径），故把备份整包复制进 `lib/` 再动态 import 对比，
+YAML 用 `yaml@2.9.1`：
+
+| | `parseSimplePatch` 得到的 id | 写回串（`:568`） | `YAML.parse` |
+| --- | --- | --- | --- |
+| 修复前 | `"'@oblivion/panel'"` | `- id: 'mkt-'@oblivion/panel''` | 抛 `Unexpected scalar at node end at line 1, column 13` |
+| 修复后 | `"@oblivion/panel"` | `- id: 'mkt-@oblivion/panel'` | `[{id:'mkt-@oblivion/panel',name:'@oblivion/panel'}]` |
+
+未加引号的 `id: plain` 修复前后都正常（无回归）。
+
+### 重打工具 `tools/patch-dshmarket-hot-id.ps1`
+
+市场升级会重装 `node_modules`，补丁随之丢失，所以这次留下一件工具而不是一段手工步骤：
+
+- **幂等**：已打过 → `already patched` + exit 0；
+- 改动前按**内容哈希**复用或新建备份（`hot.js.orig-backup-<版本>`），不会一次升级堆一个；
+- **上游改写了那一行就拒绝执行并 exit 1**，同时打印当前哈希供人工重推 —— 不盲目打补丁；
+- 打完让 node 动态 import 真跑一次 `parseSimplePatch` 断言（**文本改了 ≠ 行为对了**）；
+- `-DryRun` 只看不做；`-Path` / `-Profile web` 可指向别的 profile；
+- 只动**本机 profile 里的第三方包**，不碰 DeepSeek Harness 安装本身；纯 ASCII（丢 BOM 也不会坏）。
+
+五种情形（DryRun / 实打 / 幂等 / 上游改写 / 已补丁）均以 `%TEMP%` 下的整包副本实测通过。
+
+### 一处自纠：`catch` 把失败藏起来的又一例
+
+工具初版用 `Get-Content -Raw | ConvertFrom-Json` 读 `package.json` 取版本号。PowerShell 5.1 下
+`Get-Content` 按 ANSI 解码无 BOM 文件，而该 `package.json` 含中文描述 → `ConvertFrom-Json` 抛
+`Invalid object passed in, ':' or '}' expected. (188)` → 被 `catch` 吞掉 → 版本号**静默退化成 `unknown`**
+（备份文件名也跟着变成 `hot.js.orig-backup-unknown`）。改用 `[IO.File]::ReadAllText(...)`（显式 UTF-8）后
+读回 `1.66.8`。**教训与 `lint-ps1-bom.ps1` 同源：一个把失败吞掉的 `catch`，比没有这条逻辑更危险。**
+
 ## [未发布] — `@oblivion/brand` v0.1.1：插件市场 registry 覆盖为 npmmirror（另报一处市场自身缺陷）
 
 按所有者指令落地：「修复插件市场，使用 `registry.npmmirror.com`。或者在我的 `oblivion/brand` 里面对此进行覆盖」。
@@ -94,10 +145,11 @@ rows.push({ id: pending, name: name[1] });
 - **这条无法靠调整我们自己的包绕过**：`hot.js:522-525` 读的是**被热挂那个包自己的** `cordis.patch.yml`
   （或它 `dsh.bundle.patch` 声明的文件），而 YAML 里 `@` 开头的标量**必须**加引号 —— 换交付层、
   把 insert 行搬去别处都没用。
-- **本包没有去改市场的 `node_modules`**（改安装包 = 升级即丢，且越界）；出路两条，见 `HANDOFF.md` 坑 12：
+- **本包没有去改市场的 `node_modules`**（改安装包 = 升级即丢，且越界）；出路两条曾列在 `HANDOFF.md` 坑 12：
   ① 上游把 `:161` 的 `\S+` 换成与 `:168` 一致的可选引号写法（一处字符类的改动）；
   ② 本机给 `hot.js:161` 打最小补丁并留 `.orig-backup`（代价：市场每次升级都要重打）。
-  在两者落地前，市场热挂 `@` 作用域插件的实际表现是**退化成重启**——功能不受损，只是要重启。
+  → **所有者 2026-10-06 裁定走 ②**：已落地并留下一件重打工具，见上一节
+  （`[未发布] — 本机修复：dshmarket 热挂 @ 作用域插件必失败`）。① 仍是正解，值得上报。
 
 ---
 
