@@ -58,3 +58,6 @@ Desktop.ini
 # .action 是 Agent 协作规范，**必须入库**（模板曾错误地忽略它，已修正）。
 # 这条注释是防止后来者把它加进忽略列表。
 !.action/
+.git-msg.txt
+.git-msg2.txt
+.git-commit-msg.txt
