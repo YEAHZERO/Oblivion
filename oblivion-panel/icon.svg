@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Oblivion">
+  <!-- 北极星（八芒星）：几何与 @oblivion/brand 的 src/client/polaris.ts 同源 -->
+  <defs>
+    <linearGradient id="polaris" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8D5A3"/>
+      <stop offset="100%" stop-color="#7EC8E3"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#polaris)" d="M512.0000 132.0960L558.6323 399.4197L780.6327 243.3673L624.5803 465.3677L891.9040 512.0000L624.5803 558.6323L780.6327 780.6327L558.6323 624.5803L512.0000 891.9040L465.3677 624.5803L243.3673 780.6327L399.4197 558.6323L132.0960 512.0000L399.4197 465.3677L243.3673 243.3673L465.3677 399.4197Z"/>
+  <circle cx="512" cy="512" r="33.792" fill="#FFFFFF" fill-opacity="0.92"/>
+</svg>

@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",
+  "icon": "./icon.svg",
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
@@ -19,6 +20,12 @@
     "compat": {
       "host": ">=0.2.0-rc.2 <0.3.0",
       "requires": {
+        "slots": [
+          "sidebar.footer.action"
+        ],
+        "slotKinds": {
+          "sidebar.footer.action": "list"
+        },
         "services": [
           "webServer"
         ],
