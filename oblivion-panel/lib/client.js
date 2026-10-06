@@ -395,6 +395,7 @@ function PolarisGlyph({ size = 16 }) {
 function openOblivionTab(service, tabType) {
   if (!service || typeof service.openTab !== "function") return "no-service";
   try {
+    if (typeof service.getTab === "function" && service.getTab(tabType) === void 0) return "unknown-type";
     service.openTab({ type: tabType, target: "right" });
     return "opened";
   } catch {
@@ -461,10 +462,10 @@ function registerPanelTab(ctx, component, warn, icon) {
     }
   };
   if (typeof ctx.inject === "function") {
-    let result2 = { status: "no-service", detail: "inject \u56DE\u8C03\u672A\u89E6\u53D1" };
+    const result2 = { status: "no-service", detail: "inject \u56DE\u8C03\u672A\u89E6\u53D1" };
     try {
       ctx.inject(["betterSidebar"], (scope) => {
-        result2 = attach(scope?.betterSidebar);
+        Object.assign(result2, attach(scope?.betterSidebar));
         if (result2.status !== "registered") warn("\u9762\u677F tab \u672A\u6CE8\u518C\uFF1A" + String(result2.detail ?? result2.status));
       });
     } catch (error) {
@@ -483,7 +484,18 @@ function registerPanelTab(ctx, component, warn, icon) {
 // src/client/index.ts
 var inject = ["slots"];
 var LOG_NAME = "@oblivion/panel";
-function reportCtxShape(ctx) {
+function postDiag(payload) {
+  try {
+    void fetch("/oblivion-panel/diag", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      credentials: "same-origin"
+    }).catch(() => void 0);
+  } catch {
+  }
+}
+function reportCtxShape(ctx, extra = {}) {
   try {
     const target = ctx;
     const keys = Object.keys(target).slice(0, 80);
@@ -518,7 +530,8 @@ function reportCtxShape(ctx) {
       prototypes,
       probes,
       hasInject: typeof target.inject === "function",
-      hasGet: typeof target.get === "function"
+      hasGet: typeof target.get === "function",
+      ...extra
     });
     void fetch("/oblivion-panel/diag", {
       method: "POST",
@@ -546,10 +559,21 @@ function apply(ctx) {
   } catch (error) {
     warn("\u8BFB\u53D6 ctx.slots \u88AB\u5BBF\u4E3B\u5B88\u536B\u62E6\u4E0B\uFF1A" + (error instanceof Error ? error.message : String(error)));
   }
+  let leftbarRegistered = false;
   if (slots && typeof slots.inject === "function" && typeof slots.register === "function") {
-    const service = result.service;
+    const readService = () => result.service;
     const component = createLeftbarAction(() => {
+      const service = readService();
       const outcome = openOblivionTab(service, PANEL_TAB_ID);
+      postDiag({
+        at: Date.now(),
+        where: "leftbar-click",
+        outcome,
+        hasService: service !== void 0,
+        hasOpenTab: typeof service?.openTab === "function",
+        tabStatus: result.status,
+        tabType: PANEL_TAB_ID
+      });
       if (outcome === "opened") logger?.info?.("\u5DE6\u680F\u5165\u53E3\uFF1A\u5DF2\u6253\u5F00\u53F3\u4FA7 Oblivion \u9875");
       else warn("\u5DE6\u680F\u5165\u53E3\uFF1A\u6253\u5F00\u53F3\u4FA7 Oblivion \u9875\u5931\u8D25\uFF08" + outcome + "\uFF09");
     });
@@ -558,13 +582,17 @@ function apply(ctx) {
         "sidebar.footer.action",
         () => slots.register?.({ name: "sidebar.footer.action", id: "oblivion-panel", order: 60, label: () => "Oblivion" }, component)
       );
+      leftbarRegistered = true;
     } catch (error) {
       warn("\u5DE6\u680F\u5165\u53E3\u6CE8\u518C\u5931\u8D25\uFF1A" + (error instanceof Error ? error.message : String(error)));
     }
   } else {
     warn("slots \u670D\u52A1\u4E0D\u53EF\u7528\uFF1A\u5DE6\u680F\u5165\u53E3\u672A\u6CE8\u518C\uFF08\u53F3\u4FA7\u680F tab \u4E0D\u53D7\u5F71\u54CD\uFF09");
   }
-  reportCtxShape(ctx);
+  reportCtxShape(ctx, {
+    panelTab: { status: result.status, detail: result.detail ?? null, tabId: PANEL_TAB_ID },
+    leftbar: { registered: leftbarRegistered, seat: "sidebar.footer.action" }
+  });
 }
 var index_default = { inject, apply };
 

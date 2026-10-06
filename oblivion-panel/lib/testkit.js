@@ -212,10 +212,10 @@ function registerPanelTab(ctx, component, warn, icon) {
     }
   };
   if (typeof ctx.inject === "function") {
-    let result2 = { status: "no-service", detail: "inject \u56DE\u8C03\u672A\u89E6\u53D1" };
+    const result2 = { status: "no-service", detail: "inject \u56DE\u8C03\u672A\u89E6\u53D1" };
     try {
       ctx.inject(["betterSidebar"], (scope) => {
-        result2 = attach(scope?.betterSidebar);
+        Object.assign(result2, attach(scope?.betterSidebar));
         if (result2.status !== "registered") warn("\u9762\u677F tab \u672A\u6CE8\u518C\uFF1A" + String(result2.detail ?? result2.status));
       });
     } catch (error) {

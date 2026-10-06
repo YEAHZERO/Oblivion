@@ -12,6 +12,45 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/panel` v0.0.6 + `@oblivion/core` v0.1.19：左栏入口点不动、链路真正连通
+
+### `@oblivion/panel` v0.0.6 —— 左下角 Oblivion 图标「点了没反应」
+
+- **真凶**：`registerPanelTab` 里 `ctx.inject(['betterSidebar'], cb)` 的回调**可能异步触发**，
+  而回调写的是 `result = attach(...)`（**换引用**）⇒ 调用方手里那个对象永远是 `{status:'no-service'}`，
+  左栏入口拿到的 `service === undefined`，点击走 `no-service` 分支、只留一条日志。
+- **改法**：`Object.assign(result, attach(...))` 写回**同一个对象**；左栏入口改为**点击那一刻**才读 `result.service`。
+- **新增 `unknown-type` 判定**：better-sidebar 对未注册的 type 是**静默 no-op**（不抛错、不返回状态），
+  故先 `getTab(type)` 探测，把「点了没反应」翻译成一个可上报的结论。
+- **诊断自报**（`POST /oblivion-panel/diag` → `<dataRoot>/panel-client-diag.json`）新增
+  `panelTab` / `leftbar` / `leftbar-click` 三段读数 —— 下一次点击即可判定卡在哪一环，不必开 DevTools。
+
+### `@oblivion/core` v0.1.12 → v0.1.19
+
+- **v0.1.12**：修「未声明服务裸读即抛错」导致的**装载崩溃**（`cannot get property "agents" without inject`）；
+  诊断全部走 `safeRead`，**诊断不得拖垮装载**。
+- **v0.1.13**：`pickAgent()` 载荷容错（支持 `{agent}` / agent 本体 / 嵌套）+ 无定时器的 `reconcileAgents()` 兜底。
+- **v0.1.14**：① 双链**反向回填**（`notePathFor` 定位旧笔记，找不到就跳过，绝不新建）；
+  ② 整理件**建边限流**（`DIGEST_EDGE_TEXT_BUDGET = 1200` —— 一次整理曾抽出 ~24 个实体、`C(24,2)=276` 条边成团）。
+- **v0.1.15**：③ 检索命中注入下一轮提示词（`src/prompt-inject.ts`，TTL 15 分钟、最多 3 条、读取不消费）。
+- **v0.1.16**：留痕移到 `context.agent === undefined` 守卫**之前**（否则连「回调没被调用」都看不到）。
+- **v0.1.17**：加**工具执行入口**（第二张网）：包住 `tools.register` 的 `execute`，从中捕获 agent。
+- **v0.1.18**：`inject` 声明 `agents`；拿到 agent 后在**它自己的 ctx** 上注册段落与工具（官方
+  `file-reference-local` 的写法）。
+- **v0.1.19（决定性）**：DSH 的**事件按作用域过滤**。`packages/core/scope/src/index.ts:170-185` 的
+  `scopeTarget` 只放行「作用域标签落在派发键祖先链上」的监听者；本插件挂在 profile 插入行之下、
+  **不在任何 agent 链上** ⇒ `agent/created`、`session/event` 全收不到，段落/工具也进不了 agent 的分层视图
+  （一个原因解释全部症状）。改为**在根上下文注册**（`usableHost(ctx.root)` 守卫 + `host.agents.list()`
+  + `host.on('agent/created')`）后实测：`injectAgentCount=6 mountedAgents=6 rootSeen=274 agentSeen=274`，
+  并产出**第一次真实捕获**（`01_问答沉淀/Read.md` + `decisions.jsonl` 一行 `reason:"captured", score:0.8`）。
+
+### 已知的非插件问题（排查记录，避免下次误判）
+
+- **新会话上方没有「标准模式」等选项**：DSH 的 Agent 预设切换 UI 由设置项
+  **「显示代码工作视图」（developerTools）** 控制 —— `ui-agent-preset/src/client/AgentPresetSeat.tsx:134`
+  `if (!main || !developerTools || !ready) return null`。本机 profile 该值为 `false`
+  （`cordis.patch.yml` 的 `ui-settings: { enabled: false }`），与 Oblivion 插件无关。
+
 ## [未发布] — `@oblivion/vimc` v0.2.10：交付层从 bundle 层**改回热挂**
 
 **所有者 2026-10-06 裁定**：vimc 的迭代频率高于「换机器重装一次」的成本，放弃 bundle 层，

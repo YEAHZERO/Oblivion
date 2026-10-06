@@ -33,18 +33,26 @@ export function PolarisGlyph({ size = 16 }: { size?: number }): JSX.Element {
   );
 }
 
-/** better-sidebar 服务里我们用到的那一个方法（结构化类型，不 import 第三方包）。 */
+/** better-sidebar 服务里我们用到的那几个方法（结构化类型，不 import 第三方包）。 */
 export interface OpenTabCapable {
   openTab?(input: { type: string; title?: string; id?: string; target?: 'right' | 'bottom' | 'side' }): unknown;
   activate?(tabId: string): boolean;
+  /** 查 tab 描述符；**未注册的 type 是 undefined**（`openTab` 对未知 type 静默忽略）。 */
+  getTab?(id: string): unknown;
 }
 
-export type OpenOutcome = 'opened' | 'no-service' | 'failed';
+export type OpenOutcome = 'opened' | 'no-service' | 'unknown-type' | 'failed';
 
-/** 打开（或聚焦）右侧栏的 Oblivion 页。降级：服务缺席时只回一个状态，不抛错。 */
+/**
+ * 打开（或聚焦）右侧栏的 Oblivion 页。降级：服务缺席时只回一个状态，不抛错。
+ *
+ * `unknown-type` 是**静默失败探测器**：better-sidebar 对没注册过的 type 直接 no-op、
+ * 不抛错也不返回状态，所以先 `getTab` 探一下，把「点了没反应」翻译成一个可上报的结论。
+ */
 export function openOblivionTab(service: OpenTabCapable | undefined, tabType: string): OpenOutcome {
   if (!service || typeof service.openTab !== 'function') return 'no-service';
   try {
+    if (typeof service.getTab === 'function' && service.getTab(tabType) === undefined) return 'unknown-type';
     service.openTab({ type: tabType, target: 'right' });
     return 'opened';
   } catch {

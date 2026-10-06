@@ -91,10 +91,13 @@ export function registerPanelTab(
   };
 
   if (typeof ctx.inject === 'function') {
-    let result: RegisterResult = { status: 'no-service', detail: 'inject 回调未触发' };
+    const result: RegisterResult = { status: 'no-service', detail: 'inject 回调未触发' };
     try {
       ctx.inject(['betterSidebar'], (scope) => {
-        result = attach(scope?.betterSidebar);
+        // **必须 `Object.assign` 到同一个对象上**（而不是 `result = attach(...)` 换引用）：
+        // `ctx.inject` 的回调可能是**异步**触发的，换引用会让调用方手里那个对象永远是
+        // 「no-service」—— 左栏入口点击没反应的真凶（拿到的是 service === undefined 的旧对象）。
+        Object.assign(result, attach(scope?.betterSidebar));
         if (result.status !== 'registered') warn('面板 tab 未注册：' + String(result.detail ?? result.status));
       });
     } catch (error) {

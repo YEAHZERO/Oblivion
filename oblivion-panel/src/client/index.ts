@@ -33,8 +33,22 @@ interface SlotServiceLike {
   register?(options: Record<string, unknown>, component: unknown): unknown;
 }
 
-/** ① ctx 形状自报（诊断；失败绝不影响装载）。 */
-function reportCtxShape(ctx: ClientCtxLike): void {
+/** 把一段 JSON 报给本插件自己的 Node 半边（诊断通道；失败绝不影响装载）。 */
+function postDiag(payload: Record<string, unknown>): void {
+  try {
+    void fetch('/oblivion-panel/diag', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'same-origin',
+    }).catch(() => undefined);
+  } catch {
+    // 诊断本身绝不影响装载
+  }
+}
+
+/** ① ctx 形状自报（诊断；失败绝不影响装载）。`extra` 用来带上注册/点击结果。 */
+function reportCtxShape(ctx: ClientCtxLike, extra: Record<string, unknown> = {}): void {
   try {
     const target = ctx as unknown as Record<string, unknown>;
     const keys = Object.keys(target).slice(0, 80);
@@ -70,6 +84,7 @@ function reportCtxShape(ctx: ClientCtxLike): void {
       probes,
       hasInject: typeof target.inject === 'function',
       hasGet: typeof target.get === 'function',
+      ...extra,
     });
     void fetch('/oblivion-panel/diag', {
       method: 'POST',
@@ -105,9 +120,28 @@ export function apply(ctx: ClientCtxLike): void {
   } catch (error) {
     warn('读取 ctx.slots 被宿主守卫拦下：' + (error instanceof Error ? error.message : String(error)));
   }
+  let leftbarRegistered = false;
   if (slots && typeof slots.inject === 'function' && typeof slots.register === 'function') {
-    const service = result.service as OpenTabCapable | undefined;
-    const component = createLeftbarAction(() => {      const outcome = openOblivionTab(service, PANEL_TAB_ID);
+    /**
+     * **在点击那一刻**才读服务句柄。
+     *
+     * `registerPanelTab` 里的 `ctx.inject(['betterSidebar'], …)` 可能是异步触发的，
+     * 提前取 `result.service` 会永远拿到 `undefined` ⇒ 点击走 'no-service' 分支、
+     * 只留一条日志 —— 这就是「左下角图标点不动」的真凶。
+     */
+    const readService = (): OpenTabCapable | undefined => result.service as unknown as OpenTabCapable | undefined;
+    const component = createLeftbarAction(() => {
+      const service = readService();
+      const outcome = openOblivionTab(service, PANEL_TAB_ID);
+      postDiag({
+        at: Date.now(),
+        where: 'leftbar-click',
+        outcome,
+        hasService: service !== undefined,
+        hasOpenTab: typeof service?.openTab === 'function',
+        tabStatus: result.status,
+        tabType: PANEL_TAB_ID,
+      });
       if (outcome === 'opened') logger?.info?.('左栏入口：已打开右侧 Oblivion 页');
       else warn('左栏入口：打开右侧 Oblivion 页失败（' + outcome + '）');
     });
@@ -115,6 +149,7 @@ export function apply(ctx: ClientCtxLike): void {
       slots.inject('sidebar.footer.action', () =>
         slots.register?.({ name: 'sidebar.footer.action', id: 'oblivion-panel', order: 60, label: () => 'Oblivion' }, component),
       );
+      leftbarRegistered = true;
     } catch (error) {
       warn('左栏入口注册失败：' + (error instanceof Error ? error.message : String(error)));
     }
@@ -122,8 +157,11 @@ export function apply(ctx: ClientCtxLike): void {
     warn('slots 服务不可用：左栏入口未注册（右侧栏 tab 不受影响）');
   }
 
-  // ③ ctx 形状自报
-  reportCtxShape(ctx);
+  // ③ ctx 形状自报（带上两个 UI 注册的真实结果，省得靠 DevTools 猜）
+  reportCtxShape(ctx, {
+    panelTab: { status: result.status, detail: result.detail ?? null, tabId: PANEL_TAB_ID },
+    leftbar: { registered: leftbarRegistered, seat: 'sidebar.footer.action' },
+  });
 }
 
 export default { inject, apply };
