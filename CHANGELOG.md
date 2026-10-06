@@ -12,7 +12,34 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/brand` v0.1.3 + `@oblivion/core` v0.2.3 + `@oblivion/panel` v0.0.13：沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+## [未发布] — `@oblivion/core` v0.2.4 + v0.2.3 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.13：主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+
+### `@oblivion/core` v0.2.4 —— 第 9 个工具 `oblivion_wiki`（主题页）+ 关联知识不再堆重复段
+
+- 所有者 2026-10-06 问：「那什么时候才能将差不多主题的合并，甚至生成 wiki 呢？」
+  裁定「全做」（加工具 + 修双链 + 真跑一轮聚合），并要求主题页与原笔记**双向可追溯**。
+- **为什么必须由模型判簇**（现场数据）：`01_问答沉淀` 56 篇正好落在 **55 个 `topic`** 上，
+  只有一个 topic 有 2 版。而 `topic` 只是问句里第一个词串（`deriveTopic()`），
+  靠字段自动合并等于合不出东西。所以「哪些笔记在讲同一件事 + 该怎么概述」交给模型，
+  插件只落盘 / 回链 / 重建索引 —— 与 `oblivion_digest`、`oblivion_retitle` 同一分工，插件不调 LLM。
+- **新增 `src/knowledge/wiki.ts`**：`renderWikiPage()`（frontmatter `source:"wiki"`/`generated_by:"model"` +
+  `## 概述`（模型的 `summary`）+ `## 来源笔记`（成员双链，`superseded`/`conflict` 等状态就地标注）+
+  非 active 成员时的 `## 口径提示` + `## 标签` + 尾标 `<!-- oblivion:wiki title=… members=… at=… -->`）、
+  `writebackWikiLink()`（往成员笔记元信息行后插 `> Wiki： [[标题]]`，已有则并入去重、上限 5 页）、
+  `listWikiPages()`、`createWikiService()`（`list()` / `apply()`，复用 `listNotes` 与 `freeName`）。
+  三条不变量：只动带 `<!-- oblivion:id=… -->` 的笔记；**主题页是新增物**，成员正文一个字不改
+  （只插一行回链）；重跑同一簇**更新那一页**（认尾标），不会长出 `<标题>-2.md`。
+  用户自有的同名 md 让路成 `<标题>-oblivion.md`；空标题或成员 id 全不认识时不写空文件，直接回 `error`。
+- **第 9 个模型面工具 `oblivion_wiki`**（两段式，与 `oblivion_retitle` 同形）：不带 `clusters` 给候选
+  （`id`/现名/`title`/原问句/`status`/`tags`/已属哪页/摘要 + 现有页清单），带 `clusters`
+  才落地；`description` 里明确「按**含义**分簇，不要按 `topic` 字段」。
+- **修掉关联知识堆重复段**：老行为每批双链**追加一段** `## 关联知识（自动）`，现场有笔记堆到 **26 段**，
+  还混着 `[[OK]]`、`[[继续]]` 这类弱标题。现在 `appendRelatedLinks()` 把同名段合并成一段、
+  去重、丢 `isWeakTitle()` 的弱标题、上限 30，并在内容没变化时返回 `false` **不写盘**；
+  `findRelatedItems()` 的候选池也一起过滤弱标题（垃圾就是从这里漏进去的）。
+- 测试 **32/32**（新增 7 项：双链单段/去重/丢弱/幂等/不动正文/不动用户自有笔记 + 主题页纯函数、落地回链、
+  重跑同页、防误伤同名、两段式工具、两个错误分支）；自检 **32/32**。
+  `src/index.ts` 的 `createWikiService(...)` 与两处 `registerTools` 接线随并行工作流提交。
 
 ### `@oblivion/core` v0.2.3 —— 模型起的名不再被规则管线改回去（`named_by`）+ 文件名不带头尾的点
 

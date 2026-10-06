@@ -21,12 +21,15 @@ export {
   writeIndexNote,
   CONFLICTS_DIR,
   INDEX_DIR,
+  RELATED_HEADER,
 } from './qa-loop/md-writer.js';
 export { findRelatedItems } from './graph/backlink.js';
 export { deriveTitle, deriveTopic } from './knowledge/index.js';
 export { tagsFromQA, titleFromQA, isWeakTitle } from './knowledge/naming.js';
 export { applyRetitle, contentSection, createRetitleService, listNotes, parseNote, renderNote } from './knowledge/retitle.js';
 export type { NoteRef, NoteMeta, ParsedNote, RetitleEntry, RetitleIndexHost, RetitleResult, RetitleService } from './knowledge/retitle.js';
+export { createWikiService, listWikiPages, renderWikiPage, writebackWikiLink, WIKI_DIR_FALLBACK } from './knowledge/wiki.js';
+export type { WikiCandidate, WikiCluster, WikiClusterResult, WikiMember, WikiPageRef, WikiService } from './knowledge/wiki.js';
 export { registerKnowledge } from './knowledge/index.js';
 export { registerFeedback } from './feedback/index.js';
 export { defaultProfile, mergeProfile } from './profile/schema.js';

@@ -169,11 +169,11 @@ oblivion-core/
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` ~67 KB + `lib/testkit.js`（v0.1.5） |
+| `pnpm run build` | ✅ `lib/index.js` 131,855 B + `lib/testkit.js`（v0.2.4） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **23/23**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 8 工具注册 + 整理结构 + 改名打标签」） |
-| `pnpm run selfcheck` | ✅ **26/26**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、**会话整理落盘**、时钟保护、去重、阈值分布） |
-| `pnpm run check:version` | ✅ `0.1.10` 一致 |
+| `pnpm run test` | ✅ **32/32**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 9 工具注册 + 整理结构 + 改名打标签 + **双链单段化** + **主题页落盘/回链/重跑**」） |
+| `pnpm run selfcheck` | ✅ **32/32**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、**会话整理落盘**、**盲区修正（superseded + 00-Index）**、**冲突并列页**、**图谱双链**、**命名与打标签**、**关联知识单段化**、**主题页**） |
+| `pnpm run check:version` | ✅ `0.2.4` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **8/8**（host / `tools`·`systemPrompt` / `session/event`·`turn/end` / `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 | 真实 Host 装载 | ⏳ **仍未验证**：`agent/created` + `agents.list()` 两条作用域订阅已上线（v0.1.7/v0.1.8），但探针仍为空；v0.1.10 的 `mount-diag.json` 需要**重启一次 App** 才能上机 |
@@ -241,12 +241,13 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
         dataRoot: '~/.oblivion/data'
 ```
 
-### 9.3 用八个模型面工具
+### 9.3 用九个模型面工具
 
 | 工具 | 用途 | 例 |
 | --- | --- | --- |
 | `oblivion_digest` | **整理当前对话**：模型产出结构（章节/决策/待办/未决/双链），插件落成**一篇整理笔记 + 一条可检索条目**（并建共现边） | 「整理一下当前对话」 |
 | `oblivion_retitle` | **给沉淀件改名打标签**：先给候选（现名/原问句/答案摘要），模型起内容名 + 标签，插件改名并同步条目与索引 | 「把这些笔记的名字改成讲什么」 |
+| `oblivion_wiki` | **把同一主题的笔记合成一页主题页**：先给候选（现名/原问句/状态/已属哪页），模型判簇 + 写概述，插件落 `02_Wiki页面/` 并在成员笔记里留一行回链 | 「把讲 cordis 作用域的笔记合成一页」 |
 | `oblivion_status` | **观测与调参入口**：生效配置 + 真实统计 + 「该改哪个键」建议 + 最近判定 | 「这几天的捕获率多少？该调什么？」 |
 | `oblivion_query` | 关键词 + 共现扩展检索，带来源 | 「库里关于 cordis 注入的记录」 |
 | `oblivion_capture` | 手工沉淀一条问答（走同一套四层筛选） | 把一段读书笔记沉淀成条目 |
@@ -298,6 +299,36 @@ node scripts/rename-notes.mjs --dirs 01_问答沉淀 --apply --clean-tmp --tmp-a
 ```
 
 `--clean-tmp` 只删**早于 `--tmp-age-min` 分钟**的 `*.tmp`（默认 10），避免删掉正在写的那一个。
+
+#### 9.3.3 合成主题页（`oblivion_wiki`）
+
+条目上的 `topic` 字段**不是主题**：它只是问句里第一个词串（`deriveTopic()`），
+实测 56 篇沉淀正好落在 55 个 topic 上 —— 靠字段自动合并等于合不出东西。
+所以「哪些笔记在讲同一件事、该怎么概述」只能由**模型**判；插件只负责落盘、回链、重建索引
+（分工与 `oblivion_digest` / `oblivion_retitle` 完全一致，插件不调 LLM）。
+
+两段式：
+
+1. **不带 `clusters` 调一次** → 候选：`id` / 现文件名 / `title` / **原问句** / `status` /
+   `tags` / 已属哪个主题页 / 答案摘要；另有 `pages`（现有主题页与成员数）。
+2. **带 `clusters` 再调一次** → `[{ title, summary, members: [id…], tags? }]`，插件为每个簇：
+   落一页 `<mdRoot>/02_Wiki页面/<标题>.md`（frontmatter + `# 标题` + `>Members` +
+   `## 概述`（模型的 `summary`）+ `## 来源笔记`（双链到每篇成员，`superseded`/`conflict`
+   等状态会就地标注）+ 有非 active 成员时再加 `## 口径提示` + `## 标签` + 尾标
+   `<!-- oblivion:wiki title=… members=… at=… -->`），再往每篇成员笔记的元信息块插一行
+   `> Wiki： [[标题]]`（双向可追溯：页面能下去，笔记能上来）。
+
+三条不变量：只动带 `<!-- oblivion:id=… -->` 的笔记；**主题页是新增物**，成员笔记的正文一个字不改
+（只在元信息行后插一行）；重跑同一簇 = **更新那一页**（认尾标，不会长出 `<标题>-2.md`），
+已指过的回链不重复写。用户自有的同名 md 会让路成 `<标题>-oblivion.md`。空标题、
+或成员 id 一个都不认识时不写空文件，直接回 `error`。
+
+#### 9.3.4 关联知识不再堆重复段（`appendRelatedLinks`）
+
+老行为是每写一批双链就**追加一段** `## 关联知识（自动）`：现场见过同一篇笔记堆到 **26 段**，
+里面还混着 `[[OK]]`、`[[继续]]` 这种被连进来的弱标题。现在：把所有同名段落合成**一段**、
+链接去重、丢掉 `isWeakTitle()` 判定的弱标题（`findRelatedItems()` 的候选池也一起过滤）、
+上限 30 条；内容没有变化时直接返回 `false` **不写盘**（幂等 —— 重试与重跑不会把笔记改出 diff）。
 
 ### 9.4 调参（改 config，不写代码）
 

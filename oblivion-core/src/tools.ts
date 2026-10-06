@@ -6,6 +6,7 @@ import type { KnowledgeService } from './knowledge/index.js';
 import type { ProfileService } from './profile/index.js';
 import type { DigestService } from './digest/index.js';
 import type { RetitleService } from './knowledge/retitle.js';
+import type { WikiService } from './knowledge/wiki.js';
 import type { StatsService } from './stats/index.js';
 import type { Source, UserProfile } from './types.js';
 import { sha1 } from './util/hash.js';
@@ -50,6 +51,8 @@ export interface ToolDeps {
   digest?: DigestService | null;
   /** 笔记改名 / 打标签（`oblivion_retitle`）。 */
   retitle?: RetitleService | null;
+  /** 主题页（Wiki）归并（`oblivion_wiki`）。 */
+  wiki?: WikiService | null;
   /** 陪伴模块的运行计数（触发闸门命中情况）。 */
   perspectiveStats?: () => Record<string, number> | null;
 }
@@ -316,6 +319,92 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
         total: results.length,
         renamed: ok.filter((r) => r.from !== r.to).length,
         retagged: ok.filter((r) => r.from === r.to).length,
+        failed: results.filter((r) => !r.ok),
+        results,
+        index,
+      });
+    },
+  }));
+
+  /**
+   * 主题页（Wiki）：**把「差不多主题」的笔记合成一页**——同样是模型判、插件落盘。
+   *
+   * 为什么必须模型判：`topic` 是「问句里第一个词串」（实测 56 篇落在 55 个 topic 上，
+   * 只有 1 个 topic 有 2 版），按它自动合并等于合不出东西；而「这两篇讲的是不是一回事」
+   * 是语义判断，只有模型能做。插件负责的是它擅长的那半：frontmatter、双链、回链、索引、幂等。
+   */
+  ctx.tools.register(defineTool({
+    name: 'oblivion_wiki',
+    description:
+      'Merge notes that are really about the SAME topic into one wiki page under <mdRoot>/02_Wiki页面/. ' +
+      'Call it with NO `clusters` first: it returns candidate notes (id, file name, the original question, tags, excerpt) ' +
+      'plus the wiki pages that already exist. Then call it again with `clusters` = [{ title, summary, members: [note id], tags }] — ' +
+      'group by meaning, not by the `topic` field (that field is only the first word of the question). ' +
+      'The plugin writes one page per cluster (your summary + source-note links + shared tags), ' +
+      'adds a `> Wiki：[[title]]` backlink line to every member note, and rebuilds <mdRoot>/00-Index/索引.md. ' +
+      'It never edits note bodies and never deletes anything; re-running a cluster updates that same page.',
+    parameters: {
+      clusters: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            title: { type: 'string', required: true, description: 'Wiki page title (also the file name), e.g. "认知插件组 · 事件作用域与注入".' },
+            summary: { type: 'string', required: true, description: 'The merged write-up: what the notes together say, where they disagree, what is still open. This is the reason the page exists.' },
+            members: {
+              type: 'array',
+              items: { type: 'string' },
+              required: true,
+              description: 'Note ids from the candidate list (the value inside <!-- oblivion:id=… -->).',
+            },
+            tags: { type: 'array', items: { type: 'string' }, description: 'Extra page tags (lowercase, no #); member tags are merged in automatically.' },
+          },
+        },
+        description: 'Topic clusters to write. Omit (or pass an empty array) to get the candidate list instead.',
+      },
+      limit: { type: 'number', description: 'How many candidate notes to return in list mode (default 20, max 80).' },
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.wiki) {
+        return asCanonical({ skipped: true, reason: 'wiki service unavailable' });
+      }
+      const clusters = (args.clusters ?? []) as Array<{
+        title: string;
+        summary: string;
+        members: string[];
+        tags?: string[];
+      }>;
+      if (clusters.length === 0) {
+        const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(80, Math.floor(args.limit)) : 20;
+        const { notes, pages } = await deps.wiki.list(limit);
+        return asCanonical({
+          mode: 'list',
+          count: notes.length,
+          hint:
+            '按**含义**分簇（不要按 topic 字段：那只是问句的第一个词串），每簇给 title + summary + members(笔记 id)。' +
+            '再调一次本工具并带上 clusters 落地；summary 是主题页的核心（合并后的口径/分歧/未决）。',
+          pages,
+          notes: notes.map((n) => ({
+            id: n.id,
+            file: n.file,
+            title: n.title,
+            ask: n.ask,
+            status: n.status,
+            tags: n.tags,
+            wiki: n.wiki || null,
+            excerpt: n.excerpt,
+          })),
+        });
+      }
+      const { results, linked, index } = await deps.wiki.apply(clusters);
+      const ok = results.filter((r) => r.ok);
+      return asCanonical({
+        mode: 'apply',
+        total: results.length,
+        pages: ok.length,
+        linked,
         failed: results.filter((r) => !r.ok),
         results,
         index,

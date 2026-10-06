@@ -221,7 +221,13 @@ export async function listNotes(dir: string, limit = 10): Promise<NoteRef[]> {
   return limit > 0 ? out.slice(0, limit) : out;
 }
 
-async function freeName(dir: string, base: string, self: string, taken: Set<string>): Promise<string> {
+/**
+ * 挑一个没被占用的文件名（`<base>.md` → `<base>-2.md` → …）。
+ *
+ * `self` 是「这篇笔记自己现在的文件名」：自己占着的名字不算冲突（改名成同名是合法的 no-op）。
+ * 主题页生成（`knowledge/wiki.ts`）复用这同一个函数 —— 「别覆盖别人的文件」只有一套口径。
+ */
+export async function freeName(dir: string, base: string, self: string, taken: Set<string>): Promise<string> {
   let candidate = base + '.md';
   let n = 2;
   for (;;) {

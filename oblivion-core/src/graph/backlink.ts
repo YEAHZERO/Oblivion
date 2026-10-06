@@ -1,5 +1,6 @@
 import type { KnowledgeItem } from '../types.js';
 import { jaccard, tokenize } from '../knowledge/search.js';
+import { isWeakTitle } from '../knowledge/naming.js';
 
 /**
  * 图谱生长的**双链写回**（设计书 §25.6/§12.4 里那条一直缺的「写入 MD：`[[相关条目]]`」）。
@@ -34,6 +35,9 @@ export function findRelatedItems(
 
   const pool = candidates
     .filter((item) => item.id !== current.id && item.status === 'active')
+    // 弱标题（`OK`、`继续`、`已重启`）不配当双链目标：拿它连过去等于什么都没说。
+    // 现场实测老笔记里就有 `[[OK]]`、`[[继续]]` 这类链接，源头正是这里没筛。
+    .filter((item) => typeof item.title === 'string' && item.title.trim() !== '' && !isWeakTitle(item.title))
     .sort((a, b) => b.updated_at - a.updated_at)
     .slice(0, recent);
 

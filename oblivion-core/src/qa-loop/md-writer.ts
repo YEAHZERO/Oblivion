@@ -394,28 +394,68 @@ export async function writeIndexNote(root: string, entries: KnowledgeItem[], at 
   return path;
 }
 
+/** 「关联知识」段的标题。**全篇只应有一段**（旧实现每批追加一段，见下面的合并逻辑）。 */
+export const RELATED_HEADER = '## 关联知识（自动）';
+/** 一篇笔记最多挂多少条双链：链接墙比漏链更糟。 */
+const RELATED_MAX = 30;
+
 /**
- * 给既有笔记追加「关联知识」双链段（图谱生长的"双链写回"）。
+ * 把「关联知识」段全部摘出来，返回**去掉这些段之后**的正文 + 段里出现过的链接（按出现顺序）。
  *
- * 幂等：同一批链接已存在则不动。**只追加到我们自己写的笔记**（含 `oblivion:` 标记）——
- * 用户自有笔记一个字都不改（与防误伤同一条原则）。
+ * 为什么不是「有就跳过」：旧实现每批追加一个新段（`appendRelatedLinks` 只查
+ * `existing.includes('[[' + t + ']]')`），于是同一批链接之外的新链接就会再开一段 ——
+ * 实测一篇笔记堆了 **26 个** `## 关联知识（自动）`，读者翻半屏都是同一件事。
+ */
+function splitRelated(text: string): { head: string; links: string[] } {
+  const kept: string[] = [];
+  const links: string[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].trim() !== RELATED_HEADER) {
+      kept.push(lines[i]);
+      continue;
+    }
+    i += 1;
+    // 段内容一直到下一个二级标题（或文末）；顺手把里面的链接收集起来。
+    for (; i < lines.length && !/^##\s/.test(lines[i]); i += 1) {
+      const hit = /\[\[(.+?)\]\]/.exec(lines[i]);
+      if (hit) links.push(hit[1].trim());
+    }
+    i -= 1;
+  }
+  return { head: kept.join('\n'), links };
+}
+
+/**
+ * 给既有笔记写「关联知识」双链段（图谱生长的"双链写回"）。
+ *
+ * 从 0.2.4 起是**单段合并**的：把已有段里的链接与本次新增合成一段、去重、丢掉弱标题
+ * （`[[OK]]`、`[[继续]]` 这类应答不构成知识），最多 `RELATED_MAX` 条。
+ * 因此这个函数现在也是**清理器**：老笔记里堆着的重复段会在下一次写回时被并成一段。
+ *
+ * 幂等：段已经是「单段、无重复、无弱标题、无新增」时**不写盘**（返回 `false`）。
+ * **只动我们自己写的笔记**（含 `oblivion:` 标记）—— 用户自有笔记一个字都不改（与防误伤同一条原则）。
  */
 export async function appendRelatedLinks(notePath: string, titles: string[]): Promise<boolean> {
-  const links = titles.map((t) => String(t).trim()).filter((t) => t !== '');
-  if (links.length === 0) return false;
+  const wanted = titles
+    .map((t) => String(t).trim().replace(/^\[\[|\]\]$/g, ''))
+    // 弱标题不进双链：回填实测的 `[[OK]]`、`[[继续]]` 就是从这里漏进来的。
+    .filter((t) => t !== '' && !isWeakTitle(t));
+  if (wanted.length === 0) return false;
   const existing = await readFile(notePath, 'utf8').catch(() => '');
   if (existing === '' || !existing.includes(ID_MARKER)) return false;
 
-  const missing = links.filter((t) => !existing.includes('[[' + t + ']]'));
-  if (missing.length === 0) return false;
+  const { head, links } = splitRelated(existing);
+  const merged = links.filter((t) => t !== '' && !isWeakTitle(t));
+  for (const title of wanted) if (!merged.includes(title)) merged.push(title);
+  const final = merged.slice(0, RELATED_MAX);
 
-  const block = [
-    '',
-    '## 关联知识（自动）',
-    '',
-    missing.map((t) => '- [[' + t.replace(/^\[\[|\]\]$/g, '') + ']]').join('\n'),
-    '',
-  ].join('\n');
-  await writeFile(notePath, existing.trimEnd() + '\n' + block, 'utf8');
+  const clean = head.trimEnd();
+  const block = ['', RELATED_HEADER, '', final.map((t) => '- [[' + t + ']]').join('\n'), ''].join('\n');
+  const rebuilt = clean + '\n' + block;
+  // 逐字比「重建结果」而不是比链接个数：这样「段之间的空行/重复段被并掉/弱标题被清掉」
+  // 这些**规范化**动作都会被认成「需要写盘」，而真正干净的文件一个字都不会被碰。
+  if (rebuilt.trimEnd() === existing.trimEnd()) return false;
+  await writeFile(notePath, rebuilt, 'utf8');
   return true;
 }

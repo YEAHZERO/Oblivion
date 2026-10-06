@@ -81,10 +81,13 @@ function makeCtx() {
   };
 }
 
-await check('apply 注册面完整（8 工具 / 1 段落 / 事件 / 各自 effect）', () => {
+await check('apply 注册面完整（9 工具 / 1 段落 / 事件 / 各自 effect）', () => {
   const { ctx, reg } = makeCtx();
   mod.apply(ctx, { dataRoot, mdRoot });
-  assert.equal(reg.tools.length, 8, '工具数应为 8（含观测面、整理与改名）');
+  assert.equal(reg.tools.length, 9, '工具数应为 9（含观测面、整理、改名与主题页）');
+  for (const name of ['oblivion_retitle', 'oblivion_wiki']) {
+    assert.ok(reg.tools.includes(name), '缺少工具 ' + name);
+  }
   assert.deepEqual(reg.sections, ['OBLIVION_COGNITION']);
   assert.ok(reg.events.some((e) => e.event === 'session/event'), '必须监听 session/event');
   assert.ok(reg.events.some((e) => e.event === 'agent/created'), '必须在 agent 作用域补挂订阅');
@@ -697,6 +700,116 @@ await check('命名与打标签：答案小标题优先、问句去水词、中�
   assert.ok(!notePath.includes('查看这个方案'), '不应再出现问句简写的文件名');
   assert.match(readFileSync(notePath, 'utf8'), /^---\n/, '笔记要有 frontmatter');
   return '名字「' + kit.titleFromQA('给出实施的具体方案', '## 结论\n\n## 分阶段落地\n') + '」/ 标签 ' + tags.length + ' 个';
+});
+
+await check('关联知识双链：重复段并成一段 + 丢弱标题 + 幂等（现场见过堆 26 段的笔记）', async () => {
+  const kit = await import(new URL('file://' + join(ROOT, 'lib', 'testkit.js').replace(/\\/g, '/')).href);
+  const dir = join(tmp, 'kb-links');
+  mkdir(dir, { recursive: true });
+  const path = join(dir, '笔记.md');
+  writeFileSync(
+    path,
+    [
+      '---',
+      'title: "反复追加过的笔记"',
+      '---',
+      '',
+      '# 反复追加过的笔记',
+      '',
+      '正文不能被双链改写。',
+      '',
+      '<!-- oblivion:id=ts-sc-link version=1 -->',
+      '',
+      '## 关联知识（自动）',
+      '',
+      '- [[激活排查]]',
+      '- [[OK]]',
+      '',
+      '## 关联知识（自动）',
+      '',
+      '- [[激活排查]]',
+      '- [[继续]]',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  assert.equal(await kit.appendRelatedLinks(path, ['数据目录归属之谜']), true);
+  const after = readFileSync(path, 'utf8');
+  assert.equal(after.split(kit.RELATED_HEADER).length - 1, 1, '只应剩一段关联知识：' + after);
+  assert.ok(
+    after.includes('- [[激活排查]]') && after.includes('- [[数据目录归属之谜]]'),
+    '已有链接与新链接都要在',
+  );
+  assert.ok(!after.includes('[[OK]]') && !after.includes('[[继续]]'), '弱标题要清掉');
+  assert.ok(after.includes('正文不能被双链改写。'), '正文一个字不动');
+  assert.equal(await kit.appendRelatedLinks(path, ['数据目录归属之谜']), false, '第二次不该再写盘');
+  return '段 1 个 / 链接 2 条 / 弱标题已清';
+});
+
+await check('主题页（oblivion_wiki）：模型判簇 → 落 02_Wiki页面/ + 成员回链 + 重跑更新同一页', async () => {
+  const kit = await import(new URL('file://' + join(ROOT, 'lib', 'testkit.js').replace(/\\/g, '/')).href);
+  const root = join(tmp, 'kb-wiki');
+  const mdDir = join(root, '01_问答沉淀');
+  mkdir(mdDir, { recursive: true });
+  const noteOf = (id, title, ask) =>
+    [
+      '---',
+      'title: ' + JSON.stringify(title),
+      'topic: "认知层"',
+      'tags: ["dsh"]',
+      'status: "active"',
+      'ask: ' + JSON.stringify(ask),
+      '---',
+      '',
+      '# ' + title,
+      '',
+      '>Date :  2026-10-06',
+      '>Tags： #dsh',
+      '>Ask： ' + ask,
+      '',
+      '## 内容',
+      '',
+      '答案正文。',
+      '',
+      '## 来源',
+      '',
+      '- `session`: s#1',
+      '',
+      '<!-- oblivion:id=' + id + ' version=1 -->',
+      '',
+    ].join('\n');
+  writeFileSync(join(mdDir, '事件作用域.md'), noteOf('ts-sc-w1', '事件作用域', '插件的 session/event 收不到，为什么'), 'utf8');
+  writeFileSync(join(mdDir, '注入服务.md'), noteOf('ts-sc-w2', '注入服务', '未声明的服务读取就抛，怎么绕'), 'utf8');
+
+  const svc = kit.createWikiService({
+    mdRoot: root,
+    dataRoot: join(tmp, 'data-wiki'),
+    classify: { session: '01_问答沉淀', wiki: '02_Wiki页面' },
+  });
+  const cluster = {
+    title: '事件作用域与注入',
+    summary: '两条坑同源：事件按作用域过滤派发，服务不声明就读不了。',
+    members: ['ts-sc-w1', 'ts-sc-w2'],
+    tags: ['scope'],
+  };
+  const first = await svc.apply([cluster]);
+  assert.equal(first.results[0].ok, true, '第一簇要成功');
+  assert.equal(first.results[0].linked, 2, '两篇成员笔记都要回链');
+  const pagePath = join(root, '02_Wiki页面', '事件作用域与注入.md');
+  assert.ok(existsSync(pagePath), '主题页要落在 02_Wiki页面/');
+  const page = readFileSync(pagePath, 'utf8');
+  assert.ok(page.includes('两条坑同源'), '模型的概述要落进页面');
+  assert.ok(page.includes('- [[事件作用域]]'), '来源笔记要双链进页面');
+  assert.ok(page.includes('oblivion:wiki'), '要有幂等尾标');
+  const member = readFileSync(join(mdDir, '事件作用域.md'), 'utf8');
+  assert.ok(member.includes('> Wiki： [[事件作用域与注入]]'), '成员笔记要有一行回链：' + member);
+  assert.ok(member.includes('## 内容') && member.includes('答案正文。'), '成员笔记正文一个字不动');
+
+  const second = await svc.apply([cluster]);
+  assert.equal(second.results[0].file, first.results[0].file, '重跑必须更新同一页（不能长出 -2.md）');
+  assert.equal(second.results[0].linked, 0, '已经指过的回链不重复写');
+  assert.deepEqual(readdirSync(join(root, '02_Wiki页面')).sort(), ['事件作用域与注入.md']);
+  return '页 1 / 成员 2 / 回链 2 / 重跑 linked 0';
 });
 
 rmSync(tmp, { recursive: true, force: true });

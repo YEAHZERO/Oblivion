@@ -9,7 +9,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync as mkdtemp, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync as mkdtemp, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
@@ -17,6 +17,13 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const LIB = join(ROOT, 'lib', 'index.js');
+
+/** 目录里的文件名（排序），用来断言「落成了哪些文件、有没有多长出 -2」。 */
+function readdirNames(dir) {
+  return readdirSync(dir, { withFileTypes: true })
+    .map((entry) => entry.name)
+    .sort();
+}
 
 const mod = await import(new URL('file://' + LIB.replace(/\\/g, '/')).href);
 
@@ -97,7 +104,7 @@ function fakeCtx() {
 }
 
 describe('装配（apply）', () => {
-  it('注册 8 个模型面工具（含观测面、整理与改名）', () => {
+  it('注册 9 个模型面工具（含观测面、整理、改名与主题页）', () => {
     const { ctx, seen } = fakeCtx();
     // 用系统临时目录：插件装载时会写 status.json / decisions.jsonl，绝不能落在仓库里
     const tmp = mkdtemp(join(tmpdir(), 'oblivion-tools-'));
@@ -112,6 +119,7 @@ describe('装配（apply）', () => {
         'oblivion_query',
         'oblivion_retitle',
         'oblivion_status',
+        'oblivion_wiki',
       ]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -488,6 +496,308 @@ related_wiki: []
       const ctx2 = { tools: { register: (d) => none.set(d.name, d) } };
       kit.registerTools(ctx2, { knowledge: {}, profile: {}, feedback: null, graph: {}, retitle: null });
       assert.equal((await none.get('oblivion_retitle').execute({}, {})).skipped, true);
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('关联知识双链：单段合并、去重、丢弱标题（md-writer）', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  /** 老笔记的现实样子：双链段被追加了 3 次，里面还混着 `[[OK]]`、`[[继续]]` 这种应答。 */
+  const CLUTTERED = [
+    '---',
+    'title: "反复追加过的笔记"',
+    'topic: "方案"',
+    '---',
+    '',
+    '# 反复追加过的笔记',
+    '',
+    '>Date :  2026-10-06',
+    '>Tags： #dsh',
+    '',
+    '## 内容',
+    '',
+    '正文不能被双链改写。',
+    '',
+    '<!-- oblivion:id=ts-link-1 version=1 -->',
+    '',
+    '## 关联知识（自动）',
+    '',
+    '- [[激活排查]]',
+    '- [[OK]]',
+    '',
+    '## 关联知识（自动）',
+    '',
+    '- [[激活排查]]',
+    '- [[继续]]',
+    '',
+    '## 关联知识（自动）',
+    '',
+    '- [[数据目录归属之谜]]',
+    '',
+  ].join('\n');
+
+  it('把重复的段并成一段：去重、丢弱标题、有限条数', async () => {
+    const tmp = mkdtemp(join(tmpdir(), 'oblivion-links-'));
+    try {
+      const path = join(tmp, '笔记.md');
+      writeFileSync(path, CLUTTERED, 'utf8');
+      const wrote = await kit.appendRelatedLinks(path, ['数据目录归属之谜', '新的双链', 'OK']);
+      assert.equal(wrote, true);
+      const after = readFileSync(path, 'utf8');
+      assert.equal(after.split(kit.RELATED_HEADER).length - 1, 1, '只应剩一段关联知识：' + after);
+      assert.ok(after.includes('- [[激活排查]]'), '已有链接要保住');
+      assert.ok(after.includes('- [[新的双链]]'), '新链接要写进去');
+      assert.ok(!after.includes('[[OK]]') && !after.includes('[[继续]]'), '弱标题不该留在双链里');
+      assert.ok(after.includes('正文不能被双链改写。'), '正文一个字不动');
+      assert.ok(after.includes('<!-- oblivion:id=ts-link-1 version=1 -->'), '幂等标记要留着');
+
+      // 幂等：同一批链接再跑一次，不写盘
+      assert.equal(await kit.appendRelatedLinks(path, ['新的双链']), false);
+      assert.equal(readFileSync(path, 'utf8'), after);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('用户自有笔记与「全是弱标题」两种情况都不动文件', async () => {
+    const tmp = mkdtemp(join(tmpdir(), 'oblivion-links2-'));
+    try {
+      const mine = join(tmp, '我自己的笔记.md');
+      writeFileSync(mine, '# 我自己的笔记\n\n别碰我。\n', 'utf8');
+      assert.equal(await kit.appendRelatedLinks(mine, ['激活排查']), false, '用户自有笔记不动');
+      assert.equal(readFileSync(mine, 'utf8'), '# 我自己的笔记\n\n别碰我。\n');
+
+      const path = join(tmp, '笔记.md');
+      writeFileSync(path, CLUTTERED, 'utf8');
+      assert.equal(await kit.appendRelatedLinks(path, ['OK', '继续']), false, '全是弱标题就不写');
+      assert.equal(readFileSync(path, 'utf8'), CLUTTERED);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  function noteOf(id, title, ask, body) {
+    return [
+      '---',
+      'title: ' + JSON.stringify(title),
+      'topic: "认知层"',
+      'source: "session"',
+      'ref: "session-x#turn-1"',
+      'created_at: "2026-10-06"',
+      'updated_at: "2026-10-06"',
+      'tags: ["dsh", "plugin"]',
+      'status: "active"',
+      'impl: "implemented"',
+      'ask: ' + JSON.stringify(ask),
+      '---',
+      '',
+      '# ' + title,
+      '',
+      '>Date :  2026-10-06',
+      '>Source：Oblivion',
+      '>Tags： #dsh #plugin',
+      '>Ask： ' + ask,
+      '',
+      '## 内容',
+      '',
+      '### 具体实施计划',
+      '',
+      body,
+      '',
+      '## 来源',
+      '',
+      '- `session`: session-x#turn-1',
+      '',
+      '<!-- oblivion:id=' + id + ' version=1 -->',
+      '',
+    ].join('\n');
+  }
+
+  function fixture() {
+    const tmp = mkdtemp(join(tmpdir(), 'oblivion-wiki-'));
+    const mdRoot = join(tmp, 'kb');
+    const mdDir = join(mdRoot, '01_问答沉淀');
+    mkdirSync(mdDir, { recursive: true });
+    writeFileSync(
+      join(mdDir, '事件作用域.md'),
+      noteOf('ts-w-1', '事件作用域', '插件的 session/event 收不到，为什么', '作用域过滤派发。'),
+      'utf8',
+    );
+    writeFileSync(
+      join(mdDir, '注入服务.md'),
+      noteOf('ts-w-2', '注入服务', '未声明的服务读取就抛，怎么绕', 'inject 里声明才能读。'),
+      'utf8',
+    );
+    return { tmp, mdRoot, mdDir };
+  }
+
+  function serviceOf(f, host) {
+    return kit.createWikiService({
+      mdRoot: f.mdRoot,
+      dataRoot: join(f.tmp, 'data'),
+      classify: { session: '01_问答沉淀', wiki: '02_Wiki页面' },
+      host: host ?? null,
+    });
+  }
+
+  const CLUSTER = {
+    title: '认知插件组 · 事件作用域与注入',
+    summary: '两条坑同源：事件按作用域过滤派发，服务不声明就读不了。',
+    members: ['ts-w-1', 'ts-w-2'],
+    tags: ['scope'],
+  };
+
+  it('renderWikiPage：frontmatter + 概述 + 成员双链 + 状态标注 + 标签并集 + 幂等尾标', async () => {
+    const page = kit.renderWikiPage({
+      cluster: { title: '主题页样板', summary: '合并后的一句话。', members: [], tags: ['GRAPH'] },
+      members: [
+        { id: 'a', file: 'a.md', title: '现行那篇', ask: '原来问什么', status: 'active', tags: ['dsh'], excerpt: '' },
+        { id: 'b', file: 'b.md', title: '旧版那篇', ask: '', status: 'superseded', tags: ['plugin'], excerpt: '' },
+      ],
+      at: Date.parse('2026-10-06T12:00:00Z'),
+    });
+    assert.ok(page.includes('title: "主题页样板"'), page);
+    assert.ok(page.includes('generated_by: "model"'));
+    assert.ok(page.includes('## 概述'));
+    assert.ok(page.includes('合并后的一句话。'));
+    assert.ok(page.includes('- [[现行那篇]] —— 原来问什么'), '成员要带原问句：' + page);
+    assert.ok(page.includes('- [[旧版那篇]]（已被新版取代）'), '非 active 成员要标出来');
+    assert.ok(page.includes('## 口径提示'), '有非 active 成员时要有口径提示');
+    assert.ok(page.includes('tags: ["graph", "dsh", "plugin"]'), '标签并集且小写：' + page);
+    assert.ok(/<!-- oblivion:wiki title=主题页样板 members=2 at=\d+ -->/.test(page), '要有幂等尾标');
+  });
+
+  it('落地：写主题页 + 给每篇成员笔记补一行 > Wiki + 不动正文；重跑是更新同一页', async () => {
+    const f = fixture();
+    try {
+      const self = { items: [] };
+      const svc = serviceOf(f, {
+        store: { loadAll: async () => self.items },
+        index: {
+          rebuild: (items) => {
+            self.items = items;
+          },
+          all: () => self.items,
+        },
+      });
+      const before = readFileSync(join(f.mdDir, '事件作用域.md'), 'utf8');
+
+      const first = await svc.apply([CLUSTER]);
+      assert.deepEqual(first.results.map((r) => [r.ok, r.members, r.linked]), [[true, 2, 2]]);
+      const pagePath = join(f.mdRoot, '02_Wiki页面', CLUSTER.title + '.md');
+      assert.ok(existsSync(pagePath), '主题页要落在 02_Wiki页面/：' + first.results[0].file);
+      const page = readFileSync(pagePath, 'utf8');
+      assert.ok(page.includes('两条坑同源'), '模型的概述要落进页面');
+      assert.ok(page.includes('- [[事件作用域]] —— 插件的 session/event 收不到，为什么'));
+
+      const after = readFileSync(join(f.mdDir, '事件作用域.md'), 'utf8');
+      assert.ok(after.includes('> Wiki： [[' + CLUSTER.title + ']]'), '要写回 Wiki 行：' + after);
+      assert.ok(after.includes('>Ask： 插件的 session/event 收不到，为什么'), 'Wiki 行插在元信息块末尾，别顶掉 Ask');
+      assert.ok(before.includes('### 具体实施计划') && after.includes('### 具体实施计划'), '正文一个字不动');
+      assert.ok(after.includes('<!-- oblivion:id=ts-w-1 version=1 -->'));
+      assert.equal(first.index.count, 0, '索引按 host 的 store 重建（这里替身是空的，但路径要有）');
+      assert.ok(first.index.path.endsWith('索引.md'));
+
+      // 幂等：同一簇重跑 ⇒ 更新同一页，不再写回已经指过的链接
+      const second = await svc.apply([CLUSTER]);
+      assert.equal(second.results[0].file, first.results[0].file, '不能长出 -2.md');
+      assert.equal(second.results[0].linked, 0, '已指过的链接不重复写');
+      assert.deepEqual(readdirNames(join(f.mdRoot, '02_Wiki页面')), [CLUSTER.title + '.md']);
+
+      const list = await svc.list(10);
+      assert.deepEqual(list.pages.map((p) => [p.title, p.members]), [[CLUSTER.title, 2]]);
+      assert.equal(list.notes.length, 2);
+      assert.ok(list.notes.every((n) => n.wiki.includes(CLUSTER.title)), '候选里要能看到「已归页」');
+      assert.equal(list.notes.find((n) => n.id === 'ts-w-1').ask, '插件的 session/event 收不到，为什么');
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('防误伤：用户自己的同名笔记不会被覆盖，改成 <标题>-oblivion.md', async () => {
+    const f = fixture();
+    try {
+      const wikiDir = join(f.mdRoot, '02_Wiki页面');
+      mkdirSync(wikiDir, { recursive: true });
+      const mine = '# 我自己写的主题页\n\n别碰我。\n';
+      writeFileSync(join(wikiDir, CLUSTER.title + '.md'), mine, 'utf8');
+
+      const { results } = await serviceOf(f).apply([CLUSTER]);
+      assert.equal(results[0].file, CLUSTER.title + '-oblivion.md');
+      assert.equal(readFileSync(join(wikiDir, CLUSTER.title + '.md'), 'utf8'), mine, '用户自己的文件一个字都不改');
+      assert.ok(readFileSync(join(wikiDir, results[0].file), 'utf8').includes('oblivion:wiki'));
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('工具两段式：不带 clusters 给候选 + 已有主题页，带 clusters 落地；服务缺席只回 skipped', async () => {
+    const f = fixture();
+    try {
+      const defs = new Map();
+      const ctx = { tools: { register: (d) => defs.set(d.name, d) } };
+      kit.registerTools(ctx, {
+        knowledge: {},
+        profile: {},
+        feedback: null,
+        graph: {},
+        wiki: serviceOf(f),
+      });
+
+      const tool = defs.get('oblivion_wiki');
+      assert.ok(tool, '要注册 oblivion_wiki');
+
+      const listed = await tool.execute({ limit: 5 }, {});
+      assert.equal(listed.mode, 'list');
+      assert.equal(listed.count, 2);
+      assert.deepEqual(listed.pages, []);
+      assert.equal(listed.notes[0].wiki, null);
+      assert.ok(listed.notes[0].ask !== '', '候选要带原问句，模型才判得出「是不是一个主题」');
+
+      const applied = await tool.execute({ clusters: [CLUSTER] }, {});
+      assert.equal(applied.mode, 'apply');
+      assert.equal(applied.total, 1);
+      assert.equal(applied.pages, 1);
+      assert.equal(applied.linked, 2);
+      assert.deepEqual(applied.failed, []);
+
+      const after = await tool.execute({ limit: 5 }, {});
+      assert.deepEqual(after.pages.map((p) => p.title), [CLUSTER.title]);
+      assert.ok(after.notes.every((n) => n.wiki.includes(CLUSTER.title)));
+
+      const none = new Map();
+      const ctx2 = { tools: { register: (d) => none.set(d.name, d) } };
+      kit.registerTools(ctx2, { knowledge: {}, profile: {}, feedback: null, graph: {}, wiki: null });
+      assert.equal((await none.get('oblivion_wiki').execute({}, {})).skipped, true);
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('空标题 / 全是陌生 id 的簇按失败回报，不写空文件', async () => {
+    const f = fixture();
+    try {
+      const { results } = await serviceOf(f).apply([
+        { title: '', summary: 'x', members: ['ts-w-1'] },
+        { title: '不存在的簇', summary: 'x', members: ['ts-nope'] },
+      ]);
+      assert.deepEqual(results.map((r) => r.error), ['empty-title', 'no-known-members']);
+      assert.deepEqual(readdirNames(join(f.mdRoot, '02_Wiki页面')), []);
     } finally {
       rmSync(f.tmp, { recursive: true, force: true });
     }
