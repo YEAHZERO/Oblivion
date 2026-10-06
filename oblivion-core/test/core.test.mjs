@@ -99,15 +99,21 @@ function fakeCtx() {
 describe('装配（apply）', () => {
   it('注册 6 个模型面工具（含观测面 oblivion_status）', () => {
     const { ctx, seen } = fakeCtx();
-    mod.apply(ctx, { dataRoot: join(ROOT, '.tmp-test-data'), mdRoot: join(ROOT, '.tmp-test-kb') });
-    assert.deepEqual(seen.tools.sort(), [
-      'oblivion_capture',
-      'oblivion_feedback',
-      'oblivion_graph_neighbors',
-      'oblivion_profile',
-      'oblivion_query',
-      'oblivion_status',
-    ]);
+    // 用系统临时目录：插件装载时会写 status.json / decisions.jsonl，绝不能落在仓库里
+    const tmp = mkdtemp(join(tmpdir(), 'oblivion-tools-'));
+    try {
+      mod.apply(ctx, { dataRoot: join(tmp, 'data'), mdRoot: join(tmp, 'kb') });
+      assert.deepEqual(seen.tools.sort(), [
+        'oblivion_capture',
+        'oblivion_feedback',
+        'oblivion_graph_neighbors',
+        'oblivion_profile',
+        'oblivion_query',
+        'oblivion_status',
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('注册一个 systemPrompt 段落（用于认知陪伴注入）', () => {

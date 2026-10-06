@@ -4,6 +4,12 @@ node_modules/
 .cache/
 .dshx/
 
+# 测试产生的本地状态（插件装载就会写 status.json / decisions.jsonl，绝不入库）
+.tmp-test-data/
+.tmp-test-kb/
+oblivion-*/.tmp-test-data/
+oblivion-*/.tmp-test-kb/
+
 # 构建产物
 dist/
 
