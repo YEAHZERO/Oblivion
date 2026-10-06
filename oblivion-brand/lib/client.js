@@ -319,7 +319,7 @@ function createEmbeddedPanel(getProvider, label) {
 }
 
 // src/client/version.ts
-var PLUGIN_VERSION = true ? "0.1.2" : "dev";
+var PLUGIN_VERSION = true ? "0.1.3" : "dev";
 
 // src/paths.ts
 var RESTART_PATH = "/obl-brand/restart";
@@ -331,6 +331,19 @@ var import_react3 = require("react");
 // src/plugin-list.ts
 function statusLabel(entry) {
   return entry.active ? "\u5DF2\u542F\u7528" : "\u5DF2\u88C5\u672A\u542F\u7528";
+}
+function layerLabel(layer) {
+  if (layer === "bundles") return "\u7EC4\u5408\u5C42";
+  if (layer === "bundle-patch") return "\u7EC4\u5408\u5C42\u8865\u4E01";
+  if (layer === "user-patch") return "\u7528\u6237\u5C42\u8865\u4E01";
+  return "";
+}
+function asLayer(value, bundled, patched) {
+  if (value === "bundles" || value === "bundle-patch" || value === "user-patch" || value === "none") {
+    return value;
+  }
+  if (bundled) return "bundles";
+  return patched ? "user-patch" : "none";
 }
 function totalRestoreScript(payload) {
   return payload.entries.map((entry) => entry.restore).join("\n");
@@ -356,6 +369,7 @@ function asEntry(raw) {
     version,
     bundled,
     patched,
+    layer: asLayer(record["layer"], bundled, patched),
     active: record["active"] === true || bundled || patched,
     restore
   };
@@ -485,7 +499,7 @@ function InstalledPluginsSection(props) {
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("code", { style: monoStyle, children: "dependencies" }),
       " \u91CC\u88C5\u8FC7\u7684\u63D2\u4EF6\u3002\u91CD\u88C5\u65F6\u70B9\u300C\u590D\u5236\u300D\u62FF\u547D\u4EE4\uFF0C \u6216\u5728\u63D2\u4EF6\u5E02\u573A\u91CC\u6309\u5305\u540D\u641C\u7D22\u5B89\u88C5\u3002\u300C\u5DF2\u88C5\u672A\u542F\u7528\u300D= \u88C5\u4E86\u4F46\u65E2\u4E0D\u5728 ",
       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("code", { style: monoStyle, children: "dsh.profile.bundles" }),
-      "\u91CC\u3001\u4E5F\u6CA1\u6709\u8865\u4E01\u884C\uFF0C\u5BBF\u4E3B\u4E0D\u4F1A\u52A0\u8F7D\u5B83\u3002"
+      "\u91CC\u3001\u4E5F\u6CA1\u6709\u4EFB\u4F55\u4E00\u5C42\u7684\u8865\u4E01\u884C\uFF0C\u5BBF\u4E3B\u4E0D\u4F1A\u52A0\u8F7D\u5B83\u3002\u300C\u7EC4\u5408\u5C42\u300D= \u6539\u5B83\u7684\u914D\u7F6E\u8981\u91CD\u542F DSH\uFF0C \u300C\u7528\u6237\u5C42\u8865\u4E01\u300D= \u53EF\u4EE5\u5728\u7528\u6237\u5C42\u70ED\u6302\u3002"
     ] }),
     state.status === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: hintStyle, children: "\u6B63\u5728\u8BFB\u53D6 profile\u2026" }) : null,
     state.status === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { style: { ...hintStyle, color: "var(--dsw-alias-label-error, #d93025)" }, children: [
@@ -522,6 +536,10 @@ function InstalledPluginsSection(props) {
                 /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "13px", color: LABEL, fontWeight: 600 }, children: entry.name }),
                 entry.version !== null ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: monoStyle, children: entry.version }) : null,
                 /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: "11px", color: statusColor(entry) }, children: statusLabel(entry) }),
+                layerLabel(entry.layer) !== "" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { fontSize: "11px", color: MUTED }, children: [
+                  "\xB7 ",
+                  layerLabel(entry.layer)
+                ] }) : null,
                 /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: monoStyle, children: [
                   "\xB7 ",
                   kindLabel(entry)

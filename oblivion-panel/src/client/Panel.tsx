@@ -300,13 +300,7 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
           </div>
         )}
 
-        <div style={S.h}>
-          最近判定{' '}
-          <span style={S.dim}>
-            （窗口 {newest.length} 条
-            {newest.length > shown.length ? '，显示最近 ' + shown.length + ' 条' : ''}）
-          </span>
-        </div>
+        <div style={S.h}>最近判定</div>
         {recent.length === 0 ? (
           <div style={S.dim}>还没有判定记录（{data.trace?.path ?? 'decisions.jsonl'}）</div>
         ) : (

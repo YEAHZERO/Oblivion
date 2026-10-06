@@ -10,7 +10,7 @@ var PLUGINS_PATH = "/obl-brand/plugins";
 
 // src/profile-plugins.ts
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 // src/plugin-list.ts
 var SAFE_ARG = /^[A-Za-z0-9@._/+^~-]+$/;
@@ -23,6 +23,19 @@ function restoreCommand(profile, spec) {
 }
 function statusLabel(entry) {
   return entry.active ? "\u5DF2\u542F\u7528" : "\u5DF2\u88C5\u672A\u542F\u7528";
+}
+function layerLabel(layer) {
+  if (layer === "bundles") return "\u7EC4\u5408\u5C42";
+  if (layer === "bundle-patch") return "\u7EC4\u5408\u5C42\u8865\u4E01";
+  if (layer === "user-patch") return "\u7528\u6237\u5C42\u8865\u4E01";
+  return "";
+}
+function asLayer(value, bundled, patched) {
+  if (value === "bundles" || value === "bundle-patch" || value === "user-patch" || value === "none") {
+    return value;
+  }
+  if (bundled) return "bundles";
+  return patched ? "user-patch" : "none";
 }
 function totalRestoreScript(payload) {
   return payload.entries.map((entry) => entry.restore).join("\n");
@@ -48,6 +61,7 @@ function asEntry(raw) {
     version,
     bundled,
     patched,
+    layer: asLayer(record["layer"], bundled, patched),
     active: record["active"] === true || bundled || patched,
     restore
   };
@@ -113,6 +127,32 @@ function findBundles(parsed) {
 function isBundled(bundles, name) {
   return bundles.some((item) => item === name || item.startsWith(`${name}@`));
 }
+function bundleNameOf(item) {
+  const at = item.lastIndexOf("@");
+  return at > 0 ? item.slice(0, at) : item;
+}
+function bundlePatchOf(dir, name) {
+  const pkgDir = join(dir, "node_modules", name);
+  const pkgFile = join(pkgDir, "package.json");
+  if (!existsSync(pkgFile)) return "";
+  try {
+    const parsed = readJson(pkgFile);
+    if (parsed === null || typeof parsed !== "object") return "";
+    const dsh = parsed["dsh"];
+    if (dsh === null || typeof dsh !== "object") return "";
+    const bundle = dsh["bundle"];
+    if (bundle === null || typeof bundle !== "object") return "";
+    const patch = bundle["patch"];
+    if (typeof patch !== "string" || patch === "") return "";
+    const file = resolve(pkgDir, patch);
+    return existsSync(file) ? readFileSync(file, "utf8") : "";
+  } catch {
+    return "";
+  }
+}
+function bundleLayerPatch(dir, bundles) {
+  return bundles.map((item) => bundlePatchOf(dir, bundleNameOf(item))).join("\n");
+}
 function installedVersion(dir, name) {
   const file = join(dir, "node_modules", name, "package.json");
   if (!existsSync(file)) return null;
@@ -146,17 +186,21 @@ function readInstalledPlugins(location, at = Date.now()) {
     }
   }
   const patchFile = join(location.dir, "cordis.patch.yml");
-  let patchText = "";
+  let userPatch = "";
   if (existsSync(patchFile)) {
     try {
-      patchText = readFileSync(patchFile, "utf8");
+      userPatch = readFileSync(patchFile, "utf8");
     } catch (error) {
       problems.push(`cordis.patch.yml \u8BFB\u4E0D\u5230\uFF1A${describe(error)}`);
     }
   }
+  const bundlePatch = bundleLayerPatch(location.dir, bundles);
   const entries = dependencies.map(([name, spec]) => {
     const bundled = isBundled(bundles, name);
-    const patched = patchText.includes(name);
+    const inUserPatch = userPatch.includes(name);
+    const inBundlePatch = bundlePatch.includes(name);
+    const layer = bundled ? "bundles" : inUserPatch ? "user-patch" : inBundlePatch ? "bundle-patch" : "none";
+    const patched = inUserPatch || inBundlePatch;
     return {
       name,
       spec,
@@ -164,6 +208,7 @@ function readInstalledPlugins(location, at = Date.now()) {
       version: installedVersion(location.dir, name),
       bundled,
       patched,
+      layer,
       active: bundled || patched,
       restore: restoreCommand(location.profile, spec)
     };
@@ -530,6 +575,7 @@ export {
   RESTART_PATH,
   apply,
   installMarketRegistryOverride,
+  layerLabel,
   normalizePluginList,
   quoteArg,
   readInstalledPlugins,

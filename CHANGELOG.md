@@ -12,7 +12,44 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/brand` v0.1.2 + `@oblivion/core` v0.1.20 + `@oblivion/panel` v0.0.10：已装插件清单、顶部统计改现算、知识库合栏、判定曲线、写盘一律原子、版本号只留一处
+## [未发布] — `@oblivion/brand` v0.1.3 + `@oblivion/core` v0.2.0 + `@oblivion/panel` v0.0.11：挂载层判定修正、判定区文案、rename EPERM 退回直接写（0.0.10 的判定曲线等条目见下）
+
+### `@oblivion/panel` v0.0.11 —— 去掉「最近判定」标题里的窗口说明
+
+- 所有者 2026-10-06：「不显示：最近判定 （窗口 10 条，显示最近 6 条）」—— 标题只要说「这是最近判定」，
+  窗口大小再写进标题就是噪音：列表长度看得见，曲线下面那行「最近 N 条判定 …」已经说清了。
+- 改动只有一处：`src/client/Panel.tsx` 里那个 `<span>` 连同「窗口 N 条，显示最近 M 条」一起删掉；
+  默认 6 条 + 「展开全部 N 条」按钮不变。
+
+### `@oblivion/brand` v0.1.3 —— 挂载层判定：组合层补丁也算「已启用」
+
+- **症状**（所有者要求复核「个人已安装插件」时实测到）：`@oblivion/core`、`@oblivion/panel`、
+  `@oblivion/http-bridge` 显示「已装未启用」，而它们的路由当时正在正常响应 ——
+  **清单说没跑、实际在跑**，这比少显示一条更坏。
+- **根因**：判据只扫了 **profile 用户层** 的 `cordis.patch.yml`。这三个包是被 **`@oblivion/bundle`
+  自己 `dsh.bundle.patch`**（组合层）里的 insert 行 / `cordis:group` 子行挂载的，用户层里没有它们的名字。
+- **修法**：`src/profile-plugins.ts` 新增 `bundlePatchOf(dir, name)`（读包 `package.json` 的
+  `dsh.bundle.patch`，值形如 `"./cordis.patch.yml"`）与 `bundleLayerPatch()`（把
+  `dsh.profile.bundles` 里每个 bundle 的补丁拼成一段文本），判定改为「用户层 ∪ 组合层」；
+  新增 `layer` 字段（`bundles` / `bundle-patch` / `user-patch` / `none`）与 `layerLabel()`，
+  界面在「已启用」后标出是哪一层 —— 组合层改配置**必须重启**，用户层补丁才是可热挂的那一层。
+- 旧宿主没有 `layer` 字段时按 `bundled` / `patched` 退化推断（`asLayer()`），不编造新层；
+  自检夹具补上「bundle 自带 patch 又插了另一个包」这一路，断言它必须判为已启用。
+- 复核结果（本机 16 条）：`dsh-creator-mode-plus` 正确显示「已装未启用」；core / panel / http-bridge
+  修正为「已启用 · 组合层补丁」。
+
+### `@oblivion/core` v0.2.0 —— rename 失败退回直接写（EPERM）
+
+- **症状**（所有者截图，面板「最近判定」里那条「判定异常」）：
+  `Error: EPERM: operation not permitted, rename 'C:\Library\那些渐渐被遗忘\01_问答沉淀\.28424-muwoxqso-bj0uwe.tmp' -> 'C:\Library\那些渐渐被遗忘\01_问答沉淀\最近判定也不需要这.md'`
+  —— 整条捕获被判「判定异常」，**笔记一个字都没落盘**。
+- **根因**：0.1.20 起 core 的默认写盘入口是「临时文件 + 同目录 rename」，而 Windows 上 rename 会被
+  杀毒 / 索引器 / 同步盘的**瞬时占用**挡下（临时文件刚建、目标文件正被读）。追求原子性时把内容一起赔了进去。
+- **修法**：`src/util/fs.ts` 的 `writeTextAtomic()` —— rename 失败 → 清理临时文件 → **退回直接写**
+  （`node:fs/promises.writeFile`），让调用方的日志体现这次降级。取舍写进注释：
+  **宁可「写进去但不原子」，也不要「原子但什么都没写」**。同路径的 `writeJsonAtomic()` / `writeFile()`
+  一并受益（status.json / feedback / profile / graph / 笔记 / 索引页 / 整理件 / 冲突页）。
+- 本次只改 `src/util/fs.ts`（core 0.2.0 的其余内容属另一个并行工作流）。
 
 ### `@oblivion/panel` v0.0.10 —— 判定曲线（「最近判定」缩到最近几条）
 

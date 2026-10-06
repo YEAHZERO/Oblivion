@@ -1,6 +1,6 @@
 {
   "name": "@oblivion/brand",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Oblivion 品牌插件：把 DSH 侧栏与会话 Hero 的品牌换成北极星；品牌名文字可在设置中自定义；并可把插件市场面板挂到侧栏「插件」下方。",
   "license": "MIT",
   "type": "module",

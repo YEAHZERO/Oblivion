@@ -649,17 +649,7 @@ function OblivionPanel(props) {
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(ScoreChart, { curve }),
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono, marginTop: 2 }, children: curveCaption(series, curve) })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.h, children: [
-        "\u6700\u8FD1\u5224\u5B9A",
-        " ",
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: S.dim, children: [
-          "\uFF08\u7A97\u53E3 ",
-          newest.length,
-          " \u6761",
-          newest.length > shown.length ? "\uFF0C\u663E\u793A\u6700\u8FD1 " + shown.length + " \u6761" : "",
-          "\uFF09"
-        ] })
-      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.h, children: "\u6700\u8FD1\u5224\u5B9A" }),
       recent.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.dim, children: [
         "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55\uFF08",
         data.trace?.path ?? "decisions.jsonl",

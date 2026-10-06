@@ -46,7 +46,8 @@ import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
  * 所以这里导出的是同一份实现，不是副本。
  */
 export { PLUGINS_PATH, RESTART_PATH };
-export { normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
+export { layerLabel, normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
+export type { InstalledPlugin, PluginLayer, PluginListPayload } from './plugin-list.js';
 export { readInstalledPlugins, resolveProfile };
 
 /** helper 脚本与日志落在临时目录。 */

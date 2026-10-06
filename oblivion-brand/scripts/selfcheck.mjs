@@ -117,19 +117,25 @@ function writeJson(file, value) {
 }
 
 /**
- * 造一个最小 profile：三条依赖分别覆盖 npm / 本地链接 / 已装未启用，
- * 并用 `dsh.profile.bundles` 与 `cordis.patch.yml` 各管住一条。
+ * 造一个最小 profile：四条依赖分别覆盖 npm / 用户层补丁 / **组合层补丁** / 已装未启用。
+ *
+ * 「组合层补丁」这一路是 2026-10-06 修掉的漏判：`@oblivion/core` 与 `@oblivion/panel`
+ * 不是被 profile 的用户层补丁挂上的，而是被 `@oblivion/bundle` 自己 `dsh.bundle.patch`
+ * 里的 insert 行挂上的 —— 只看用户层就会把它们误标成「已装未启用」。
  */
 function makeProfileFixture(root) {
   mkdirSync(join(root, 'node_modules', 'dsh-demo-panel'), { recursive: true });
   mkdirSync(join(root, 'node_modules', '@demo', 'linked'), { recursive: true });
+  mkdirSync(join(root, 'node_modules', 'demo-stacked'), { recursive: true });
+  mkdirSync(join(root, 'node_modules', 'dsh-demo-bundle'), { recursive: true });
   writeJson(join(root, 'package.json'), {
     dependencies: {
       'dsh-demo-panel': '^1.2.3',
       '@demo/linked': 'link:C:/Projects/demo',
+      'demo-stacked': '^2.0.0',
       'demo-idle': '^0.0.5',
     },
-    dsh: { profile: { bundles: ['dsh-demo-panel'] } },
+    dsh: { profile: { bundles: ['dsh-demo-panel', 'dsh-demo-bundle'] } },
   });
   writeJson(join(root, 'node_modules', 'dsh-demo-panel', 'package.json'), {
     name: 'dsh-demo-panel',
@@ -139,6 +145,21 @@ function makeProfileFixture(root) {
     name: '@demo/linked',
     version: '9.9.9',
   });
+  writeJson(join(root, 'node_modules', 'demo-stacked', 'package.json'), {
+    name: 'demo-stacked',
+    version: '2.0.1',
+  });
+  // 这个 bundle 自己声明补丁文件，补丁里插了 demo-stacked（组合层）。
+  writeJson(join(root, 'node_modules', 'dsh-demo-bundle', 'package.json'), {
+    name: 'dsh-demo-bundle',
+    version: '3.0.0',
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  });
+  writeFileSync(
+    join(root, 'node_modules', 'dsh-demo-bundle', 'cordis.patch.yml'),
+    ['- insert:', '    - id: demo-stacked', "      name: 'demo-stacked'", ''].join('\n'),
+    'utf8',
+  );
   writeFileSync(
     join(root, 'cordis.patch.yml'),
     ['- id: demo-patch', '  insert:', "    - '@demo/linked'", ''].join('\n'),
@@ -184,7 +205,7 @@ await check('apply 挂载两条路由且都注入 webServer', async () => {
   return reg.routes.map((route) => route.path).join(' + ');
 });
 
-await check('已装插件清单：临时 profile 上读出规格 / 启用态 / 版本', () => {
+await check('已装插件清单：临时 profile 上读出规格 / 启用态 / 挂载层 / 版本', () => {
   const root = mkdtempSync(join(tmpdir(), 'obl-brand-profile-'));
   try {
     makeProfileFixture(root);
@@ -195,7 +216,7 @@ await check('已装插件清单：临时 profile 上读出规格 / 启用态 / �
     assert.deepEqual(payload.problems, [], '最小夹具不该有读取问题');
 
     const names = payload.entries.map((entry) => entry.name);
-    assert.equal(names.length, 3);
+    assert.equal(names.length, 4);
     assert.deepEqual(names, [...names].sort((left, right) => left.localeCompare(right)), '应按包名排序');
 
     const demo = payload.entries.find((entry) => entry.name === 'dsh-demo-panel');
@@ -203,6 +224,7 @@ await check('已装插件清单：临时 profile 上读出规格 / 启用态 / �
     assert.equal(demo.version, '1.2.9', '版本要读 node_modules 里实际装到的');
     assert.equal(demo.bundled, true);
     assert.equal(demo.patched, false);
+    assert.equal(demo.layer, 'bundles');
     assert.equal(demo.active, true);
     assert.equal(demo.restore, 'dsh plugin --profile demo add ^1.2.3');
 
@@ -210,16 +232,31 @@ await check('已装插件清单：临时 profile 上读出规格 / 启用态 / �
     assert.equal(linked.kind, 'link');
     assert.equal(linked.patched, true, '补丁文件里出现即视为会被挂载');
     assert.equal(linked.bundled, false);
+    assert.equal(linked.layer, 'user-patch', 'profile 自己的 cordis.patch.yml = 用户层');
     assert.equal(linked.active, true);
     assert.equal(linked.version, '9.9.9');
     assert.equal(linked.restore, "dsh plugin --profile demo add 'link:C:/Projects/demo'", '含冒号的规格必须加引号');
 
+    const stacked = payload.entries.find((entry) => entry.name === 'demo-stacked');
+    assert.equal(stacked.bundled, false, '它不在 dsh.profile.bundles 里');
+    assert.equal(stacked.patched, true, '它被某个 bundle 自己的补丁文件插上了');
+    assert.equal(stacked.layer, 'bundle-patch', '组合层补丁也是「已启用」——这正是 core/panel 那一类');
+    assert.equal(stacked.active, true);
+    assert.equal(stacked.version, '2.0.1');
+    assert.equal(mod.statusLabel(stacked), '已启用');
+
     const idle = payload.entries.find((entry) => entry.name === 'demo-idle');
-    assert.equal(idle.active, false, '既不在 bundles 也没有补丁行 = 已装未启用');
+    assert.equal(idle.active, false, '既不在 bundles 也没有任何一层补丁 = 已装未启用');
+    assert.equal(idle.layer, 'none');
     assert.equal(idle.version, null, '没装到磁盘的版本读不到就是 null');
     assert.equal(mod.statusLabel(idle), '已装未启用');
-    assert.equal(mod.statusLabel(demo), '已启用');
-    return `${payload.entries.length} 条：npm / 本地链接 / 已装未启用`;
+
+    assert.equal(mod.layerLabel('bundles'), '组合层');
+    assert.equal(mod.layerLabel('bundle-patch'), '组合层补丁');
+    assert.equal(mod.layerLabel('user-patch'), '用户层补丁');
+    assert.equal(mod.layerLabel('none'), '');
+    assert.equal(mod.layerLabel(undefined), '', '旧宿主没这个字段时不显示层，不猜');
+    return `${payload.entries.length} 条：bundles / 用户层补丁 / 组合层补丁 / 已装未启用`;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -245,11 +282,22 @@ await check('清单路由真跑：GET 200 / POST 405 / 外来 Origin 403', async
     const payload = JSON.parse(ok.captured.body);
     assert.equal(payload.ok, true);
     assert.equal(payload.profile, 'demo');
-    assert.equal(payload.entries.length, 3);
+    assert.equal(payload.entries.length, 4);
     const normalized = mod.normalizePluginList(payload);
     assert.ok(normalized !== null, '宿主返回体应能被客户端校验器接受');
-    assert.equal(normalized.entries.length, 3);
+    assert.equal(normalized.entries.length, 4);
     assert.equal(normalized.entries.find((entry) => entry.name === 'demo-idle').active, false);
+    assert.equal(
+      normalized.entries.find((entry) => entry.name === 'demo-stacked').layer,
+      'bundle-patch',
+      '挂载层要能穿过校验器到达浏览器半边（否则界面只会说「已启用」而说不出是哪一层）',
+    );
+    // 旧宿主没有 layer 字段时按 bundled/patched 退化推断，不编造新层。
+    const legacy = mod.normalizePluginList({
+      profile: 'demo',
+      entries: [{ name: 'x', spec: '^1.0.0', restore: 'dsh plugin --profile demo add ^1.0.0', patched: true }],
+    });
+    assert.equal(legacy.entries[0].layer, 'user-patch');
 
     const wrongMethod = fakeResponse();
     await route.handler({ method: 'POST', headers: {} }, wrongMethod.response);

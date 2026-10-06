@@ -16,6 +16,17 @@
 /** 依赖的规格种类：本地链接（开发中）还是 npm 包（市场装的）。 */
 export type PluginKind = 'link' | 'npm';
 
+/**
+ * 这个包**是被哪一层挂上的**。
+ *
+ * - `bundles`：写在 profile 的 `dsh.profile.bundles` 里，宿主按 bundle 激活它；
+ * - `bundle-patch`：被某个 bundle（如 `@oblivion/bundle`）自己的 `dsh.bundle.patch`
+ *   里的 insert 行挂载 —— core / panel / http-bridge 就是这一层；
+ * - `user-patch`：被 profile 的**用户层** `cordis.patch.yml` 的 insert 行挂载（vimc）；
+ * - `none`：只装了依赖，没有任何一层挂它 ⇒ 宿主不会加载（显示「已装未启用」）。
+ */
+export type PluginLayer = 'bundles' | 'bundle-patch' | 'user-patch' | 'none';
+
 /** 清单里的一条。 */
 export interface InstalledPlugin {
   /** 包名，例如 `dsh-better-sidebar` 或 `@oblivion/core`。 */
@@ -28,8 +39,10 @@ export interface InstalledPlugin {
   readonly version: string | null;
   /** 在 `dsh.profile.bundles` 里（宿主会按 bundle 激活它）。 */
   readonly bundled: boolean;
-  /** 在 `cordis.patch.yml` 里被 insert（宿主按补丁行挂载它）。 */
+  /** 被**某一层**的 `cordis.patch.yml` insert 行挂载（用户层或组合层，见 `layer`）。 */
   readonly patched: boolean;
+  /** 具体是哪一层（`bundled` 与 `patched` 的组合判据，显示时用来区分「组合层/用户层」）。 */
+  readonly layer: PluginLayer;
   /** 实际会被加载 = `bundled || patched`。 */
   readonly active: boolean;
   /** 重装这一条用的命令。 */
@@ -89,6 +102,30 @@ export function statusLabel(entry: Pick<InstalledPlugin, 'active'>): string {
 }
 
 /**
+ * 挂载层的文案。
+ *
+ * 显示「已启用」还不够 —— 组合层（bundles / bundle patch）改配置**必须重启**，
+ * 用户层 patch 才是可以热挂的那一层（2026-10-06 的裁定与实测，见 CHANGELOG
+ * 里 http-bridge 从用户层移到组合层的原因）。把层写出来，读的人才知道
+ * 改这个插件要不要重启。
+ */
+export function layerLabel(layer: unknown): string {
+  if (layer === 'bundles') return '组合层';
+  if (layer === 'bundle-patch') return '组合层补丁';
+  if (layer === 'user-patch') return '用户层补丁';
+  return '';
+}
+
+function asLayer(value: unknown, bundled: boolean, patched: boolean): PluginLayer {
+  if (value === 'bundles' || value === 'bundle-patch' || value === 'user-patch' || value === 'none') {
+    return value;
+  }
+  // 宿主与客户端版本不一致时按旧字段退化推断：宁可少说，不编造。
+  if (bundled) return 'bundles';
+  return patched ? 'user-patch' : 'none';
+}
+
+/**
  * 把整份清单拼成可一次粘贴的多行命令（「复制全部」用）。
  *
  * 空清单返回空串 —— 调用方据此禁用按钮。刻意**不**生成 `.ps1` 文件、也不写清单文件：
@@ -120,6 +157,7 @@ function asEntry(raw: unknown): InstalledPlugin | null {
     version,
     bundled,
     patched,
+    layer: asLayer(record['layer'], bundled, patched),
     active: record['active'] === true || bundled || patched,
     restore,
   };

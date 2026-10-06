@@ -13,6 +13,7 @@ import type { JSX } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { PLUGINS_PATH } from '../paths.js';
 import {
+  layerLabel,
   normalizePluginList,
   statusLabel,
   totalRestoreScript,
@@ -124,7 +125,8 @@ export function InstalledPluginsSection(props: InstalledPluginsSectionProps): JS
       <p style={hintStyle}>
         本 profile 的 <code style={monoStyle}>dependencies</code> 里装过的插件。重装时点「复制」拿命令，
         或在插件市场里按包名搜索安装。「已装未启用」= 装了但既不在 <code style={monoStyle}>dsh.profile.bundles</code>
-        里、也没有补丁行，宿主不会加载它。
+        里、也没有任何一层的补丁行，宿主不会加载它。「组合层」= 改它的配置要重启 DSH，
+        「用户层补丁」= 可以在用户层热挂。
       </p>
 
       {state.status === 'loading' ? <p style={hintStyle}>正在读取 profile…</p> : null}
@@ -167,6 +169,9 @@ export function InstalledPluginsSection(props: InstalledPluginsSectionProps): JS
                     <span style={{ fontSize: '13px', color: LABEL, fontWeight: 600 }}>{entry.name}</span>
                     {entry.version !== null ? <span style={monoStyle}>{entry.version}</span> : null}
                     <span style={{ fontSize: '11px', color: statusColor(entry) }}>{statusLabel(entry)}</span>
+                    {layerLabel(entry.layer) !== '' ? (
+                      <span style={{ fontSize: '11px', color: MUTED }}>· {layerLabel(entry.layer)}</span>
+                    ) : null}
                     <span style={monoStyle}>· {kindLabel(entry)}</span>
                   </div>
                   <div style={{ ...monoStyle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry.spec}>

@@ -1,8 +1,8 @@
-import { mkdir, rename, writeFile as nodeWriteFile } from 'node:fs/promises';
+import { mkdir, rename, unlink, writeFile as nodeWriteFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 /**
- * **原子写入**（写临时文件 → 同目录 rename）。
+ * **原子写入**（写临时文件 → 同目录 rename），**rename 失败时退回直接写**。
  *
  * ## 为什么必须原子
  *
@@ -14,12 +14,33 @@ import { dirname, join } from 'node:path';
  * rename 在同一文件系统内是原子的：读者要么看到旧内容，要么看到新内容，**不会看到中间态**。
  * 这对「另一个进程随时会来读」的状态文件（status.json / decisions.jsonl / feedback.json / graph.json）
  * 是硬要求，不是优化。
+ *
+ * ## rename 会失败，而且必须能退
+ *
+ * 实测（2026-10-06，面板「最近判定」里亲眼看到的那条）：
+ *
+ *     Error: EPERM: operation not permitted, rename
+ *     'C:\Library\那些渐渐被遗忘\01_问答沉淀\.28424-muwoxqso-bj0uwe.tmp'
+ *     -> 'C:\Library\那些渐渐被遗忘\01_问答沉淀\最近判定也不需要这.md'
+ *
+ * Windows 上重命名会被杀毒/索引器/同步盘的**瞬时占用**挡下（临时文件刚建、目标文件正被读）。
+ * 当时直接抛错 ⇒ 整条捕获被判「判定异常」、笔记**一个字都没落盘**。
+ * 所以这里：rename 失败则清理临时文件、**退回直接写**（丢掉原子性，但保住内容），
+ * 由调用方的日志体现这次降级。取舍很明确：**宁可「写进去但不原子」，也不要「原子但什么都没写」**。
  */
 export async function writeTextAtomic(path: string, text: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), '.' + process.pid + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8) + '.tmp');
-  await nodeWriteFile(tmp, text, 'utf8');
-  await rename(tmp, path);
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true });
+  const tmp = join(dir, '.' + process.pid + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8) + '.tmp');
+  try {
+    await nodeWriteFile(tmp, text, 'utf8');
+    await rename(tmp, path);
+    return;
+  } catch {
+    // 见函数注释：rename 的 EPERM 在 Windows 上是常态风险，不是异常路径。
+    await unlink(tmp).catch(() => undefined);
+  }
+  await nodeWriteFile(path, text, 'utf8');
 }
 
 /**
