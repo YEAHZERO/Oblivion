@@ -309,6 +309,10 @@ function extractQAPair(turn) {
   };
 }
 
+// src/qa-loop/index.ts
+import { appendFile, mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname, join as join3 } from "node:path";
+
 // src/qa-loop/md-writer.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join as join2 } from "node:path";
@@ -459,6 +463,29 @@ function registerQaLoop(ctx, config, deps) {
     const data = event.data;
     return typeof data?.turn === "number" ? data.turn : fallback;
   }
+  const probePath = join3(expandHome(config.dataRoot), "events-probe.jsonl");
+  async function probe(subject, event, sessionId) {
+    if (!config.enableEventProbe) return;
+    try {
+      const data = event?.data;
+      const line = JSON.stringify({
+        at: Date.now(),
+        type: event?.type ?? null,
+        seq: typeof event?.seq === "number" ? event.seq : null,
+        sessionIdOk: sessionId !== "",
+        subjectKeys: subject && typeof subject === "object" ? Object.keys(subject).slice(0, 8) : null,
+        dataKeys: data && typeof data === "object" ? Object.keys(data).slice(0, 10) : null
+      });
+      await mkdir2(dirname(probePath), { recursive: true });
+      await appendFile(probePath, line + "\n", "utf8");
+      const raw = await readFile2(probePath, "utf8");
+      const lines = raw.split("\n").filter((l) => l.trim() !== "");
+      if (lines.length > config.eventProbeMax) {
+        await writeFile2(probePath, lines.slice(-config.eventProbeMax).join("\n") + "\n", "utf8");
+      }
+    } catch {
+    }
+  }
   async function trace(entry) {
     if (!deps.stats) return;
     await deps.stats.record({
@@ -538,6 +565,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   ctx.on("session/event", (subject, event) => {
     const sessionId = subject && typeof subject.id === "string" ? subject.id : "";
+    void probe(subject, event, sessionId);
     if (!sessionId || !event || typeof event.type !== "string") return;
     if (event.type === "turn/start") {
       const buffer = bufferOf(sessionId);
@@ -588,8 +616,8 @@ function deriveTopic(qa) {
 }
 
 // src/feedback/index.ts
-import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname, join as join3 } from "node:path";
+import { mkdir as mkdir3, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname2, join as join4 } from "node:path";
 
 // src/feedback/tuner.ts
 async function tune(entries, target, profile, threshold) {
@@ -616,19 +644,19 @@ async function tune(entries, target, profile, threshold) {
 // src/feedback/index.ts
 var MS_PER_DAY2 = 864e5;
 function registerFeedback(ctx, config, profile) {
-  const path = join3(expandHome(config.dataRoot), "feedback.json");
+  const path = join4(expandHome(config.dataRoot), "feedback.json");
   let prunedTotal = 0;
   async function load() {
     try {
-      const parsed = JSON.parse(await readFile2(path, "utf8"));
+      const parsed = JSON.parse(await readFile3(path, "utf8"));
       return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
   }
   async function save(entries) {
-    await mkdir2(dirname(path), { recursive: true });
-    await writeFile2(path, JSON.stringify(entries, null, 2) + "\n", "utf8");
+    await mkdir3(dirname2(path), { recursive: true });
+    await writeFile3(path, JSON.stringify(entries, null, 2) + "\n", "utf8");
   }
   async function loadPruned() {
     const entries = await load();
@@ -1056,14 +1084,14 @@ function suggest(summary, config, extra = {}) {
 }
 
 // src/stats/trace.ts
-import { appendFile, mkdir as mkdir3, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname2, join as join4 } from "node:path";
+import { appendFile as appendFile2, mkdir as mkdir4, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname3, join as join5 } from "node:path";
 function createTraceStore(dataRoot, options) {
-  const path = join4(dataRoot, "decisions.jsonl");
+  const path = join5(dataRoot, "decisions.jsonl");
   const MS_PER_DAY3 = 864e5;
   async function readRaw() {
     try {
-      const raw = await readFile3(path, "utf8");
+      const raw = await readFile4(path, "utf8");
       const out = [];
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
@@ -1082,8 +1110,8 @@ function createTraceStore(dataRoot, options) {
     path,
     async record(entry) {
       try {
-        await mkdir3(dirname2(path), { recursive: true });
-        await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
+        await mkdir4(dirname3(path), { recursive: true });
+        await appendFile2(path, JSON.stringify(entry) + "\n", "utf8");
       } catch (error) {
         options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u5199\u5165\u5931\u8D25\uFF1A%o", error);
       }
@@ -1095,7 +1123,7 @@ function createTraceStore(dataRoot, options) {
       const kept = fresh.length > options.maxEntries ? fresh.slice(fresh.length - options.maxEntries) : fresh;
       if (kept.length !== all.length) {
         try {
-          await writeFile3(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
+          await writeFile4(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
         } catch (error) {
           options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u88C1\u526A\u843D\u76D8\u5931\u8D25\uFF1A%o", error);
         }
@@ -1106,8 +1134,8 @@ function createTraceStore(dataRoot, options) {
 }
 
 // src/stats/index.ts
-import { writeFile as writeFile4, mkdir as mkdir4 } from "node:fs/promises";
-import { dirname as dirname3, join as join5 } from "node:path";
+import { writeFile as writeFile5, mkdir as mkdir5 } from "node:fs/promises";
+import { dirname as dirname4, join as join6 } from "node:path";
 function registerStats(ctx, config, meta) {
   const dataRoot = expandHome(config.dataRoot);
   const trace = createTraceStore(dataRoot, {
@@ -1148,8 +1176,8 @@ function registerStats(ctx, config, meta) {
     },
     async writeBootSnapshot(extra) {
       try {
-        const path = join5(dataRoot, "status.json");
-        await mkdir4(dirname3(path), { recursive: true });
+        const path = join6(dataRoot, "status.json");
+        await mkdir5(dirname4(path), { recursive: true });
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -1162,7 +1190,7 @@ function registerStats(ctx, config, meta) {
           tracePath: trace.path,
           ...extra
         };
-        await writeFile4(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        await writeFile5(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
         return;
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + " status.json \u5199\u5165\u5931\u8D25\uFF1A%o", error);
@@ -1237,7 +1265,10 @@ var DEFAULT_CONFIG = {
   enableStats: true,
   statsRetentionDays: 90,
   statsMaxEntries: 5e3,
-  statusRecentLimit: 20
+  statusRecentLimit: 20,
+  // 临时事件探针（链路验证通过后设 false）
+  enableEventProbe: true,
+  eventProbeMax: 200
 };
 function resolveConfig(input) {
   if (!input) return DEFAULT_CONFIG;

@@ -15,6 +15,44 @@
 
 ---
 
+## [未发布] — 新增 `@oblivion/panel` v0.0.1（认知面板）+ `@oblivion/core` v0.1.6（事件探针）
+
+### 新增插件：`@oblivion/panel`（client 双半，热挂）
+
+把 `@oblivion/core` 的观测数据做成一个 tab，嵌进第三方插件 `dsh-better-sidebar` 的那一列：
+**捕获率 / 拦截原因 / 调参建议 / 最近沉淀 / 知识库笔记**。**不自己造文件树** —— 文件夹树、编辑器、
+侧边对话都由 `dsh-better-sidebar` 提供，本插件只在它的座位上加「认知层观测」页。
+
+- Node 半边：一条**只读**路由 `GET /oblivion-panel/status`（GET-only、`no-store`、读入有上限、
+  **不含会话原文**）+ 自证据文件 `%TEMP%\oblivion-panel\host-mount.json`
+- 浏览器半边：`ctx.betterSidebar.registerTab({ id: 'oblivion:panel', order: 70, single: true, … })`
+- **降级**：`betterSidebar` 缺席 → 不注册、只记日志、不抛错（三种结局都有测试钉住）
+- 闸门：`test` 13/13、`selfcheck` 8/8、`dshx check` 全绿、契约 **5/5**
+- **真机已验**：装链接 + 补丁插入行后，路由**立刻** `HTTP 200`（**无需重启**），自证据文件已写
+
+### `@oblivion/core` v0.1.6：一次性事件探针（定位「`turn/end` 到没到」）
+
+现象：v0.1.5 自 08:53:05 装载后 `stats.turns` 一直为 0、`decisions.jsonl` 从未生成，
+而这期间**至少两轮问答走完了 `turn/end`**。已排除「没装载」（`status.json` 每次 apply 都写、路由 200）、
+「订阅姿势写错」（官方 14 处 Host 侧代码用的都是同一写法）、「写盘失败」。
+
+新增 `enableEventProbe`（默认开，验证后关）：**在守卫之前**把每个 `session/event` 记一行到
+`<dataRoot>/events-probe.jsonl`（只记 `type` / `seq` / `sessionIdOk` / `subjectKeys` / `dataKeys`，**不含正文**），
+用判读表区分四种情况 —— 见 `HANDOFF.md` 坑清单 5.5。
+
+### 顺带修正一条错误结论
+
+「Host 侧改码必须重启 App」**不成立**（对 link 挂载的插件）：实测 `lib/index.js` 构建于 `09:10:19`，
+`status.json` 在 `09:10:20` 被重写为 `version 0.1.6`（**1 秒**）。仍然正确的是：bundle 层改一次要重启；
+浏览器半边要**硬刷新页面**。
+
+### 其它
+
+- `tools/verify-dsh-compat.ps1` 新增断言种类 **`npmPkg`**（第三方 npm 包在 profile 里是否存在 + 版本），
+  用于 `@oblivion/panel` 对 `dsh-better-sidebar` 的依赖；台账补 panel 一行（5/5）
+
+---
+
 ## [未发布] — `@oblivion/core` v0.1.5：观测面（判定留痕 + `oblivion_status` + 调参建议）
 
 **动机**：认知层现在最缺的不是界面，而是**先跑够几天的真实数据** —— 阈值该不该调、陪伴频率吵不吵，

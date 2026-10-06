@@ -1,0 +1,16 @@
+# ============================================================
+# @oblivion/panel — DSHX 清单
+#
+# id 必须与 package.json 的 name 逐字相同（`dshx activate-new-client` 的硬校验
+# `plugin.id === packageName`），因此这里写作用域名而非 kebab 目录名。
+#
+# marker 必须与 src/index.ts 里的 console.log 逐字相同。
+#
+# kind: client —— 本包有浏览器半边（认知面板 tab）；同时也有 Node 半边
+# （只做一件事：把 core 的观测数据以只读 JSON 暴露给页面）。
+# ============================================================
+id: '@oblivion/panel'
+entry: src/index.ts
+marker: "[oblivion-panel] loaded"
+kind: client
+profile: desktop

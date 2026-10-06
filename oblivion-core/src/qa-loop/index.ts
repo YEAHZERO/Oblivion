@@ -1,3 +1,5 @@
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { AppContext } from '../core-types.js';
 import type { Config } from '../config.js';
 import type { GraphService } from '../graph/index.js';
@@ -115,6 +117,39 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
   }
 
   /**
+   * **临时事件探针**（`enableEventProbe`，链路验证通过后关掉）。
+   *
+   * 一行一个事件，写 `<dataRoot>/events-probe.jsonl`；超出 `eventProbeMax` 行时重写尾部。
+   * 记录的是：类型、seq、`subject.id` 的类型与截断值、data 的键名（**不含消息正文**）。
+   * 目的只有一个：判断 `turn/end` 到底有没有到我们这里。
+   */
+  const probePath = join(expandHome(config.dataRoot), 'events-probe.jsonl');
+  async function probe(subject: SessionLike | undefined, event: TurnEventLike | undefined, sessionId: string): Promise<void> {
+    if (!config.enableEventProbe) return;
+    try {
+      const data = event?.data as Record<string, unknown> | undefined;
+      const line = JSON.stringify({
+        at: Date.now(),
+        type: event?.type ?? null,
+        seq: typeof event?.seq === 'number' ? event.seq : null,
+        sessionIdOk: sessionId !== '',
+        subjectKeys: subject && typeof subject === 'object' ? Object.keys(subject).slice(0, 8) : null,
+        dataKeys: data && typeof data === 'object' ? Object.keys(data).slice(0, 10) : null,
+      });
+      await mkdir(dirname(probePath), { recursive: true });
+      await appendFile(probePath, line + '\n', 'utf8');
+      // 超量就把尾部留下（简单粗暴，但探针本来就是临时的）
+      const raw = await readFile(probePath, 'utf8');
+      const lines = raw.split('\n').filter((l) => l.trim() !== '');
+      if (lines.length > config.eventProbeMax) {
+        await writeFile(probePath, lines.slice(-config.eventProbeMax).join('\n') + '\n', 'utf8');
+      }
+    } catch {
+      // 探针绝不影响主链路
+    }
+  }
+
+  /**
    * 记一条判定留痕。**每一轮都记**，包括：
    *   - `no-qa`：本轮没有「真人提问 + 回答」（纯工具轮、纯注入轮、定时唤醒）；
    *   - 被拦下的：`ignored` / `duplicate` / `conflict` —— 设计书 AC-008 要求「不注入但留痕」。
@@ -217,6 +252,8 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
 
   ctx.on('session/event', (subject: SessionLike, event: TurnEventLike) => {
     const sessionId = subject && typeof subject.id === 'string' ? subject.id : '';
+    // 临时事件探针：**在守卫之前**记，才能区分「事件没到」与「到了但被我们丢掉」。
+    void probe(subject, event, sessionId);
     if (!sessionId || !event || typeof event.type !== 'string') return;
 
     if (event.type === 'turn/start') {

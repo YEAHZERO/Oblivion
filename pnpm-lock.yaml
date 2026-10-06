@@ -46,6 +46,25 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  oblivion-panel:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: ~4.0.4
+        version: 4.0.4
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.4
+        version: 26.6.4
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   oblivion-vimc:
     dependencies:
       '@deepseek-ai/cordis':

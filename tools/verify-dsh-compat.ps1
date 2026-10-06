@@ -255,6 +255,27 @@ foreach ($dir in $pluginDirs) {
     }
   }
 
+  # ⑧ 第三方 npm 包存在（不在 DSH checkout 里 —— 装在本机 profile 的 node_modules）
+  #
+  # 用途：插件的扩展点来自第三方插件（例：@oblivion/panel 的 UI 座位由
+  # `dsh-better-sidebar` 提供）。这种依赖既不能用 clientPackages（checkout 里没有），
+  # 也不能用 services/slots（它们是宿主源码里的名字），所以单独一种断言：
+  # 只证明"这个包在本 profile 里装着"，版本一并打印出来便于对账。
+  if ($req.npmPackages) {
+    $profileModules = Join-Path $env:USERPROFILE '.dsh\profiles\desktop\node_modules'
+    foreach ($want in $req.npmPackages) {
+      $manifest = Join-Path (Join-Path $profileModules $want) 'package.json'
+      $found = Test-Path $manifest
+      $detail = 'profile 的 node_modules 里没有这个包'
+      if ($found) {
+        $version = ''
+        try { $version = ' v' + (Read-Json $manifest).version } catch { }
+        $detail = 'profile\node_modules\' + $want + $version
+      }
+      Add-Check 'npmPkg' $want $found $detail
+    }
+  }
+
   # ⑥ 已挂载进 desktop profile（否则插件根本没被加载）
   $profilePkg = Join-Path $env:USERPROFILE '.dsh\profiles\desktop\package.json'
   if (Test-Path $profilePkg) {

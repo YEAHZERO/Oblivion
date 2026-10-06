@@ -62,6 +62,19 @@ export interface Config {
   readonly statsMaxEntries: number;
   /** `oblivion_status` 默认返回多少条最近判定。 */
   readonly statusRecentLimit: number;
+  /**
+   * **临时诊断**：把收到的每个 `session/event` 记一行到 `<dataRoot>/events-probe.jsonl`。
+   *
+   * 为什么需要它：`turn/end → 捕获` 这条路在真实 Host 里是否真的接通，无法靠日志确认
+   * （本机没有可读的 Host 日志目录）。探针能一眼区分三种情况：
+   *   ① 一行都没有 → 事件面根本没到我们这里；
+   *   ② 有事件但没有 `turn/end` → 订阅时机或事件名不对；
+   *   ③ 有 `turn/end` 但 `session.id` 不是字符串 → 是我们自己的守卫把事件丢了。
+   * 链路验证通过后请设成 `false`。
+   */
+  readonly enableEventProbe: boolean;
+  /** 探针文件最多保留多少行（超出重写为尾部）。 */
+  readonly eventProbeMax: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -139,6 +152,10 @@ export const DEFAULT_CONFIG: Config = {
   statsRetentionDays: 90,
   statsMaxEntries: 5000,
   statusRecentLimit: 20,
+
+  // 临时事件探针（链路验证通过后设 false）
+  enableEventProbe: true,
+  eventProbeMax: 200,
 };
 
 /** 部分覆盖：只接受显式给出的键，缺省落回 DEFAULT_CONFIG。 */

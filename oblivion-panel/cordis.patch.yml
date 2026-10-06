@@ -1,0 +1,22 @@
+# ============================================================
+# @oblivion/panel — 组合插入行
+#
+# 本包**走热挂**（与 @oblivion/core 的 DEC-028 同一策略）：
+# package.json 里不写 `dsh.bundle`，把下面这段 insert 追加到
+# %USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml 末尾即可。
+#
+# 为什么开发期选热挂而不是 bundle 层：
+#   认知面板的 UI 要反复改；bundle 层改一次要重启 App，用户层补丁落盘即装载。
+#   代价（换机器/重置 profile 需重装）见 .design/DSH-COMPAT.md 的 R1 —— 已知并接受。
+#
+# patch 会**替换整段 config** 而非合并，所以这里不写 config —— 留空即用默认值。
+#
+# 可用配置（想改就整段写进 config）：
+#   dataRoot: '~/.oblivion/data'   # 读 @oblivion/core 落的 status.json / decisions.jsonl / ts-*.json
+#   recentLimit: 10                # 面板最多显示多少条最近判定 / 条目 / 笔记（1..50）
+#   routePath: '/oblivion-panel/status'  # 只读 JSON 路由（面板 tab 的数据源）
+# ============================================================
+
+- insert:
+    - id: '@oblivion/panel'
+      name: '@oblivion/panel'

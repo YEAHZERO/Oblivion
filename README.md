@@ -30,7 +30,7 @@
 | `oblivion-brand/` · `oblivion-vimc/` · `oblivion-core/` | **三个插件**（见下） | ✅ 已实现（core 待重启验证） |
 | `tools/` | 运维脚本（`check-workspace.ps1` / `verify-dsh-compat.ps1` / `lint-ps1-bom.ps1` …） | 可用 |
 
-**已实现的插件（3 个）**：
+**已实现的插件（4 个）**：
 
 ① [`@oblivion/brand`](oblivion-brand/README.md) v0.1.0：
 
@@ -50,7 +50,7 @@
 - **自带设置页**（设置 → Oblivion 键盘导航）：键位文本、滚动、输入框、查找、链接提示、导入、排除规则与只读自检
 - **开销可自证**：真实页面里候选扫描 7.5–19ms（优化前 111.8ms）、按键平均 1.8ms/峰值 3ms；无轮询、无常驻注入 DOM
 
-③ [`@oblivion/core`](oblivion-core/README.md) v0.1.5（**认知层内核**，Host 侧 `object` 插件）：
+③ [`@oblivion/core`](oblivion-core/README.md) v0.1.6（**认知层内核**，Host 侧 `object` 插件）：
 
 - 设计书的 **Phase 2–6 合并成一个包**：knowledge / qa-loop / perspective / feedback / graph / profile
 - **问答即生长**：`turn/end` 单触发 → 四层筛选（精确去重 / 语义重合 / L3 四条规则 / 价值打分）→ JSON 条目 + 笔记落盘 + 共现建边 + 档案更新
@@ -63,7 +63,19 @@
   （生效配置 + 捕获率/拦截原因/分值分布 + 「该改哪个键、建议多少、依据」）—— **先在真实数据里看几天，再决定阈值**
 - 模型面 **6 个工具**：`oblivion_status` / `oblivion_query` / `oblivion_capture` / `oblivion_profile` / `oblivion_feedback` / `oblivion_graph_neighbors`
 - 挂载：**热挂**（profile 补丁插入行，落盘即装载，**无需重启**；决策 DEC-028）
-- 闸门：契约 **8/8**、test **13/13**、selfcheck **25/25**；**真实 Host 装载待重启 App 验证**（Host 侧改码不会靠禁用再启用重新导入）
+- 闸门：契约 **8/8**、test **13/13**、selfcheck **25/25**
+- 真机已验：`status.json` 跟着构建时间刷新（v0.1.6）、五个分类目录自动创建、只读路由可达
+- ⚠️ **未结案**：`turn/end` 是否真的送达本插件 —— 已加一次性事件探针（`events-probe.jsonl`），判读表见 [`HANDOFF.md`](HANDOFF.md) 坑清单 5.5
+
+④ [`@oblivion/panel`](oblivion-panel/README.md) v0.0.1（**认知面板**，client 双半）：
+
+- 把 core 的观测数据（**捕获率 / 拦截原因 / 调参建议 / 最近沉淀**）做成一个 tab，
+  嵌进第三方插件 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar) 的那一列 —— **不自己造文件树**
+- 架构：Node 半边给一条**只读** JSON 路由（`GET /oblivion-panel/status`），浏览器半边用
+  `ctx.betterSidebar.registerTab` 注册页；**不含会话原文**，仅计数、原因、标题与路径
+- 降级：`betterSidebar` 缺席时不注册、只记一条日志、**不抛错**
+- 闸门：契约 **5/5**（含新断言 `npmPkg dsh-better-sidebar`）、test **13/13**、selfcheck **8/8**、`dshx check` 全绿
+- 真机已验：**Node 半边路由 HTTP 200**（热挂，无需重启）+ `%TEMP%\oblivion-panel\host-mount.json`；浏览器半边待**硬刷新**目视
 
 > ⚠️ **本仓库目前没有 26 个 `oblivion-*` 能力包。** 那是 **v4.0 及更早**的计划；
 > v4.1 已把它**收敛为 8 个插件**（宿主提供的不再重造）。**不要把旧计划读成现状。**

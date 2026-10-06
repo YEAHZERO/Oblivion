@@ -13,7 +13,8 @@
 | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | client | 已现役（侧栏与会话 Hero 品牌） |
 | `@oblivion/vimc` | 0.2.9 | client | 已现役（Vimium 式键盘导航 + 页面内查找） |
-| `@oblivion/core` | **0.1.5** | **object（Host 侧）** | 源码与自检完成，**已修掉「捕获恒为空」的根因**；真实 Host 待重启验证；**DEC-028：走热挂（不迁 bundle 层）**；**DEC-029：知识库位置可自定义 + 装载即自动建分类目录**；**v0.1.5 起有观测面（留痕 + `oblivion_status` 调参建议）** |
+| `@oblivion/core` | **0.1.6** | **object（Host 侧）** | 已修掉「捕获恒为空」的根因；**观测面已真机验证**（`status.json` 写着 v0.1.6、分类目录已自动创建、只读路由 200）；⚠️ **`turn/end` 是否真到我们这里仍未确认**（见下）；**DEC-028 热挂 / DEC-029 知识库位置** |
+| `@oblivion/panel` | **0.0.1** | **client（双半）** | **Node 半边已真机验证**（`GET /oblivion-panel/status` → 200 + `host-mount.json`）；浏览器半边待硬刷新目视 |
 
 ### `@oblivion/core` 完成了什么
 
@@ -36,39 +37,42 @@ JSON 文件存储，`turn/end` 单触发，防回灌，无定时任务。
 | `pnpm -C oblivion-core run build` | ✅ `lib/index.js` ~51 KB + `lib/testkit.js` |
 | `pnpm -C oblivion-core run typecheck` | ✅ 0 错误（strict） |
 | `pnpm -C oblivion-core run test` | ✅ 12/12（修了一条过期断言：`dsh.compat` 是兼容声明，不是 `dsh.bundle`） |
-| `pnpm -C oblivion-core run selfcheck` | ✅ **17/17**（真实事件流落盘 / 幂等 / 注入过滤 / 兜底 / L3 四规则 / F2·F3 闸门 / F3 深度 ≥3 候选 / F5 保留期） |
-| `pnpm -C oblivion-core run check:version` | ✅ `0.1.2` |
+| `pnpm -C oblivion-core run selfcheck` | ✅ **25/25**（真实事件流落盘 / 幂等 / 注入过滤 / 兜底 / L3 四规则 / F2·F3 闸门 / F3 深度 ≥3 候选 / F5 保留期 / 分类落盘 / 防误伤 / 装载即建目录 / 留痕 / status 快照 / 建议边界） |
+| `pnpm -C oblivion-core run check:version` | ✅ `0.1.6` |
 | `dshx check`（CLI 直跑） | ✅ manifest / object-form / boot-marker |
 
-**唯一未验证项**：真实 Host 装载（Host 侧改码必须**重启 App**）。见第二节。
+**真实 Host 已验证的部分**：插件确实被装载（`status.json` 里 version 跟着构建时间刷新）、
+分类目录自动创建、`@oblivion/panel` 的只读路由 200。
+**仍未验证的部分**：`turn/end` 是否真的送达本插件 —— 见「坑清单 5.5」。
 
 ---
 
 ## 二、下一步（按顺序）
 
-### 第 1 步（用户执行）：重启 App 让 0.1.2 生效
+### 第 1 步：**不用重启**，先让探针收到一个 `turn/end`
 
-装链接与补丁行**已经在位**（`%USERPROFILE%\.dsh\profiles\desktop\` 的 `package.json` 里有
-`"@oblivion/core": "link:C:/Projects/Oblivion/oblivion-core"`，补丁末尾有 insert 行）。
-但 **Host 侧 JS 只有在 App 重启后才会重新导入 ESM 缓存**，所以：
+2026-10-06 实测修正：**link 挂载的插件，Host 半边改完 build 就会被自动重挂**（1 秒级），
+所以「重启 App 才生效」只对 bundle 层的插件成立。现在的做法：
 
 ```powershell
+# ① 装链接与补丁行都已在位；只看一眼列表
 & 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd' plugin --profile desktop list
-# 然后重启 DSH Desktop（关掉再开）
+# ② 正常用一轮（就是普通的问一句），然后看探针
+Get-Content "$env:USERPROFILE\.oblivion\data\events-probe.jsonl" -Tail 10
 ```
 
-（若哪天要重新装：`dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-core'`，
-正斜杠！补丁行里 `@` 开头的标量必须加引号。）
+**按「坑清单 5.5」的判读表处理**；若探针里出现 `turn/end` 且 `sessionIdOk: true`，则问题在 `handle()` 内部，
+给 `handle` 也加一行探针即可定位。
 
-### 第 2 步：证明装载与闭环
+### 第 2 步：证明闭环
 
 ```powershell
-# a) 重启 App 后，先看分类目录是否自动建好（DEC-029：装载即建，不必等第一次落盘）
-Get-ChildItem 'C:\Library\那些渐渐被遗忘' -Directory      # 期望 01_问答沉淀 / 00_导入文件 / 02_Wiki页面 / 03_创作产物 / 99_其他
-# b) 在会话里正常问一句（≥10 字、有实质回答），再查落盘
-Get-ChildItem "$env:USERPROFILE\.oblivion\data"                 # 期望 ts-*.json
+# a) 分类目录应已自动建好（DEC-029：装载即建，不必等第一次落盘）
+Get-ChildItem 'C:\Library\那些渐渐被遗忘' -Directory      # 01_问答沉淀 / 00_导入文件 / 02_Wiki页面 / 03_创作产物 / 99_其他
+# b) 正常问一句（≥10 字、有实质回答），再查落盘
+Get-ChildItem "$env:USERPROFILE\.oblivion\data"                 # 期望 ts-*.json + decisions.jsonl
 Get-ChildItem 'C:\Library\那些渐渐被遗忘\01_问答沉淀'            # 期望 <主题>.md
-# c) 五个工具可调：oblivion_query / capture / profile / feedback / graph_neighbors
+# c) 六个工具可调：oblivion_status / query / capture / profile / feedback / graph_neighbors
 ```
 
 出现 `ts-*.json` + `01_问答沉淀\*.md` = `turn/end → 捕获 → 落盘` 整条链通了。
@@ -159,10 +163,38 @@ Windows 没有支持该参数的 `ps`，`lsof` 也不存在 → `discoverWebHost
 
 `oblivion-core` 刻意不声明 `dsh.bundle`（认知层要频繁迭代）。
 
-### 5. Host 侧改代码需要重启 App
+### 5. ~~Host 侧改代码需要重启 App~~ —— **2026-10-06 实测修正**
 
-Host 复用 ESM 缓存里的模块命名空间，**禁用再启用不会重新导入**。
-浏览器半边（`src/client/`）不受此限：改完 build，再动一次 profile 补丁触发图重算即可。
+**link 挂载的插件，Host 半边会被监视并自动重挂**，不需要重启：
+   实测（两次）：`oblivion-core` 的 `lib/index.js` 构建于 `09:10:19` → `status.json` 在 `09:10:20`
+   被重写为 `version 0.1.6`（1 秒）；此前 08:52:37 构建 → 08:53:05 重挂（28 秒）。
+
+**仍然正确的部分**：`dsh.bundle`（bundle 层）的插件改一次要重启；浏览器半边的改动要**硬刷新页面**
+（`Ctrl+Shift+R`），或再动一次 profile 补丁触发图重算。
+
+### 5.5 ⚠️ 未结案：`turn/end` 到底有没有到我们手里（2026-10-06）
+
+**现象**：`oblivion-core` v0.1.5 自 08:53:05 装载后，`status.json` 的 `stats.turns` 一直是 0，
+`decisions.jsonl` 从未生成 —— 而这期间**至少有两轮问答走完了 `turn/end`**（我自己的两条回复）。
+`eventsSnapshot` 那条老根因已修，所以这不是同一个问题。
+
+**已排除**：① 插件没装载（`status.json` 每次 `apply()` 都写，且路由 200）；② 订阅姿势写错
+（官方 `context/agent-instructions`、`acp` 等 14 处 Host 侧代码用的都是 `ctx.on('session/event', (session, event) => …)`，与我们逐字一致）；
+③ `stats.record` 写盘失败（`status.json` 能写）。
+
+**已加的一次性诊断（v0.1.6）**：`enableEventProbe: true` → `<dataRoot>/events-probe.jsonl`，
+**守卫之前**记录每个事件（`type` / `seq` / `sessionIdOk` / `subjectKeys` / `dataKeys`，不含正文）。
+
+**判读表**：
+
+| 探针结果 | 结论 | 下一步 |
+| --- | --- | --- |
+| 一行都没有 | `session/event` 根本没到本插件 | 查 `ctx.inject(['session'], …)` 是否是必要前置；或改用 session 服务上的订阅 |
+| 有事件但无 `turn/end` | 事件名/时机不对 | 打印全部事件类型分布，找真正的一轮结束信号 |
+| 有 `turn/end`，`sessionIdOk: false` | **是我们自己的守卫丢了事件**（`subject.id` 不是字符串） | 放宽守卫：用 `subject?.id ?? subject?.sessionId ?? '(unknown)'` |
+| 有 `turn/end` 且 `sessionIdOk: true` | 事件到了却没留痕 → `handle()` 内部异常 | 给 `handle` 包一层同样的探针 |
+
+验证通过后把 `enableEventProbe` 设回 `false`。
 
 ### 6. `pnpm install` 会联网，可能很慢
 

@@ -118,7 +118,8 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 | --- | --- | --- | --- | --- | --- |
 | `@oblivion/brand` | 0.1.0 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS 10/10 | `deepseek-harness @ dsh-v0.2.0-rc.2` (`639ed01539`) |
 | `@oblivion/vimc` | 0.2.9 | 0.2.0-rc.2 | 2026-10-06 | ✅ PASS **6/6**（迁 bundle 层后） | 同上 |
-| `@oblivion/core` | **0.1.5** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **8/8** | 同上（host / service `tools`·`systemPrompt` / event `session/event`·`turn/end` / hostPkg `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
+| `@oblivion/core` | **0.1.6** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **8/8** | 同上（host / service `tools`·`systemPrompt` / event `session/event`·`turn/end` / hostPkg `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
+| `@oblivion/panel` | **0.0.1** | 0.2.0-rc.2 | **2026-10-06** | ✅ PASS **5/5** | 同上（host / service `webServer` / **`npmPkg dsh-better-sidebar v0.24.1`** / `__ModuleLoader__` / mount `dependencies`） |
 
 **校验覆盖的契约**：
 
@@ -127,6 +128,12 @@ powershell -File tools/verify-dsh-compat.ps1 -Plugin oblivion-brand   # 单个�
 | `@oblivion/brand` | host 范围；5 个槽位的 kind（`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark` = `single`，`sidebar.panellist` = `list`，`main` = `keyed`）；`__ModuleLoader__`；`slots` 服务；profile 挂载（dependencies + bundles） |
 | `@oblivion/vimc` | host 范围；`settings.section` = `list`；客户端包 `@deepseek-ai/dsh-client-ui-settings` 存在；`__ModuleLoader__`；profile 挂载（dependencies + **bundles**） |
 | `@oblivion/core` | host 范围；服务 `tools` / `systemPrompt`；事件 `session/event` / `turn/end`；宿主包 `@deepseek-ai/dsh-tools` / `dsh-system-prompt`；profile 挂载（**仅 dependencies**） |
+| `@oblivion/panel` | host 范围；服务 `webServer`（只读路由）；`__ModuleLoader__`；**`npmPkg dsh-better-sidebar`**（第三方 UI 座位）；profile 挂载（**仅 dependencies**） |
+
+> **新增断言种类 `npmPkg`（2026-10-06）**：插件的扩展点可以来自**第三方插件**（例 `@oblivion/panel` 的 tab 座位由
+> `dsh-better-sidebar` 提供）。这类依赖既不在 DSH checkout 里（`clientPackages` 用不了），
+> 也不是宿主源码里的服务名（`services` 用不了），所以加了一种断言：**只证明"这个包在本 profile 的 node_modules 里装着"**，
+> 并把版本一并打印出来对账。见 `tools/verify-dsh-compat.ps1` 的 ⑧ 段。
 
 **挂载方式现状**：
 
