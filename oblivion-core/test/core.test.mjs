@@ -23,7 +23,7 @@ const mod = await import(new URL('file://' + LIB.replace(/\\/g, '/')).href);
 describe('产物形状', () => {
   it('导出 name / inject / apply / VERSION', () => {
     assert.equal(mod.name, '@oblivion/core');
-    assert.deepEqual(mod.inject, ['tools', 'systemPrompt']);
+    assert.deepEqual(mod.inject, ['tools', 'systemPrompt', 'agents']);
     assert.equal(typeof mod.apply, 'function');
     assert.match(mod.VERSION, /^\d+\.\d+\.\d+$/);
   });

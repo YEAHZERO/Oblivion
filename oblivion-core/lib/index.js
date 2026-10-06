@@ -1471,10 +1471,18 @@ var OBLIVION_SYSTEM_PROMPT = [
 
 // src/prompt-inject.ts
 var attachHandler;
+var agentInstaller;
+function setAgentInstaller(installer) {
+  agentInstaller = installer;
+}
 function setAttachHandler(handler) {
   attachHandler = handler;
 }
 function attachAgentFromPayload(payload) {
+  try {
+    agentInstaller?.(payload);
+  } catch {
+  }
   try {
     attachHandler?.(payload);
   } catch {
@@ -1978,7 +1986,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.17",
+    version: "0.1.18",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -2591,8 +2599,8 @@ function registerTools(ctx, deps) {
 
 // src/index.ts
 var name = "@oblivion/core";
-var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.17";
+var inject = ["tools", "systemPrompt", "agents"];
+var VERSION = "0.1.18";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
@@ -2636,6 +2644,57 @@ function apply(rawCtx, rawConfig) {
     }
   }));
   Object.defineProperty(toolsCtx, "tools", { value: { register: wrappedRegister } });
+  const agentFibers = /* @__PURE__ */ new Map();
+  function installForAgent(agentLike) {
+    const agentCtx = agentLike?.ctx;
+    if (!agentCtx || typeof agentCtx.inject !== "function" || agentFibers.has(agentCtx)) return;
+    try {
+      const fiber = agentCtx.inject(["systemPrompt", "tools"], (scope) => {
+        const scopeAny = scope;
+        scopeAny.systemPrompt.section({
+          name: OBLIVION_SECTION,
+          order: scopeAny.systemPrompt.getSectionOrder(OBLIVION_SECTION),
+          text: (context) => {
+            attachAgentFromPayload(context?.agent ?? context);
+            const extra = perspective?.takePending() ?? "";
+            const related2 = readRelatedHint();
+            return [OBLIVION_SYSTEM_PROMPT, extra, related2].filter((part) => part !== "").join("\n\n");
+          }
+        });
+        const scopedCtx = Object.create(scope);
+        const wrappedScopeRegister = ((definition) => scopeAny.tools.register({
+          ...definition,
+          execute: (args, exec) => {
+            attachAgentFromPayload(exec ?? args);
+            return definition.execute(args, exec);
+          }
+        }));
+        Object.defineProperty(scopedCtx, "tools", { value: { register: wrappedScopeRegister } });
+        registerTools(scopedCtx, {
+          knowledge,
+          profile,
+          feedback,
+          graph,
+          stats,
+          digest,
+          perspectiveStats: () => perspective?.stats() ?? null
+        });
+      });
+      agentFibers.set(agentCtx, fiber);
+    } catch (error) {
+      ctx.logger?.warn?.(config.logPrefix + " \u4E3A agent \u6CE8\u518C\u6BB5\u843D/\u5DE5\u5177\u5931\u8D25\uFF1A%o", error);
+    }
+  }
+  try {
+    const registry = ctx.agents;
+    for (const agent of registry?.list?.() ?? []) installForAgent(agent);
+  } catch {
+  }
+  ctx.on("agent/created", (...args) => {
+    installForAgent(args[0]);
+    attachAgentFromPayload(args[0]);
+  });
+  setAgentInstaller(installForAgent);
   registerTools(toolsCtx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
   void knowledge.init().catch((error) => {
     ctx.logger?.warn?.(config.logPrefix + " init failed: %o", error);

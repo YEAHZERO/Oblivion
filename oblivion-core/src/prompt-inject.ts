@@ -19,18 +19,31 @@
 /** qa-loop 注册进来的挂载函数（载荷 → 判断是不是 agent → 挂订阅）。 */
 let attachHandler: ((payload: unknown) => void) | undefined;
 
+/** index 侧注册进来的"按 agent 注册段落/工具"函数（官方 file-reference-local 的写法）。 */
+let agentInstaller: ((payload: unknown) => void) | undefined;
+
+/** index 装载时注册：拿到 agent 载荷就为这个 agent 装一次段落与工具。 */
+export function setAgentInstaller(installer: ((payload: unknown) => void) | undefined): void {
+  agentInstaller = installer;
+}
+
 /** qa-loop 装载时注册（卸载时传 undefined 清空）。 */
 export function setAttachHandler(handler: ((payload: unknown) => void) | undefined): void {
   attachHandler = handler;
 }
 
 /**
- * 从任意宿主载荷里尝试挂上 agent 作用域订阅。
+ * 从任意宿主载荷里尝试：① 为该 agent 注册段落与工具；② 挂上 agent 作用域订阅。
  *
  * 刻意**不解析**载荷形状（那是 qa-loop 的 `pickAgent` 的事，且要容错）：
  * 这里只是把载荷原样转交，任何异常都被吞掉 —— 注入通道绝不能影响请求本身。
  */
 export function attachAgentFromPayload(payload: unknown): void {
+  try {
+    agentInstaller?.(payload);
+  } catch {
+    // 注册失败不影响本轮提示词
+  }
   try {
     attachHandler?.(payload);
   } catch {

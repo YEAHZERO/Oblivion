@@ -23,7 +23,7 @@ import { registerDigest } from './digest/index.js';
 import { registerKnowledge } from './knowledge/index.js';
 import { registerPerspective } from './perspective/index.js';
 import { OBLIVION_SYSTEM_PROMPT } from './prompt.js';
-import { attachAgentFromPayload, readRelatedHint } from './prompt-inject.js';
+import { attachAgentFromPayload, readRelatedHint, setAgentInstaller } from './prompt-inject.js';
 import { registerProfile } from './profile/index.js';
 import { registerQaLoop } from './qa-loop/index.js';
 import { registerStats } from './stats/index.js';
@@ -32,8 +32,15 @@ import { registerTools } from './tools.js';
 /** Cordis 插件名。与 dshx.yml 的 id、package.json 的 name 对齐。 */
 export const name = '@oblivion/core';
 
-/** 只声明真正用到的服务；`session` 通过 session/event 事件面使用。 */
-export const inject = ['tools', 'systemPrompt'];
+/**
+ * 声明真正用到的服务。
+ *
+ * ⚠️ **`agents` 必须在里面**（2026-10-06 实测的根因）：DSH 的事件派发是**作用域过滤**的，
+ * 没声明 `agents` 的监听者在根上下文上 `ctx.on('agent/created')` / `ctx.on('session/event')`
+ * **一个事件都收不到**（`lifecycleSeen` 为空、`rootSeen: 0` 就是这么来的）。
+ * 官方样例 `context/file-reference-local` 的 `static inject = ['agents']` 正是这个原因。
+ */
+export const inject = ['tools', 'systemPrompt', 'agents'];
 
 export const VERSION = __OBLIVION_CORE_VERSION__;
 
@@ -111,6 +118,78 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
       },
     })) as typeof ctx.tools.register;
   Object.defineProperty(toolsCtx, 'tools', { value: { register: wrappedRegister } });
+
+  /**
+   * **按 agent 注册段落与工具**（官方 `file-reference-local` 的写法）：
+   * `agent.ctx.inject(['systemPrompt', 'tools'], scope => { scope.systemPrompt.section(...); scope.tools.register(...) })`。
+   *
+   * 为什么不能只在根上下文注册：根上的注册**到不了 agent 的作用域**（实测：新会话里既没有
+   * `oblivion_*` 工具、提示词里也没有 Oblivion 段落）。DSH 的 tools / systemPrompt 都是
+   * **分层（scoped layers）**的：每一层按作用域合并，agent 只合并自己那条链上的层。
+   *
+   * 与根注册并存是刻意的：分层是**覆盖**语义（不是重复报错），根层当兜底。
+   */
+  const agentFibers = new Map<unknown, unknown>();
+  function installForAgent(agentLike: unknown): void {
+    const agentCtx = (agentLike as { ctx?: AppContext } | undefined)?.ctx;
+    if (!agentCtx || typeof agentCtx.inject !== 'function' || agentFibers.has(agentCtx)) return;
+    try {
+      const fiber = agentCtx.inject(['systemPrompt', 'tools'], (scope: AppContext) => {
+        const scopeAny = scope as unknown as {
+          systemPrompt: { section: (d: Record<string, unknown>) => unknown; getSectionOrder: (name: string) => unknown };
+          tools: { register: (d: unknown) => unknown };
+        };
+        scopeAny.systemPrompt.section({
+          name: OBLIVION_SECTION,
+          order: scopeAny.systemPrompt.getSectionOrder(OBLIVION_SECTION),
+          text: (context: { agent?: unknown }) => {
+            attachAgentFromPayload(context?.agent ?? context);
+            const extra = perspective?.takePending() ?? '';
+            const related = readRelatedHint();
+            return [OBLIVION_SYSTEM_PROMPT, extra, related].filter((part) => part !== '').join('\n\n');
+          },
+        });
+        // 工具也注册进这个 agent 的作用域；执行时同样先把 exec 交给补挂逻辑。
+        const scopedCtx = Object.create(scope) as AppContext;
+        const wrappedScopeRegister = ((definition: { execute?: unknown }) =>
+          scopeAny.tools.register({
+            ...(definition as object),
+            execute: (args: unknown, exec: unknown) => {
+              attachAgentFromPayload(exec ?? args);
+              return (definition.execute as (a: unknown, e: unknown) => unknown)(args, exec);
+            },
+          })) as typeof scopedCtx.tools.register;
+        Object.defineProperty(scopedCtx, 'tools', { value: { register: wrappedScopeRegister } });
+        registerTools(scopedCtx, {
+          knowledge,
+          profile,
+          feedback,
+          graph,
+          stats,
+          digest,
+          perspectiveStats: () => perspective?.stats() ?? null,
+        });
+      });
+      agentFibers.set(agentCtx, fiber);
+    } catch (error) {
+      ctx.logger?.warn?.(config.logPrefix + ' 为 agent 注册段落/工具失败：%o', error);
+    }
+  }
+
+  // ① 已经在跑的 agent（根上 `ctx.agents` 现在可读 —— `agents` 已声明）
+  try {
+    const registry = (ctx as unknown as { agents?: { list?: () => unknown[] } }).agents;
+    for (const agent of registry?.list?.() ?? []) installForAgent(agent);
+  } catch {
+    // 服务还没就绪：交给 ② ③
+  }
+  // ② 以后创建的 agent
+  ctx.on('agent/created', (...args: never[]) => {
+    installForAgent(args[0]);
+    attachAgentFromPayload(args[0]);
+  });
+  // ③ 宿主回调载荷（section / 工具 exec）——由 prompt-inject 转交
+  setAgentInstaller(installForAgent);
 
   registerTools(toolsCtx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
 

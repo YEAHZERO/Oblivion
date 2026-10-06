@@ -49,7 +49,7 @@ await check('产物存在且可 import', () => {
 
 await check('导出形状符合 object 插件约定', () => {
   assert.equal(mod.name, '@oblivion/core');
-  assert.deepEqual(mod.inject, ['tools', 'systemPrompt']);
+  assert.deepEqual(mod.inject, ['tools', 'systemPrompt', 'agents']);
   assert.equal(typeof mod.apply, 'function');
   assert.equal(typeof mod.default?.apply, 'function');
   return 'name / inject / apply / default.apply 齐备';
