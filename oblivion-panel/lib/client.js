@@ -30,10 +30,78 @@ __export(index_exports, {
   inject: () => inject
 });
 module.exports = __toCommonJS(index_exports);
-var import_react2 = require("react");
+var import_react3 = require("react");
 
 // src/client/Panel.tsx
+var import_react2 = require("react");
+
+// src/client/RestartControl.tsx
 var import_react = require("react");
+var import_jsx_runtime = require("react/jsx-runtime");
+var RESTART_PATH = "/obl-brand/restart";
+var BTN = {
+  idle: "\u91CD\u542F DSH",
+  confirming: "\u786E\u8BA4\u91CD\u542F",
+  sending: "\u6B63\u5728\u91CD\u542F\u2026",
+  done: "\u5DF2\u53D1\u51FA\u91CD\u542F",
+  error: "\u91CD\u8BD5"
+};
+function RestartControl() {
+  const [phase, setPhase] = (0, import_react.useState)("idle");
+  const [message, setMessage] = (0, import_react.useState)("");
+  const send = (0, import_react.useCallback)(async () => {
+    setPhase("sending");
+    setMessage("");
+    try {
+      const response = await fetch(RESTART_PATH, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+        credentials: "same-origin"
+      });
+      if (!response.ok) {
+        setPhase("error");
+        setMessage(
+          response.status === 404 ? "\u627E\u4E0D\u5230\u91CD\u542F\u8DEF\u7531 \u2014\u2014 @oblivion/brand \u672A\u88C5\u8F7D\uFF1F\u91CD\u542F\u673A\u5236\u7531\u5B83\u63D0\u4F9B\u3002" : "HTTP " + response.status
+        );
+        return;
+      }
+      setPhase("done");
+      setMessage("DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF0C\u672C\u9875\u4F1A\u65AD\u5F00\u3002");
+    } catch (error) {
+      setPhase("error");
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 6 }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        style: {
+          border: "1px solid rgba(127,127,127,0.35)",
+          borderRadius: 5,
+          background: "transparent",
+          color: phase === "error" ? "#d9534f" : "inherit",
+          cursor: phase === "sending" ? "default" : "pointer",
+          padding: "2px 8px",
+          fontSize: 11
+        },
+        disabled: phase === "sending",
+        onClick: () => {
+          if (phase === "idle") {
+            setPhase("confirming");
+            setMessage("\u91CD\u542F\u4F1A\u5F3A\u5236\u7ED3\u675F\u5F53\u524D DSH \u8FDB\u7A0B\uFF1A\u6B63\u5728\u8DD1\u7684\u4F1A\u8BDD\u4E0E\u4EFB\u52A1\u4F1A\u4E2D\u65AD\u3002");
+            return;
+          }
+          void send();
+        },
+        children: BTN[phase] ?? "\u91CD\u542F DSH"
+      }
+    ),
+    message ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontSize: 11, opacity: 0.75 }, children: message }) : null
+  ] });
+}
 
 // src/client/format.ts
 function percent(ratio) {
@@ -106,7 +174,7 @@ function topReason(core) {
 }
 
 // src/client/Panel.tsx
-var import_jsx_runtime = require("react/jsx-runtime");
+var import_jsx_runtime2 = require("react/jsx-runtime");
 var STATUS_ROUTE = "/oblivion-panel/status";
 var S = {
   root: {
@@ -145,9 +213,9 @@ var S = {
   li: { padding: "3px 0", borderTop: "1px solid rgba(127,127,127,0.16)" }
 };
 function kpi(label, value) {
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.kpiCell, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: S.kpiLabel, children: label }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: S.kpiValue, children: value })
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.kpiCell, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.kpiLabel, children: label }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.kpiValue, children: value })
   ] });
 }
 function emptyReason(data) {
@@ -161,8 +229,8 @@ function emptyReason(data) {
   return "\u6709 " + turns + " \u8F6E\u5224\u5B9A\uFF0C\u4F46\u90FD\u8FD8\u6CA1\u6C89\u6DC0\uFF1A\u539F\u56E0\u89C1\u4E0B\u9762\u7684\u300C\u6700\u8FD1\u5224\u5B9A\u300D\u3002";
 }
 function OblivionPanel(props) {
-  const [state, setState] = (0, import_react.useState)({ status: "loading" });
-  const load = (0, import_react.useCallback)(async () => {
+  const [state, setState] = (0, import_react2.useState)({ status: "loading" });
+  const load = (0, import_react2.useCallback)(async () => {
     setState((prev) => prev.status === "ready" ? prev : { status: "loading" });
     try {
       const response = await fetch(STATUS_ROUTE, { cache: "no-store", credentials: "same-origin" });
@@ -173,19 +241,19 @@ function OblivionPanel(props) {
       setState({ status: "error", error: error instanceof Error ? error.message : String(error) });
     }
   }, []);
-  (0, import_react.useEffect)(() => {
+  (0, import_react2.useEffect)(() => {
     if (props.visible === false) return;
     void load();
   }, [load, props.visible]);
-  const body = (0, import_react.useMemo)(() => {
-    if (state.status === "loading") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: S.dim, children: "\u8BFB\u53D6\u4E2D\u2026" });
+  const body = (0, import_react2.useMemo)(() => {
+    if (state.status === "loading") return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.dim, children: "\u8BFB\u53D6\u4E2D\u2026" });
     if (state.status === "error") {
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.card, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.card, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
           "\u8BFB\u4E0D\u5230\u89C2\u6D4B\u6570\u636E\uFF1A",
           state.error
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.dim, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
           "\u82E5\u521A\u88C5\u8F7D\u672C\u63D2\u4EF6\uFF0C\u9700\u8981**\u91CD\u542F\u4E00\u6B21 App**\uFF08Node \u534A\u8FB9\u6539\u52A8\u4E0D\u4F1A\u70ED\u52A0\u8F7D\uFF09\u3002\u8DEF\u7531\uFF1A",
           STATUS_ROUTE
         ] })
@@ -201,9 +269,9 @@ function OblivionPanel(props) {
     const recent = data.trace?.recent ?? [];
     const items = data.items ?? [];
     const notes = data.notes ?? [];
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.row, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.dim, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.row, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
           "core ",
           core ? "v" + String(core.version ?? "?") : "\u672A\u88C5\u8F7D",
           " \xB7 \u9762\u677F v",
@@ -211,49 +279,50 @@ function OblivionPanel(props) {
           " \xB7 \u5237\u65B0\u4E8E ",
           relativeTime(data.generatedAt)
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: S.btn, onClick: () => void load(), children: "\u5237\u65B0" })
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", style: S.btn, onClick: () => void load(), children: "\u5237\u65B0" })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.kpi, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.row, marginTop: 6 }, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RestartControl, {}) }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.kpi, children: [
         kpi("\u6355\u83B7\u7387", percent(captureRate)),
         kpi("\u5224\u5B9A\u8F6E\u6570", String(turns ?? "\u2014")),
         kpi("\u5DF2\u8BC4\u4F30", String(evaluated ?? "\u2014")),
         kpi("\u5DF2\u6C89\u6DC0", String(statNumber(core, "captured") ?? "\u2014"))
       ] }),
-      !core || !turns ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { ...S.card, marginTop: 10 }, children: emptyReason(data) }) : null,
-      top ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { ...S.dim, marginTop: 4 }, children: [
+      !core || !turns ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.card, marginTop: 10 }, children: emptyReason(data) }) : null,
+      top ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { ...S.dim, marginTop: 4 }, children: [
         "\u4E3B\u8981\u62E6\u622A\u539F\u56E0\uFF1A",
         top.reason,
         "\uFF08",
         top.count,
         " \u6B21\uFF09"
       ] }) : null,
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.h, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
         "\u8C03\u53C2\u5EFA\u8BAE ",
-        hints.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: S.dim, children: "\uFF08\u6682\u65E0\uFF1A\u6837\u672C\u4E0D\u8DB3\u65F6 core \u523B\u610F\u4E0D\u5F00\u53E3\uFF09" }) : null
+        hints.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: S.dim, children: "\uFF08\u6682\u65E0\uFF1A\u6837\u672C\u4E0D\u8DB3\u65F6 core \u523B\u610F\u4E0D\u5F00\u53E3\uFF09" }) : null
       ] }),
-      hints.map((hint, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: S.card, children: hintLine(hint) }, String(hint.key ?? index))),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: S.h, children: "\u6700\u8FD1\u5224\u5B9A" }),
-      recent.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.dim, children: [
+      hints.map((hint, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.card, children: hintLine(hint) }, String(hint.key ?? index))),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.h, children: "\u6700\u8FD1\u5224\u5B9A" }),
+      recent.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
         "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55\uFF08",
         data.trace?.path ?? "decisions.jsonl",
         "\uFF09"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: S.list, children: recent.slice().reverse().map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: S.li, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: S.dim, children: relativeTime(row.at) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: actionLabel(row.action) }),
-        row.score !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: S.dim, children: [
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: recent.slice().reverse().map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: S.dim, children: relativeTime(row.at) }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: actionLabel(row.action) }),
+        row.score !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: S.dim, children: [
           " \xB7 \u5206\u503C ",
           String(row.score)
         ] }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { ...S.dim, ...S.mono }, children: String(row.reason ?? "") })
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, ...S.mono }, children: String(row.reason ?? "") })
       ] }, index)) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.h, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
         "\u6700\u8FD1\u6C89\u6DC0\uFF08",
         items.length,
         "\uFF09"
       ] }),
-      items.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: S.dim, children: "\u8FD8\u6CA1\u6709\u6761\u76EE\u843D\u76D8" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: S.list, children: items.map((item, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: S.li, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: String(item.title ?? "(\u65E0\u6807\u9898)") }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.dim, children: [
+      items.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.dim, children: "\u8FD8\u6CA1\u6709\u6761\u76EE\u843D\u76D8" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: items.map((item, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: String(item.title ?? "(\u65E0\u6807\u9898)") }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
           relativeTime(item.created_at),
           " \xB7 \u4E3B\u9898 ",
           String(item.topic ?? "\u2014"),
@@ -261,17 +330,17 @@ function OblivionPanel(props) {
           String(item.id ?? "")
         ] })
       ] }, String(item.id ?? index))) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.h, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
         "\u77E5\u8BC6\u5E93\u7B14\u8BB0\uFF08",
         notes.length,
         "\uFF09"
       ] }),
-      notes.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.dim, children: [
+      notes.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
         "01_\u95EE\u7B54\u6C89\u6DC0/ \u91CC\u8FD8\u6CA1\u6709\u7B14\u8BB0\uFF08",
         data.mdRoot ?? "\u2014",
         "\uFF09"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: S.list, children: notes.map((note, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: S.li, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: notes.map((note, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "a",
           {
             href: "#",
@@ -284,22 +353,81 @@ function OblivionPanel(props) {
             children: String(note.name ?? "")
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: S.dim, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: S.dim, children: [
           " \xB7 ",
           relativeTime(note.mtimeMs)
         ] })
       ] }, String(note.path ?? index))) }),
-      (data.problems ?? []).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: S.h, children: [
+      (data.problems ?? []).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
           "\u8BFB\u53D6\u544A\u8B66\uFF08",
           data.problems?.length,
           "\uFF09"
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: S.list, children: (data.problems ?? []).map((problem, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { style: { ...S.li, ...S.mono, ...S.dim }, children: problem }, index)) })
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: (data.problems ?? []).map((problem, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { style: { ...S.li, ...S.mono, ...S.dim }, children: problem }, index)) })
       ] }) : null
     ] });
   }, [state, load, props.onOpenFile]);
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: S.root, children: body });
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.root, children: body });
+}
+
+// src/client/polaris.ts
+var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
+var POLARIS_PATH = "M512.0000 132.0960L558.6323 399.4197L780.6327 243.3673L624.5803 465.3677L891.9040 512.0000L624.5803 558.6323L780.6327 780.6327L558.6323 624.5803L512.0000 891.9040L465.3677 624.5803L243.3673 780.6327L399.4197 558.6323L132.0960 512.0000L399.4197 465.3677L243.3673 243.3673L465.3677 399.4197Z";
+var POLARIS_CENTER_DOT_RADIUS = 33.792;
+var POLARIS_GRADIENT_FROM = "#E8D5A3";
+var POLARIS_GRADIENT_TO = "#7EC8E3";
+
+// src/client/leftbar.tsx
+var import_jsx_runtime3 = require("react/jsx-runtime");
+function PolarisGlyph({ size = 16 }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("svg", { width: size, height: size, viewBox: "0 0 " + POLARIS_VIEWBOX.width + " " + POLARIS_VIEWBOX.height, "aria-hidden": true, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("defs", { children: /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("linearGradient", { id: "oblivion-leftbar-polaris", x1: "0", y1: "0", x2: "0", y2: "1", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("stop", { offset: "0%", stopColor: POLARIS_GRADIENT_FROM }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("stop", { offset: "100%", stopColor: POLARIS_GRADIENT_TO })
+    ] }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: POLARIS_PATH, fill: "url(#oblivion-leftbar-polaris)" }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("circle", { cx: "512", cy: "512", r: POLARIS_CENTER_DOT_RADIUS, fill: "#ffffff", fillOpacity: "0.92" })
+  ] });
+}
+function openOblivionTab(service, tabType) {
+  if (!service || typeof service.openTab !== "function") return "no-service";
+  try {
+    service.openTab({ type: tabType, target: "right" });
+    return "opened";
+  } catch {
+    return "failed";
+  }
+}
+function createLeftbarAction(onActivate) {
+  return function OblivionLeftbarAction(props) {
+    const wide = props?.wide !== false;
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+      "button",
+      {
+        type: "button",
+        onClick: onActivate,
+        title: "\u6253\u5F00 Oblivion \u8BA4\u77E5\u9762\u677F\uFF08\u53F3\u4FA7\u680F\uFF09",
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          width: "100%",
+          padding: wide ? "6px 8px" : "6px 0",
+          justifyContent: wide ? "flex-start" : "center",
+          border: "none",
+          background: "transparent",
+          color: "inherit",
+          cursor: "pointer",
+          fontSize: 12
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(PolarisGlyph, { size: 16 }),
+          wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: "Oblivion" }) : null
+        ]
+      }
+    );
+  };
 }
 
 // src/client/register.ts
@@ -324,7 +452,7 @@ function registerPanelTab(ctx, component, warn) {
       if (typeof dispose === "function" && typeof ctx.effect === "function") {
         ctx.effect(() => dispose, "oblivion-panel: better-sidebar tab");
       }
-      return { status: "registered" };
+      return { status: "registered", service };
     } catch (error) {
       return { status: "failed", detail: error instanceof Error ? error.message : String(error) };
     }
@@ -352,16 +480,78 @@ function registerPanelTab(ctx, component, warn) {
 // src/client/index.ts
 var inject = [];
 var LOG_NAME = "@oblivion/panel";
-function apply(ctx) {
-  const warn = (message) => {
-    const logger = ctx.logger;
-    logger?.(LOG_NAME)?.warn?.(message);
-  };
-  const result = registerPanelTab(ctx, ((props) => (0, import_react2.createElement)(OblivionPanel, props)), warn);
-  if (result.status === "registered") {
-    const logger = ctx.logger;
-    logger?.(LOG_NAME)?.info?.("\u5DF2\u5728 side bar \u6CE8\u518C Oblivion \u9762\u677F tab");
+function reportCtxShape(ctx) {
+  try {
+    const target = ctx;
+    const keys = Object.keys(target).slice(0, 80);
+    const typeofs = {};
+    for (const key of keys) {
+      try {
+        typeofs[key] = typeof target[key];
+      } catch {
+        typeofs[key] = "(throws)";
+      }
+    }
+    const prototypes = [];
+    let cursor = Object.getPrototypeOf(target);
+    for (let depth = 0; depth < 5 && cursor; depth += 1) {
+      prototypes.push(cursor.constructor?.name ?? "(anonymous)");
+      cursor = Object.getPrototypeOf(cursor);
+    }
+    const probes = {};
+    for (const name of ["on", "emit", "inject", "get", "provide", "effect", "slots", "locale", "shortcuts", "betterSidebar", "layout", "session", "remote", "logger"]) {
+      try {
+        const value = typeof target[name];
+        if (value !== "undefined") probes[name] = value;
+      } catch {
+        probes[name] = "(throws)";
+      }
+    }
+    const body = JSON.stringify({
+      at: Date.now(),
+      where: "client",
+      keys,
+      typeofs,
+      prototypes,
+      probes,
+      hasInject: typeof target.inject === "function",
+      hasGet: typeof target.get === "function"
+    });
+    void fetch("/oblivion-panel/diag", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      credentials: "same-origin"
+    }).catch(() => void 0);
+  } catch {
   }
+}
+function apply(ctx) {
+  const logger = ctx.logger?.(LOG_NAME);
+  const warn = (message) => logger?.warn?.(message);
+  const result = registerPanelTab(ctx, ((props) => (0, import_react3.createElement)(OblivionPanel, props)), warn);
+  if (result.status === "registered") logger?.info?.("\u5DF2\u5728 side bar \u6CE8\u518C Oblivion \u9762\u677F tab");
+  else warn("\u9762\u677F tab \u672A\u6CE8\u518C\uFF1A" + String(result.detail ?? result.status));
+  const slots = ctx.slots;
+  if (slots && typeof slots.inject === "function" && typeof slots.register === "function") {
+    const service = result.service;
+    const component = createLeftbarAction(() => {
+      const outcome = openOblivionTab(service, PANEL_TAB_ID);
+      if (outcome === "opened") logger?.info?.("\u5DE6\u680F\u5165\u53E3\uFF1A\u5DF2\u6253\u5F00\u53F3\u4FA7 Oblivion \u9875");
+      else warn("\u5DE6\u680F\u5165\u53E3\uFF1A\u6253\u5F00\u53F3\u4FA7 Oblivion \u9875\u5931\u8D25\uFF08" + outcome + "\uFF09");
+    });
+    try {
+      slots.inject(
+        "sidebar.footer.action",
+        () => slots.register?.({ name: "sidebar.footer.action", id: "oblivion-panel", order: 60, label: () => "Oblivion" }, component)
+      );
+    } catch (error) {
+      warn("\u5DE6\u680F\u5165\u53E3\u6CE8\u518C\u5931\u8D25\uFF1A" + (error instanceof Error ? error.message : String(error)));
+    }
+  } else {
+    warn("slots \u670D\u52A1\u4E0D\u53EF\u7528\uFF1A\u5DE6\u680F\u5165\u53E3\u672A\u6CE8\u518C\uFF08\u53F3\u4FA7\u680F tab \u4E0D\u53D7\u5F71\u54CD\uFF09");
+  }
+  reportCtxShape(ctx);
 }
 var index_default = { inject, apply };
 

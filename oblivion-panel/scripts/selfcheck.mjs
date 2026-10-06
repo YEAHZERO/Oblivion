@@ -12,7 +12,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -61,7 +61,7 @@ await check('产物存在且可 import', async () => {
   return 'lib/index.js + lib/testkit.js';
 });
 
-await check('apply 注册只读数据面（webServer.register 被调用一次）', async () => {
+await check('apply 注册两条路由（只读快照 + 客户端 ctx 自报）', async () => {
   const mod = await import(pathToFileURL(lib).href);
   const routes = [];
   const ctx = {
@@ -72,16 +72,19 @@ await check('apply 注册只读数据面（webServer.register 被调用一次）
     logger: { warn() {}, info() {} },
   };
   mod.apply(ctx, { dataRoot, fallbackMdRoot: mdRoot });
-  assert.equal(routes.length, 1, '应注册 1 条路由');
-  assert.equal(routes[0].kind, 'exact');
-  assert.equal(routes[0].path, '/oblivion-panel/status');
-  return 'GET /oblivion-panel/status';
+  assert.equal(routes.length, 2, '应注册 2 条路由（status + diag）');
+  assert.deepEqual(routes.map((r) => r.path).sort(), ['/oblivion-panel/diag', '/oblivion-panel/status']);
+  assert.ok(routes.every((r) => r.kind === 'exact'), '两条都应是 exact 路由');
+  return routes.map((r) => r.path).join(' + ');
 });
 
 await check('路由真跑：GET 返回快照 JSON（含 stats / recent / items / notes）', async () => {
   const mod = await import(pathToFileURL(lib).href);
   let route;
-  mod.apply({ inject: (_d, cb) => cb({ webServer: { register: (r) => { route = r; } } }), logger: { warn() {}, info() {} } }, { dataRoot, fallbackMdRoot: mdRoot });
+  mod.apply(
+    { inject: (_d, cb) => cb({ webServer: { register: (r) => { if (r.path === '/oblivion-panel/status') route = r; } } }), logger: { warn() {}, info() {} } },
+    { dataRoot, fallbackMdRoot: mdRoot },
+  );
 
   const captured = await new Promise((resolvePromise) => {
     const response = {
@@ -104,7 +107,10 @@ await check('路由真跑：GET 返回快照 JSON（含 stats / recent / items /
 await check('非 GET 一律 405（只读面不接受写）', async () => {
   const mod = await import(pathToFileURL(lib).href);
   let route;
-  mod.apply({ inject: (_d, cb) => cb({ webServer: { register: (r) => { route = r; } } }), logger: { warn() {}, info() {} } }, { dataRoot, fallbackMdRoot: mdRoot });
+  mod.apply(
+    { inject: (_d, cb) => cb({ webServer: { register: (r) => { if (r.path === '/oblivion-panel/status') route = r; } } }), logger: { warn() {}, info() {} } },
+    { dataRoot, fallbackMdRoot: mdRoot },
+  );
   const captured = await new Promise((resolvePromise) => {
     const response = {
       writeHead(code, headers) { this.code = code; this.headers = headers; },
@@ -114,6 +120,40 @@ await check('非 GET 一律 405（只读面不接受写）', async () => {
   });
   assert.equal(captured.code, 405);
   return 'POST → 405';
+});
+
+await check('diag 路由：POST 客户端 ctx 形状 → 原子落盘 panel-client-diag.json', async () => {
+  const mod = await import(pathToFileURL(lib).href);
+  let route;
+  mod.apply(
+    { inject: (_d, cb) => cb({ webServer: { register: (r) => { if (r.path === '/oblivion-panel/diag') route = r; } } }), logger: { warn() {}, info() {} } },
+    { dataRoot, fallbackMdRoot: mdRoot },
+  );
+  assert.ok(route, 'diag 路由应注册');
+  const payload = JSON.stringify({ where: 'client', keys: ['on', 'inject'], hasInject: true });
+  const captured = await new Promise((resolvePromise) => {
+    const listeners = {};
+    const request = {
+      method: 'POST',
+      on(event, handler) { listeners[event] = handler; return this; },
+    };
+    const response = {
+      writeHead(code, headers) { this.code = code; this.headers = headers; },
+      end(body) { resolvePromise({ code: this.code, body }); },
+    };
+    route.handler(request, response);
+    listeners.data?.(Buffer.from(payload, 'utf8'));
+    listeners.end?.();
+  });
+  assert.equal(captured.code, 200);
+  const file = join(dataRoot, 'panel-client-diag.json');
+  assert.ok(existsSync(file), '应写出 panel-client-diag.json');
+  const written = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(written.where, 'client');
+  assert.equal(written.hasInject, true);
+  assert.ok(typeof written.receivedAt === 'number', '应带落盘时间戳');
+  assert.equal(readdirSync(dataRoot).filter((f) => f.endsWith('.tmp')).length, 0, '不应留 .tmp 残留');
+  return 'panel-client-diag.json ✅（原子写，无残留）';
 });
 
 await check('webServer 缺席时不抛错（只记一条日志）', async () => {

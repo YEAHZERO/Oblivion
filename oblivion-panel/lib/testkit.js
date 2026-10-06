@@ -205,7 +205,7 @@ function registerPanelTab(ctx, component, warn) {
       if (typeof dispose === "function" && typeof ctx.effect === "function") {
         ctx.effect(() => dispose, "oblivion-panel: better-sidebar tab");
       }
-      return { status: "registered" };
+      return { status: "registered", service };
     } catch (error) {
       return { status: "failed", detail: error instanceof Error ? error.message : String(error) };
     }

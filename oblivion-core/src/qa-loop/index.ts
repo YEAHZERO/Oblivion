@@ -6,6 +6,7 @@ import type { GraphService } from '../graph/index.js';
 import type { KnowledgeService } from '../knowledge/index.js';
 import type { ProfileService } from '../profile/index.js';
 import { expandHome } from '../util/paths.js';
+import { describeCtx } from '../util/ctx-shape.js';
 import type { DecisionRecord } from '../stats/trace.js';
 import { extractQAPair, type TurnEventLike } from './extract.js';
 import { appendRelatedLinks, ensureMdDirs, writeIndexNote, writeMD, type MdAction } from './md-writer.js';
@@ -116,6 +117,14 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     const data = event.data as { turn?: unknown } | undefined;
     return typeof data?.turn === 'number' ? data.turn : fallback;
   }
+
+  /**
+   * **ctx 形状 dump**（所有者要求：core 与 panel 各一份做对照）。
+   *
+   * 起因：`hasInject:false`，但 panel 的 Host 半边却成功用了 `ctx.inject(['webServer'])` ——
+   * 同样是用户层挂载，形状必然不同。布尔值不够，这里落全量形状。
+   */
+  const ctxShape = describeCtx(ctx);
 
   /**
    * **临时事件探针**（`enableEventProbe`，链路验证通过后关掉）。
@@ -365,6 +374,8 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     hasOn: typeof ctx.on === 'function',
     hasInject: typeof ctx.inject === 'function',
     hasGet: typeof (ctx as { get?: unknown }).get === 'function',
+    /** ctx 形状全量 dump（core 侧） */
+    ctxShape,
     /** 直接读 `ctx.agents`（不经 inject）—— 服务是否已经在这个上下文上 */
     agentsDirect: typeof (ctx as { agents?: unknown }).agents === 'object' && (ctx as { agents?: unknown }).agents !== null,
     agentsDirectCount: -1,

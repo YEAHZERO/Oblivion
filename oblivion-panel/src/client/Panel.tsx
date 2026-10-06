@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
+import { RestartControl } from './RestartControl.js';
 import { actionLabel, hintLine, percent, relativeTime, statNumber, topReason, type HintLike } from './format.js';
 
 /** 与 Node 半边 config.routePath 的默认值一致。 */
@@ -155,6 +156,10 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
           <button type="button" style={S.btn} onClick={() => void load()}>
             刷新
           </button>
+        </div>
+        {/* 重启入口：复用 @oblivion/brand 的 /obl-brand/restart（机制只有一份） */}
+        <div style={{ ...S.row, marginTop: 6 }}>
+          <RestartControl />
         </div>
 
         <div style={S.kpi}>

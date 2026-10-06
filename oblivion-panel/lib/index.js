@@ -1,7 +1,7 @@
 // src/index.ts
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join as join2, resolve } from "node:path";
+import { dirname, isAbsolute, join as join2, resolve } from "node:path";
 
 // src/snapshot.ts
 import { readFile, readdir, stat } from "node:fs/promises";
@@ -127,8 +127,37 @@ var DEFAULT_CONFIG = {
   fallbackMdRoot: "C:/Library/\u90A3\u4E9B\u6E10\u6E10\u88AB\u9057\u5FD8",
   recentLimit: 10,
   routePath: "/oblivion-panel/status",
+  diagPath: "/oblivion-panel/diag",
   logPrefix: "[oblivion-panel]"
 };
+async function writeJsonAtomic(path, value) {
+  const { mkdir, rename, writeFile } = await import("node:fs/promises");
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = join2(dirname(path), "." + process.pid + "-" + Date.now().toString(36) + ".tmp");
+  await writeFile(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
+  await rename(tmp, path);
+}
+function readBody(request) {
+  return new Promise((resolvePromise) => {
+    let body = "";
+    let overflow = false;
+    request.on("data", (chunk) => {
+      if (overflow) return;
+      body += chunk.toString("utf8");
+      if (body.length > 256 * 1024) overflow = true;
+    });
+    request.on("end", () => resolvePromise({ body, overflow }));
+    request.on("error", () => resolvePromise({ body: "", overflow: false }));
+  });
+}
+function safeParse(body) {
+  try {
+    const parsed = JSON.parse(body === "" ? "{}" : body);
+    return parsed !== null && typeof parsed === "object" ? parsed : { value: parsed };
+  } catch (error) {
+    return { parseError: String(error), raw: body.slice(0, 2e3) };
+  }
+}
 function expandHome(value) {
   if (!value) return homedir();
   if (value === "~") return homedir();
@@ -183,6 +212,32 @@ function installStatusRoute(ctx, config, warn) {
           warn(`\u5FEB\u7167\u88C5\u914D\u5931\u8D25\uFF1A${String(error)}`);
           response.writeHead(500, { "content-type": "application/json" });
           response.end(JSON.stringify({ ok: false, error: "snapshot failed" }));
+        });
+      }
+    });
+    server.register({
+      kind: "exact",
+      path: config.diagPath,
+      handler: (request, response) => {
+        if (request.method !== "POST") {
+          response.writeHead(405, { allow: "POST", "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: "method not allowed" }));
+          return;
+        }
+        void readBody(request).then(async ({ body, overflow }) => {
+          if (overflow) {
+            response.writeHead(413, { "content-type": "application/json" });
+            response.end(JSON.stringify({ ok: false, error: "body too large" }));
+            return;
+          }
+          const target = join2(dataRoot, "panel-client-diag.json");
+          await writeJsonAtomic(target, { ...safeParse(body), receivedAt: Date.now() });
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: true, path: target }));
+        }).catch((error) => {
+          warn(`diag \u843D\u76D8\u5931\u8D25\uFF1A${String(error)}`);
+          response.writeHead(500, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: "diag write failed" }));
         });
       }
     });

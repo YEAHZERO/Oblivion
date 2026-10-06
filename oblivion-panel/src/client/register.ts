@@ -32,6 +32,8 @@ export interface ClientCtxLike {
 export interface RegisterResult {
   status: 'registered' | 'no-service' | 'failed';
   detail?: string;
+  /** 成功时把服务句柄带出来 —— 左栏入口要用它 `openTab` 定向打开。 */
+  service?: BetterSidebarLike;
 }
 
 export const PANEL_TAB_ID = 'oblivion:panel';
@@ -69,7 +71,7 @@ export function registerPanelTab(
       if (typeof dispose === 'function' && typeof ctx.effect === 'function') {
         ctx.effect(() => dispose as () => void, 'oblivion-panel: better-sidebar tab');
       }
-      return { status: 'registered' };
+      return { status: 'registered', service };
     } catch (error) {
       return { status: 'failed', detail: error instanceof Error ? error.message : String(error) };
     }

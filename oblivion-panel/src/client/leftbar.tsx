@@ -1,0 +1,88 @@
+/**
+ * **左栏（侧边栏底部动作区）的 Oblivion 入口**。
+ *
+ * 座位是官方 `ui-sidebar` 声明的 `sidebar.footer.action`（list，scope root，紧挨设置）——
+ * 它的组件由**我们自己**渲染，因此点击行为完全可控：直接调 `dsh-better-sidebar` 的服务
+ * `openTab({ type: 'oblivion:panel', target: 'right' })` 把右侧那一列切到 Oblivion 页。
+ *
+ * 为什么不用 `sidebar.panellist`：那个座位的 id 必须指向一个**主栏面板**，点击由外壳接管；
+ * 而我们要的是「打开右侧栏的某个 tab」，属于 better-sidebar 的地盘 —— 用错座位会静默不生效。
+ */
+
+import type { JSX } from 'react';
+import { POLARIS_CENTER_DOT_RADIUS, POLARIS_GRADIENT_FROM, POLARIS_GRADIENT_TO, POLARIS_PATH, POLARIS_VIEWBOX } from './polaris.js';
+
+/** 小号北极星（左栏动作图标，尺寸跟外壳走）。 */
+export function PolarisGlyph({ size = 16 }: { size?: number }): JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox={'0 0 ' + POLARIS_VIEWBOX.width + ' ' + POLARIS_VIEWBOX.height} aria-hidden>
+      <defs>
+        <linearGradient id="oblivion-leftbar-polaris" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={POLARIS_GRADIENT_FROM} />
+          <stop offset="100%" stopColor={POLARIS_GRADIENT_TO} />
+        </linearGradient>
+      </defs>
+      <path d={POLARIS_PATH} fill="url(#oblivion-leftbar-polaris)" />
+      <circle cx="512" cy="512" r={POLARIS_CENTER_DOT_RADIUS} fill="#ffffff" fillOpacity="0.92" />
+    </svg>
+  );
+}
+
+/** better-sidebar 服务里我们用到的那一个方法（结构化类型，不 import 第三方包）。 */
+export interface OpenTabCapable {
+  openTab?(input: { type: string; title?: string; id?: string; target?: 'right' | 'bottom' | 'side' }): unknown;
+  activate?(tabId: string): boolean;
+}
+
+export type OpenOutcome = 'opened' | 'no-service' | 'failed';
+
+/** 打开（或聚焦）右侧栏的 Oblivion 页。降级：服务缺席时只回一个状态，不抛错。 */
+export function openOblivionTab(service: OpenTabCapable | undefined, tabType: string): OpenOutcome {
+  if (!service || typeof service.openTab !== 'function') return 'no-service';
+  try {
+    service.openTab({ type: tabType, target: 'right' });
+    return 'opened';
+  } catch {
+    return 'failed';
+  }
+}
+
+/** 左栏动作按钮的 props（外壳只给 `wide`）。 */
+export interface FooterActionProps {
+  wide?: boolean;
+}
+
+/**
+ * 左栏动作组件：图标 + 文案（窄栏只留图标）。
+ * 点击 → 打开右侧 Oblivion 页；失败时什么也不做（日志由注册处打）。
+ */
+export function createLeftbarAction(
+  onActivate: () => void,
+): (props: FooterActionProps) => JSX.Element {
+  return function OblivionLeftbarAction(props: FooterActionProps): JSX.Element {
+    const wide = props?.wide !== false;
+    return (
+      <button
+        type="button"
+        onClick={onActivate}
+        title="打开 Oblivion 认知面板（右侧栏）"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          padding: wide ? '6px 8px' : '6px 0',
+          justifyContent: wide ? 'flex-start' : 'center',
+          border: 'none',
+          background: 'transparent',
+          color: 'inherit',
+          cursor: 'pointer',
+          fontSize: 12,
+        }}
+      >
+        <PolarisGlyph size={16} />
+        {wide ? <span>Oblivion</span> : null}
+      </button>
+    );
+  };
+}

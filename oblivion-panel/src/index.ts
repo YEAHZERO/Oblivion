@@ -25,7 +25,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { buildSnapshot } from './snapshot.js';
 
@@ -42,6 +42,8 @@ interface Config {
   readonly fallbackMdRoot: string;
   readonly recentLimit: number;
   readonly routePath: string;
+  /** 客户端 ctx 形状自报的落盘路由（POST）。 */
+  readonly diagPath: string;
   readonly logPrefix: string;
 }
 
@@ -50,8 +52,43 @@ const DEFAULT_CONFIG: Config = {
   fallbackMdRoot: 'C:/Library/那些渐渐被遗忘',
   recentLimit: 10,
   routePath: '/oblivion-panel/status',
+  diagPath: '/oblivion-panel/diag',
   logPrefix: '[oblivion-panel]',
 };
+
+/** 原子写 JSON（写临时文件 → rename）：诊断文件也要能被随时读到完整内容。 */
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  const { mkdir, rename, writeFile } = await import('node:fs/promises');
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = join(dirname(path), '.' + process.pid + '-' + Date.now().toString(36) + '.tmp');
+  await writeFile(tmp, JSON.stringify(value, null, 2) + '\n', 'utf8');
+  await rename(tmp, path);
+}
+
+/** 读请求体（限长 256 KiB，够放下 ctx 形状）。 */
+function readBody(request: IncomingMessage): Promise<{ body: string; overflow: boolean }> {
+  return new Promise((resolvePromise) => {
+    let body = '';
+    let overflow = false;
+    request.on('data', (chunk: Buffer) => {
+      if (overflow) return;
+      body += chunk.toString('utf8');
+      if (body.length > 256 * 1024) overflow = true;
+    });
+    request.on('end', () => resolvePromise({ body, overflow }));
+    request.on('error', () => resolvePromise({ body: '', overflow: false }));
+  });
+}
+
+/** 解析 JSON；坏内容不抛错，留一条 `parseError` 便于排查。 */
+function safeParse(body: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(body === '' ? '{}' : body);
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : { value: parsed };
+  } catch (error) {
+    return { parseError: String(error), raw: body.slice(0, 2000) };
+  }
+}
 
 interface RouteScope {
   webServer?: {
@@ -110,8 +147,7 @@ function installStatusRoute(ctx: HostCtx, config: Config, warn: (message: string
     server.register({
       kind: 'exact',
       path: config.routePath,
-      handler: (request, response) => {
-        if (request.method !== 'GET') {
+      handler: (request, response) => {        if (request.method !== 'GET') {
           response.writeHead(405, { allow: 'GET', 'content-type': 'application/json' });
           response.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
           return;
@@ -129,6 +165,38 @@ function installStatusRoute(ctx: HostCtx, config: Config, warn: (message: string
             warn(`快照装配失败：${String(error)}`);
             response.writeHead(500, { 'content-type': 'application/json' });
             response.end(JSON.stringify({ ok: false, error: 'snapshot failed' }));
+          });
+      },
+    });
+
+    // 客户端 ctx 形状自报（POST）→ 落盘，供与 @oblivion/core 的 dump 对照。
+    // 为什么让浏览器半边把形状发回来：客户端 ctx 才是 inject / slots 的主场，
+    // 而浏览器半边没有 fs 权限 —— 这条路由是唯一的落盘路径。
+    server.register({
+      kind: 'exact',
+      path: config.diagPath,
+      handler: (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST', 'content-type': 'application/json' });
+          response.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+          return;
+        }
+        void readBody(request)
+          .then(async ({ body, overflow }) => {
+            if (overflow) {
+              response.writeHead(413, { 'content-type': 'application/json' });
+              response.end(JSON.stringify({ ok: false, error: 'body too large' }));
+              return;
+            }
+            const target = join(dataRoot, 'panel-client-diag.json');
+            await writeJsonAtomic(target, { ...safeParse(body), receivedAt: Date.now() });
+            response.writeHead(200, { 'content-type': 'application/json' });
+            response.end(JSON.stringify({ ok: true, path: target }));
+          })
+          .catch((error: unknown) => {
+            warn(`diag 落盘失败：${String(error)}`);
+            response.writeHead(500, { 'content-type': 'application/json' });
+            response.end(JSON.stringify({ ok: false, error: 'diag write failed' }));
           });
       },
     });

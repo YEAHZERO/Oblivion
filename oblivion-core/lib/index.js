@@ -1558,6 +1558,75 @@ function extractStyleSignal(qa) {
 import { appendFile, mkdir as mkdir7, readFile as readFile7, writeFile as writeFile7 } from "node:fs/promises";
 import { dirname as dirname3, join as join8 } from "node:path";
 
+// src/util/ctx-shape.ts
+var PROBE_NAMES = [
+  "on",
+  "off",
+  "once",
+  "emit",
+  "parallel",
+  "serial",
+  "bail",
+  "waterfall",
+  "inject",
+  "get",
+  "set",
+  "provide",
+  "effect",
+  "plugin",
+  "scope",
+  "fiber",
+  "logger",
+  "reflect",
+  "root",
+  "ctx",
+  "registry",
+  "agents",
+  "sessions",
+  "sessionProjections",
+  "tools",
+  "systemPrompt",
+  "webServer",
+  "slots",
+  "locale",
+  "shortcuts",
+  "remote",
+  "layout"
+];
+function typeOf(target, key) {
+  try {
+    return typeof target[key];
+  } catch {
+    return "(throws)";
+  }
+}
+function describeCtx(ctx) {
+  const target = ctx ?? {};
+  const keys = Object.keys(target);
+  const prototypes = [];
+  let cursor = Object.getPrototypeOf(target);
+  for (let depth = 0; depth < 5 && cursor; depth += 1) {
+    prototypes.push(cursor.constructor?.name ?? "(anonymous)");
+    cursor = Object.getPrototypeOf(cursor);
+  }
+  const typeofs = {};
+  for (const key of keys) typeofs[key] = typeOf(target, key);
+  const probes = {};
+  for (const name2 of PROBE_NAMES) {
+    const value = typeOf(target, name2);
+    if (value !== "undefined") probes[name2] = value;
+  }
+  return {
+    keys: keys.slice(0, 80),
+    prototypes,
+    typeofs,
+    probes,
+    ownKeyCount: keys.length,
+    isFunction: typeof ctx === "function",
+    constructor: target.constructor?.name ?? "(none)"
+  };
+}
+
 // src/qa-loop/extract.ts
 function textOfMessage(data) {
   if (typeof data === "string") return data;
@@ -1675,6 +1744,7 @@ function registerQaLoop(ctx, config, deps) {
     const data = event.data;
     return typeof data?.turn === "number" ? data.turn : fallback;
   }
+  const ctxShape = describeCtx(ctx);
   const probePath = join8(expandHome(config.dataRoot), "events-probe.jsonl");
   async function probe(subject, event, sessionId, origin) {
     if (!config.enableEventProbe) return;
@@ -1846,6 +1916,8 @@ function registerQaLoop(ctx, config, deps) {
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
     hasGet: typeof ctx.get === "function",
+    /** ctx 形状全量 dump（core 侧） */
+    ctxShape,
     /** 直接读 `ctx.agents`（不经 inject）—— 服务是否已经在这个上下文上 */
     agentsDirect: typeof ctx.agents === "object" && ctx.agents !== null,
     agentsDirectCount: -1,
