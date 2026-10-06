@@ -22,6 +22,7 @@ export { analyzeCoverage, DIMENSIONS } from './perspective/tracker.js';
 export { generatePerspectives } from './perspective/maker.js';
 export { adaptStyle } from './perspective/adapter.js';
 export { tune } from './feedback/tuner.js';
+export { registerDigest, composeDigest, safeFileName } from './digest/index.js';
 export { summarize, suggest } from './stats/summary.js';
 export { createTraceStore } from './stats/trace.js';
 export { registerStats } from './stats/index.js';

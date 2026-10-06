@@ -1,6 +1,6 @@
 {
   "name": "@oblivion/core",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Oblivion 认知插件组内核：问答即生长、认知陪伴、可溯源、零侵入。一个包，六个模块，JSON 文件存储，turn/end 单触发，无定时任务。",
   "license": "MIT",
   "type": "module",

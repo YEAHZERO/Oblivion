@@ -81,12 +81,13 @@ function makeCtx() {
   };
 }
 
-await check('apply 注册面完整（6 工具 / 1 段落 / 1 事件 / 各自 effect）', () => {
+await check('apply 注册面完整（7 工具 / 1 段落 / 事件 / 各自 effect）', () => {
   const { ctx, reg } = makeCtx();
   mod.apply(ctx, { dataRoot, mdRoot });
-  assert.equal(reg.tools.length, 6, '工具数应为 6（含观测面 oblivion_status）');
+  assert.equal(reg.tools.length, 7, '工具数应为 7（含观测面与整理）');
   assert.deepEqual(reg.sections, ['OBLIVION_COGNITION']);
   assert.ok(reg.events.some((e) => e.event === 'session/event'), '必须监听 session/event');
+  assert.ok(reg.events.some((e) => e.event === 'agent/created'), '必须在 agent 作用域补挂订阅');
   assert.ok(reg.effects.length >= 6, '每个模块都要有 effect 清理位');
   return reg.tools.join(', ');
 });
@@ -537,6 +538,42 @@ await check('调参建议的边界：样本不足不开口；阈值贴着分布�
   const dupHints = kit.suggest(dup, cfg);
   assert.ok(dupHints.every((h) => h.suggested === undefined), '完全重复不该建议改任何值');
   return '样本不足=0 条 / 低捕获= ' + hints.length + ' 条 / 重复= ' + dupHints.length + ' 条（无 suggested）';
+});
+
+await check('会话整理（oblivion_digest）：笔记落 04_会话整理/ + 条目入库 + 建边', async () => {
+  const digestRoot = join(tmp, 'kb-digest');
+  const kit = await import(new URL('file://' + join(ROOT, 'lib', 'testkit.js').replace(/\\/g, '/')).href);
+  const dctx = makeCtx();
+  mod.apply(dctx.ctx, { dataRoot: join(tmp, 'data-digest'), mdRoot: digestRoot });
+  const result = await kit.registerDigest(
+    { effect: () => () => {}, logger: { warn() {}, info() {} } },
+    { ...kit.DEFAULT_CONFIG, dataRoot: join(tmp, 'data-digest'), mdRoot: digestRoot },
+    {
+      knowledge: {
+        async saveStructured(input) {
+          const item = { id: 'ts-digest-1', topic: input.topic, title: input.title, content: input.content, sources: input.sources, tags: input.tags ?? [], status: 'active', created_at: Date.now(), updated_at: Date.now(), version: 1 };
+          writeFileSync(join(tmp, 'data-digest', item.id + '.json'), JSON.stringify(item, null, 2), 'utf8');
+          return item;
+        },
+      },
+      graph: { async recordCooccurrence() { return 3; } },
+    },
+  ).save({
+    title: '会话整理自检',
+    topic: '自检',
+    sections: [{ heading: '结论', body: '闭环可用。' }],
+    decisions: ['走热挂'],
+    todos: ['重启 App'],
+    links: ['ts-1'],
+    sessionId: 'selfcheck-session',
+  });
+  assert.ok(existsSync(result.notePath), '整理笔记应落盘：' + result.notePath);
+  assert.ok(result.notePath.includes('04_会话整理'), '应落在 04_会话整理/，实际 ' + result.notePath);
+  const note = readFileSync(result.notePath, 'utf8');
+  assert.ok(note.includes('## 决策') && note.includes('## 待办') && note.includes('[[ts-1]]'), '笔记应含决策/待办/双链');
+  assert.ok(note.includes('oblivion:digest id=ts-digest-1'), '笔记标记应回填真实条目 id');
+  assert.equal(result.entities, 3, '应记录建边实体数');
+  return '笔记 ' + result.notePath.replace(/\\/g, '/').split('/').slice(-1)[0] + ' / 条目 ' + result.itemId + ' / 边 ' + result.entities;
 });
 
 rmSync(tmp, { recursive: true, force: true });

@@ -16,7 +16,9 @@ var DEFAULT_CONFIG = {
     // 设计书 §25.3 的其余分类（后续文档导入/创作能力落地后直接生效）
     doc: "00_\u5BFC\u5165\u6587\u4EF6",
     wiki: "02_Wiki\u9875\u9762",
-    content_creator: "03_\u521B\u4F5C\u4EA7\u7269"
+    content_creator: "03_\u521B\u4F5C\u4EA7\u7269",
+    // 用户显式要求的「整理当前对话」产物（`oblivion_digest` 工具）
+    session_digest: "04_\u4F1A\u8BDD\u6574\u7406"
   },
   /**
    * 价值阈值 —— **已按实测重标定，不要改回设计书原值 0.5**。
@@ -313,6 +315,10 @@ function registerGraph(ctx, config) {
   };
 }
 
+// src/digest/index.ts
+import { mkdir as mkdir4, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join5 } from "node:path";
+
 // src/util/hash.ts
 import { createHash } from "node:crypto";
 function sha1(input) {
@@ -323,6 +329,238 @@ function normalizeForHash(text) {
 }
 function shortHash(input) {
   return sha1(input).slice(0, 12);
+}
+
+// src/qa-loop/md-writer.ts
+import { mkdir as mkdir3, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join4 } from "node:path";
+var MD_FALLBACK_DIR = "99_\u5176\u4ED6";
+function safeDirName(input) {
+  const cleaned = String(input ?? "").replace(/^[a-zA-Z]:/, "").split(/[\\/]+/).filter((seg) => seg !== "" && seg !== "." && seg !== "..").map((seg) => seg.replace(/[<>:"|?*]/g, "_").trim()).filter((seg) => seg !== "").join("/");
+  return cleaned;
+}
+function mdDirNames(map) {
+  const names = [MD_FALLBACK_DIR];
+  if (map) {
+    for (const value of Object.values(map)) {
+      const dir = safeDirName(value);
+      if (dir !== "" && !names.includes(dir)) names.push(dir);
+    }
+  }
+  return names;
+}
+async function ensureMdDirs(root, map) {
+  await mkdir3(root, { recursive: true });
+  const dirs = mdDirNames(map);
+  for (const dir of dirs) {
+    await mkdir3(join4(root, dir), { recursive: true });
+  }
+  return dirs.map((dir) => join4(root, dir));
+}
+function classifyDir(item, map) {
+  if (map) {
+    for (const source of item.sources) {
+      const dir = map[source.type];
+      if (typeof dir === "string" && dir.trim() !== "") return safeDirName(dir) || MD_FALLBACK_DIR;
+    }
+  }
+  return MD_FALLBACK_DIR;
+}
+function safeName(topic) {
+  return (topic || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
+}
+var ID_MARKER = "oblivion:";
+function renderNew(item) {
+  const tags = item.tags.map((t) => "#" + t).join(" ");
+  const sources = item.sources.map((s) => "- `" + s.type + "`: " + s.ref).join("\n");
+  const note = item.content.replace(/\s+/g, " ").slice(0, 100);
+  return [
+    "# " + item.title,
+    "",
+    ">Date :  " + isoDate(item.created_at),
+    ">Source\uFF1AOblivion",
+    ">Note\uFF1A" + note,
+    ">Tags\uFF1A " + tags,
+    "",
+    "## \u5185\u5BB9",
+    "",
+    item.content,
+    "",
+    "## \u6765\u6E90",
+    "",
+    sources,
+    "",
+    "<!-- oblivion:id=" + item.id + " version=" + item.version + " -->",
+    ""
+  ].join("\n");
+}
+function appendSection(existing, item) {
+  const parts = item.content.split("\n\n---\n\n");
+  const tail = parts[parts.length - 1] ?? "";
+  const block = [
+    "",
+    "## \u8FFD\u52A0\uFF08" + isoDate(item.updated_at) + "\uFF09",
+    "",
+    tail,
+    "",
+    "<!-- oblivion:append id=" + item.id + " version=" + item.version + " -->",
+    ""
+  ].join("\n");
+  const head = existing.replace(/<!-- oblivion:id=.*?-->\n?/g, "").trimEnd();
+  return head + "\n\n" + block;
+}
+function appendSource(existing, payload) {
+  if (!payload.mergedSource) return existing;
+  const line = "- `" + payload.mergedSource.type + "`: " + payload.mergedSource.ref + "\uFF08\u91CD\u590D\u6355\u83B7\uFF0C\u4EC5\u8865\u6765\u6E90\uFF09";
+  if (existing.includes(line)) return existing;
+  return existing.trimEnd() + "\n" + line + "\n";
+}
+async function writeMD(root, payload, classify) {
+  const dir = join4(root, classifyDir(payload.item, classify));
+  await mkdir3(dir, { recursive: true });
+  const name2 = safeName(payload.item.topic);
+  let path = join4(dir, name2 + ".md");
+  let existing = await readFile3(path, "utf8").catch(() => "");
+  if (existing !== "" && !existing.includes(ID_MARKER)) {
+    path = join4(dir, name2 + "-oblivion.md");
+    existing = await readFile3(path, "utf8").catch(() => "");
+  }
+  switch (payload.action) {
+    case "created": {
+      if (existing.includes("oblivion:id=" + payload.item.id)) return path;
+      const body = existing ? existing.trimEnd() + "\n\n" + renderNew(payload.item) : renderNew(payload.item);
+      await writeFile3(path, body, "utf8");
+      return path;
+    }
+    case "appended":
+      await writeFile3(path, appendSection(existing, payload.item), "utf8");
+      return path;
+    case "duplicate":
+      await writeFile3(path, appendSource(existing, payload), "utf8");
+      return path;
+  }
+}
+
+// src/digest/index.ts
+function safeFileName(input) {
+  const cleaned = (input || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim();
+  return (cleaned || "untitled").slice(0, 80);
+}
+function bulletList(items) {
+  if (!items || items.length === 0) return "";
+  return items.map((item) => "- " + String(item).trim()).join("\n");
+}
+function deriveTopic(title) {
+  const m = title.match(/[\p{L}\p{N}_-]{2,20}/gu);
+  return m?.[0] ?? "untitled";
+}
+function composeDigest(input, at = now()) {
+  const title = (input.title || "\u672A\u547D\u540D\u6574\u7406").trim();
+  const topic = (input.topic ?? deriveTopic(title)).trim() || "untitled";
+  const sections = Array.isArray(input.sections) ? input.sections : [];
+  const parts = [];
+  parts.push("# " + title);
+  parts.push("");
+  parts.push(">Date :  " + isoDate(at));
+  parts.push(">Source\uFF1AOblivion \xB7 \u4F1A\u8BDD\u6574\u7406");
+  if (input.sessionId) parts.push(">Session\uFF1A" + input.sessionId);
+  parts.push(">Topic\uFF1A " + topic);
+  parts.push("");
+  for (const section of sections) {
+    const heading = (section.heading || "\u8981\u70B9").trim();
+    parts.push("## " + heading);
+    parts.push("");
+    parts.push(String(section.body ?? "").trim());
+    parts.push("");
+  }
+  const decisions = bulletList(input.decisions);
+  if (decisions) {
+    parts.push("## \u51B3\u7B56");
+    parts.push("");
+    parts.push(decisions);
+    parts.push("");
+  }
+  const todos = bulletList(input.todos);
+  if (todos) {
+    parts.push("## \u5F85\u529E");
+    parts.push("");
+    parts.push(todos);
+    parts.push("");
+  }
+  const open = bulletList(input.openQuestions);
+  if (open) {
+    parts.push("## \u672A\u51B3\u95EE\u9898");
+    parts.push("");
+    parts.push(open);
+    parts.push("");
+  }
+  const links = (input.links ?? []).filter((l) => String(l).trim() !== "");
+  if (links.length) {
+    parts.push("## \u5173\u8054\u77E5\u8BC6");
+    parts.push("");
+    parts.push(links.map((link) => "- [[" + String(link).trim().replace(/^\[\[|\]\]$/g, "") + "]]").join("\n"));
+    parts.push("");
+  }
+  parts.push("<!-- oblivion:digest id=pending version=1 -->");
+  parts.push("");
+  return {
+    markdown: parts.join("\n"),
+    fileName: isoDate(at) + "-" + safeFileName(title) + ".md",
+    title,
+    topic,
+    sections: sections.length
+  };
+}
+function registerDigest(ctx, config, deps) {
+  const mdRoot = expandHome(config.mdRoot);
+  const classDir = safeDirName(config.mdClassify?.session_digest ?? "04_\u4F1A\u8BDD\u6574\u7406") || "04_\u4F1A\u8BDD\u6574\u7406";
+  async function save(input) {
+    const at = now();
+    const composed = composeDigest(input, at);
+    const ref = (input.sessionId ?? "local") + "#digest-" + isoDate(at);
+    const sources = [{ type: "session", ref, hash: shortHash(ref) }];
+    const item = await deps.knowledge.saveStructured({
+      title: composed.title,
+      topic: composed.topic,
+      content: composed.markdown,
+      tags: ["\u4F1A\u8BDD\u6574\u7406", ...input.todos?.length ? ["\u5F85\u529E"] : [], ...input.decisions?.length ? ["\u51B3\u7B56"] : []],
+      sources
+    });
+    const markdown = composed.markdown.replace("id=pending", "id=" + item.id);
+    const dir = join5(mdRoot, classDir);
+    await mkdir4(dir, { recursive: true });
+    const notePath = join5(dir, composed.fileName);
+    const existing = await readFile4(notePath, "utf8").catch(() => "");
+    if (existing.includes("oblivion:digest id=" + item.id)) {
+      await writeFile4(notePath, existing.trimEnd() + "\n\n---\n\n" + markdown, "utf8");
+    } else {
+      await writeFile4(notePath, markdown, "utf8");
+    }
+    const qa = {
+      question: composed.title,
+      answer: markdown,
+      sources,
+      sessionId: input.sessionId ?? "local",
+      turn: 0,
+      capturedAt: at
+    };
+    let entities = 0;
+    try {
+      entities = await deps.graph.recordCooccurrence(qa);
+    } catch (error) {
+      ctx.logger?.warn?.(config.logPrefix + " \u6574\u7406\u5EFA\u8FB9\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u843D\u76D8\uFF09\uFF1A%o", error);
+    }
+    return {
+      ...composed,
+      id: item.id,
+      itemId: item.id,
+      notePath,
+      entities: typeof entities === "number" ? entities : 0
+    };
+  }
+  ctx.effect(() => () => {
+  }, "oblivion-core: digest teardown");
+  return { compose: composeDigest, save };
 }
 
 // src/knowledge/search.ts
@@ -576,19 +814,19 @@ function flipSignals(text) {
 }
 
 // src/knowledge/store.ts
-import { mkdir as mkdir3, readFile as readFile3, readdir, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { mkdir as mkdir5, readFile as readFile5, readdir, writeFile as writeFile5 } from "node:fs/promises";
+import { join as join6 } from "node:path";
 var KnowledgeStore = class {
   constructor(root) {
     this.root = root;
   }
   root;
   get conflictsRoot() {
-    return join4(this.root, "conflicts");
+    return join6(this.root, "conflicts");
   }
   async init() {
-    await mkdir3(this.root, { recursive: true });
-    await mkdir3(this.conflictsRoot, { recursive: true });
+    await mkdir5(this.root, { recursive: true });
+    await mkdir5(this.conflictsRoot, { recursive: true });
   }
   async loadAll() {
     const files = await readdir(this.root).catch(() => []);
@@ -596,7 +834,7 @@ var KnowledgeStore = class {
     for (const f of files) {
       if (!f.endsWith(".json")) continue;
       try {
-        const raw = await readFile3(join4(this.root, f), "utf8");
+        const raw = await readFile5(join6(this.root, f), "utf8");
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.id === "string") items.push(parsed);
       } catch {
@@ -606,13 +844,13 @@ var KnowledgeStore = class {
   }
   async save(item) {
     await this.init();
-    await writeFile3(join4(this.root, item.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
+    await writeFile5(join6(this.root, item.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
   }
   /** 冲突记录返回文件名，便于在日志/工具输出里指认。 */
   async saveConflict(payload) {
     await this.init();
     const id = "conflict-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
-    await writeFile3(join4(this.conflictsRoot, id + ".json"), JSON.stringify(payload, null, 2) + "\n", "utf8");
+    await writeFile5(join6(this.conflictsRoot, id + ".json"), JSON.stringify(payload, null, 2) + "\n", "utf8");
     return id;
   }
 };
@@ -686,7 +924,7 @@ function registerKnowledge(ctx, config) {
     }
     const item = {
       id: newId(at),
-      topic: qa.topicHint ?? deriveTopic(qa),
+      topic: qa.topicHint ?? deriveTopic2(qa),
       title: deriveTitle(qa),
       content: qa.answer,
       sources: mergeSources([], qa, fp),
@@ -700,6 +938,25 @@ function registerKnowledge(ctx, config) {
     await loadIndex();
     touched = [item.id];
     return { ...result, item };
+  }
+  async function saveStructured(input) {
+    const at = now();
+    const item = {
+      id: newId(at),
+      topic: input.topic || "untitled",
+      title: input.title || "untitled",
+      content: input.content,
+      sources: input.sources,
+      tags: input.tags ?? [],
+      status: "active",
+      created_at: at,
+      updated_at: at,
+      version: 1
+    };
+    await store.save(item);
+    await loadIndex();
+    touched = [item.id];
+    return item;
   }
   async function query(args) {
     await ensureLoaded();
@@ -730,6 +987,7 @@ function registerKnowledge(ctx, config) {
       await loadIndex();
     },
     capture,
+    saveStructured,
     query,
     exactDuplicate,
     semanticSimilar,
@@ -743,7 +1001,7 @@ function deriveTitle(qa) {
   const q = qa.question.split("\n")[0].trim();
   return q.length > 60 ? q.slice(0, 57) + "\u2026" : q || "untitled";
 }
-function deriveTopic(qa) {
+function deriveTopic2(qa) {
   if (qa.topicHint) return qa.topicHint;
   const m = qa.question.match(/[\p{L}\p{N}_-]{3,20}/gu);
   return m?.[0] ?? "untitled";
@@ -976,8 +1234,8 @@ var OBLIVION_SYSTEM_PROMPT = [
 ].join("\n");
 
 // src/profile/index.ts
-import { mkdir as mkdir4, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname2, join as join5 } from "node:path";
+import { mkdir as mkdir6, readFile as readFile6, writeFile as writeFile6 } from "node:fs/promises";
+import { dirname as dirname2, join as join7 } from "node:path";
 
 // src/profile/schema.ts
 function defaultProfile() {
@@ -1013,10 +1271,10 @@ function mergeProfile(cur, signal) {
 // src/profile/index.ts
 var CONFIDENCE_FLOOR = 0.3;
 function registerProfile(ctx, config) {
-  const path = join5(expandHome(config.dataRoot), "profile.json");
+  const path = join7(expandHome(config.dataRoot), "profile.json");
   async function raw() {
     try {
-      const parsed = JSON.parse(await readFile4(path, "utf8"));
+      const parsed = JSON.parse(await readFile6(path, "utf8"));
       return { ...defaultProfile(), ...parsed };
     } catch {
       return defaultProfile();
@@ -1028,8 +1286,8 @@ function registerProfile(ctx, config) {
     return { ...mergeProfile(p, p.user_override), user_override: p.user_override };
   }
   async function write(p) {
-    await mkdir4(dirname2(path), { recursive: true });
-    await writeFile4(path, JSON.stringify(p, null, 2) + "\n", "utf8");
+    await mkdir6(dirname2(path), { recursive: true });
+    await writeFile6(path, JSON.stringify(p, null, 2) + "\n", "utf8");
     return p;
   }
   ctx.effect(() => () => {
@@ -1074,8 +1332,8 @@ function extractStyleSignal(qa) {
 }
 
 // src/qa-loop/index.ts
-import { appendFile, mkdir as mkdir6, readFile as readFile6, writeFile as writeFile6 } from "node:fs/promises";
-import { dirname as dirname3, join as join7 } from "node:path";
+import { appendFile, mkdir as mkdir7, readFile as readFile7, writeFile as writeFile7 } from "node:fs/promises";
+import { dirname as dirname3, join as join8 } from "node:path";
 
 // src/qa-loop/extract.ts
 function textOfMessage(data) {
@@ -1136,116 +1394,6 @@ function extractQAPair(turn) {
   };
 }
 
-// src/qa-loop/md-writer.ts
-import { mkdir as mkdir5, readFile as readFile5, writeFile as writeFile5 } from "node:fs/promises";
-import { join as join6 } from "node:path";
-var MD_FALLBACK_DIR = "99_\u5176\u4ED6";
-function safeDirName(input) {
-  const cleaned = String(input ?? "").replace(/^[a-zA-Z]:/, "").split(/[\\/]+/).filter((seg) => seg !== "" && seg !== "." && seg !== "..").map((seg) => seg.replace(/[<>:"|?*]/g, "_").trim()).filter((seg) => seg !== "").join("/");
-  return cleaned;
-}
-function mdDirNames(map) {
-  const names = [MD_FALLBACK_DIR];
-  if (map) {
-    for (const value of Object.values(map)) {
-      const dir = safeDirName(value);
-      if (dir !== "" && !names.includes(dir)) names.push(dir);
-    }
-  }
-  return names;
-}
-async function ensureMdDirs(root, map) {
-  await mkdir5(root, { recursive: true });
-  const dirs = mdDirNames(map);
-  for (const dir of dirs) {
-    await mkdir5(join6(root, dir), { recursive: true });
-  }
-  return dirs.map((dir) => join6(root, dir));
-}
-function classifyDir(item, map) {
-  if (map) {
-    for (const source of item.sources) {
-      const dir = map[source.type];
-      if (typeof dir === "string" && dir.trim() !== "") return safeDirName(dir) || MD_FALLBACK_DIR;
-    }
-  }
-  return MD_FALLBACK_DIR;
-}
-function safeName(topic) {
-  return (topic || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
-}
-var ID_MARKER = "oblivion:";
-function renderNew(item) {
-  const tags = item.tags.map((t) => "#" + t).join(" ");
-  const sources = item.sources.map((s) => "- `" + s.type + "`: " + s.ref).join("\n");
-  const note = item.content.replace(/\s+/g, " ").slice(0, 100);
-  return [
-    "# " + item.title,
-    "",
-    ">Date :  " + isoDate(item.created_at),
-    ">Source\uFF1AOblivion",
-    ">Note\uFF1A" + note,
-    ">Tags\uFF1A " + tags,
-    "",
-    "## \u5185\u5BB9",
-    "",
-    item.content,
-    "",
-    "## \u6765\u6E90",
-    "",
-    sources,
-    "",
-    "<!-- oblivion:id=" + item.id + " version=" + item.version + " -->",
-    ""
-  ].join("\n");
-}
-function appendSection(existing, item) {
-  const parts = item.content.split("\n\n---\n\n");
-  const tail = parts[parts.length - 1] ?? "";
-  const block = [
-    "",
-    "## \u8FFD\u52A0\uFF08" + isoDate(item.updated_at) + "\uFF09",
-    "",
-    tail,
-    "",
-    "<!-- oblivion:append id=" + item.id + " version=" + item.version + " -->",
-    ""
-  ].join("\n");
-  const head = existing.replace(/<!-- oblivion:id=.*?-->\n?/g, "").trimEnd();
-  return head + "\n\n" + block;
-}
-function appendSource(existing, payload) {
-  if (!payload.mergedSource) return existing;
-  const line = "- `" + payload.mergedSource.type + "`: " + payload.mergedSource.ref + "\uFF08\u91CD\u590D\u6355\u83B7\uFF0C\u4EC5\u8865\u6765\u6E90\uFF09";
-  if (existing.includes(line)) return existing;
-  return existing.trimEnd() + "\n" + line + "\n";
-}
-async function writeMD(root, payload, classify) {
-  const dir = join6(root, classifyDir(payload.item, classify));
-  await mkdir5(dir, { recursive: true });
-  const name2 = safeName(payload.item.topic);
-  let path = join6(dir, name2 + ".md");
-  let existing = await readFile5(path, "utf8").catch(() => "");
-  if (existing !== "" && !existing.includes(ID_MARKER)) {
-    path = join6(dir, name2 + "-oblivion.md");
-    existing = await readFile5(path, "utf8").catch(() => "");
-  }
-  switch (payload.action) {
-    case "created": {
-      if (existing.includes("oblivion:id=" + payload.item.id)) return path;
-      const body = existing ? existing.trimEnd() + "\n\n" + renderNew(payload.item) : renderNew(payload.item);
-      await writeFile5(path, body, "utf8");
-      return path;
-    }
-    case "appended":
-      await writeFile5(path, appendSection(existing, payload.item), "utf8");
-      return path;
-    case "duplicate":
-      await writeFile5(path, appendSource(existing, payload), "utf8");
-      return path;
-  }
-}
-
 // src/qa-loop/index.ts
 var MAX_EVENTS_PER_TURN = 400;
 var MAX_TRACKED_SESSIONS = 32;
@@ -1286,7 +1434,7 @@ function registerQaLoop(ctx, config, deps) {
     const data = event.data;
     return typeof data?.turn === "number" ? data.turn : fallback;
   }
-  const probePath = join7(expandHome(config.dataRoot), "events-probe.jsonl");
+  const probePath = join8(expandHome(config.dataRoot), "events-probe.jsonl");
   async function probe(subject, event, sessionId, origin) {
     if (!config.enableEventProbe) return;
     try {
@@ -1300,12 +1448,12 @@ function registerQaLoop(ctx, config, deps) {
         subjectKeys: subject && typeof subject === "object" ? Object.keys(subject).slice(0, 8) : null,
         dataKeys: data && typeof data === "object" ? Object.keys(data).slice(0, 10) : null
       });
-      await mkdir6(dirname3(probePath), { recursive: true });
+      await mkdir7(dirname3(probePath), { recursive: true });
       await appendFile(probePath, line + "\n", "utf8");
-      const raw = await readFile6(probePath, "utf8");
+      const raw = await readFile7(probePath, "utf8");
       const lines = raw.split("\n").filter((l) => l.trim() !== "");
       if (lines.length > config.eventProbeMax) {
-        await writeFile6(probePath, lines.slice(-config.eventProbeMax).join("\n") + "\n", "utf8");
+        await writeFile7(probePath, lines.slice(-config.eventProbeMax).join("\n") + "\n", "utf8");
       }
     } catch {
     }
@@ -1422,9 +1570,9 @@ function registerQaLoop(ctx, config, deps) {
       if (buffer.events.length < MAX_EVENTS_PER_TURN) buffer.events.push(event);
     }
   }
-  const diagPath = join7(expandHome(config.dataRoot), "mount-diag.json");
+  const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.9",
+    version: "0.1.10",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -1443,8 +1591,8 @@ function registerQaLoop(ctx, config, deps) {
   let diagDirty = false;
   async function flushDiag() {
     try {
-      await mkdir6(dirname3(diagPath), { recursive: true });
-      await writeFile6(diagPath, JSON.stringify(diag, null, 2) + "\n", "utf8");
+      await mkdir7(dirname3(diagPath), { recursive: true });
+      await writeFile7(diagPath, JSON.stringify(diag, null, 2) + "\n", "utf8");
     } catch {
     }
   }
@@ -1517,8 +1665,8 @@ function registerQaLoop(ctx, config, deps) {
 }
 
 // src/stats/index.ts
-import { writeFile as writeFile8, mkdir as mkdir8 } from "node:fs/promises";
-import { dirname as dirname5, join as join9 } from "node:path";
+import { writeFile as writeFile9, mkdir as mkdir9 } from "node:fs/promises";
+import { dirname as dirname5, join as join10 } from "node:path";
 
 // src/stats/summary.ts
 function ratio(part, whole) {
@@ -1650,14 +1798,14 @@ function suggest(summary, config, extra = {}) {
 }
 
 // src/stats/trace.ts
-import { appendFile as appendFile2, mkdir as mkdir7, readFile as readFile7, writeFile as writeFile7 } from "node:fs/promises";
-import { dirname as dirname4, join as join8 } from "node:path";
+import { appendFile as appendFile2, mkdir as mkdir8, readFile as readFile8, writeFile as writeFile8 } from "node:fs/promises";
+import { dirname as dirname4, join as join9 } from "node:path";
 function createTraceStore(dataRoot, options) {
-  const path = join8(dataRoot, "decisions.jsonl");
+  const path = join9(dataRoot, "decisions.jsonl");
   const MS_PER_DAY3 = 864e5;
   async function readRaw() {
     try {
-      const raw = await readFile7(path, "utf8");
+      const raw = await readFile8(path, "utf8");
       const out = [];
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
@@ -1676,7 +1824,7 @@ function createTraceStore(dataRoot, options) {
     path,
     async record(entry) {
       try {
-        await mkdir7(dirname4(path), { recursive: true });
+        await mkdir8(dirname4(path), { recursive: true });
         await appendFile2(path, JSON.stringify(entry) + "\n", "utf8");
       } catch (error) {
         options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u5199\u5165\u5931\u8D25\uFF1A%o", error);
@@ -1689,7 +1837,7 @@ function createTraceStore(dataRoot, options) {
       const kept = fresh.length > options.maxEntries ? fresh.slice(fresh.length - options.maxEntries) : fresh;
       if (kept.length !== all.length) {
         try {
-          await writeFile7(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
+          await writeFile8(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
         } catch (error) {
           options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u88C1\u526A\u843D\u76D8\u5931\u8D25\uFF1A%o", error);
         }
@@ -1740,8 +1888,8 @@ function registerStats(ctx, config, meta) {
     },
     async writeBootSnapshot(extra) {
       try {
-        const path = join9(dataRoot, "status.json");
-        await mkdir8(dirname5(path), { recursive: true });
+        const path = join10(dataRoot, "status.json");
+        await mkdir9(dirname5(path), { recursive: true });
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -1754,7 +1902,7 @@ function registerStats(ctx, config, meta) {
           tracePath: trace.path,
           ...extra
         };
-        await writeFile8(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        await writeFile9(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
         return;
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + " status.json \u5199\u5165\u5931\u8D25\uFF1A%o", error);
@@ -1897,6 +2045,57 @@ function registerTools(ctx, deps) {
     }
   }));
   ctx.tools.register(defineTool({
+    name: "oblivion_digest",
+    description: "Organize the current conversation into a structured digest note plus one searchable knowledge item. Use it when the user asks to tidy up / summarize / organize this conversation. YOU produce the structure (you already hold the conversation): sections with headings and bodies, key decisions, todos, open questions, and links to related entries. The plugin writes <mdRoot>/04_\u4F1A\u8BDD\u6574\u7406/<date>-<title>.md, stores one item, and builds co-occurrence edges.",
+    parameters: {
+      title: { type: "string", required: true, description: 'Digest title, e.g. "DSH \u63D2\u4EF6\u5F00\u53D1 \xB7 \u4F1A\u8BDD\u6574\u7406".' },
+      topic: { type: "string", description: "Topic bucket for the note file and the item topic; derived from the title when omitted." },
+      sections: {
+        type: "array",
+        required: true,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            heading: { type: "string", required: true },
+            body: { type: "string", required: true }
+          }
+        },
+        description: "Main body of the digest: 2-6 sections, each a heading plus the distilled content."
+      },
+      decisions: { type: "array", items: { type: "string" }, description: "Key decisions reached in this conversation." },
+      todos: { type: "array", items: { type: "string" }, description: "Action items that follow from this conversation." },
+      open_questions: { type: "array", items: { type: "string" }, description: "Questions left unresolved." },
+      links: { type: "array", items: { type: "string" }, description: "Related item ids or note names, written as [[...]] wikilinks." },
+      session_id: { type: "string", description: "Optional session id recorded in the note and item sources." }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.digest) {
+        return asCanonical({ skipped: true, reason: "digest service unavailable" });
+      }
+      const result = await deps.digest.save({
+        title: args.title,
+        topic: args.topic,
+        sections: args.sections ?? [],
+        decisions: args.decisions,
+        todos: args.todos,
+        openQuestions: args.open_questions,
+        links: args.links,
+        sessionId: args.session_id
+      });
+      return asCanonical({
+        id: result.id,
+        title: result.title,
+        topic: result.topic,
+        sections: result.sections,
+        note: result.notePath,
+        item: result.itemId,
+        edges: result.entities
+      });
+    }
+  }));
+  ctx.tools.register(defineTool({
     name: "oblivion_status",
     description: "Inspect the Oblivion cognition layer: effective config, capture stats from real decision traces (capture rate, rejection reasons, value-score distribution), tuning hints (which key to change and why), and the most recent per-turn decisions.",
     parameters: {
@@ -1928,7 +2127,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.9";
+var VERSION = "0.1.10";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
@@ -1939,6 +2138,7 @@ function apply(rawCtx, rawConfig) {
   const stats = config.enableStats ? registerStats(ctx, config, { version: VERSION }) : null;
   const feedback = config.enableFeedback ? registerFeedback(ctx, config, profile) : null;
   const perspective = config.enablePerspective ? registerPerspective(ctx, config, { profile }) : null;
+  const digest = registerDigest(ctx, config, { knowledge, graph });
   registerQaLoop(ctx, config, {
     knowledge,
     graph,
@@ -1960,7 +2160,7 @@ function apply(rawCtx, rawConfig) {
     }),
     "oblivion-core: system prompt section"
   );
-  registerTools(ctx, { knowledge, profile, feedback, graph, stats, perspectiveStats: () => perspective?.stats() ?? null });
+  registerTools(ctx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
   void knowledge.init().catch((error) => {
     ctx.logger?.warn?.(config.logPrefix + " init failed: %o", error);
   });

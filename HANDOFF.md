@@ -231,6 +231,15 @@ Host 侧（`kind: object`）**没有**可以渲染的东西，无法长出设置
 
 - `@` 开头的标量**必须加引号**：`id: '@oblivion/core'`
 - `link:` 依赖**必须用正斜杠**：`'link:C:/Projects/Oblivion/<name>'`
+- ⚠️ **绝对不要用正则去摘/插补丁行** —— 2026-10-06 事故：用 `(?ms)\s*` 匹配删行时把换行一起吃掉，
+  结果变成 `disabled: false- insert:`，**App 直接启动失败**（`parsePatchList` 抛错，崩溃窗口弹出）。
+  正确做法：
+  1. **先备份**：`Copy-Item cordis.patch.yml cordis.patch.yml.bak-<时间戳>`
+  2. 改完**必须用 YAML 解析器验证**（`profile/node_modules/yaml` 就有）：
+     ```powershell
+     node -e "const Y=require('<profile>/node_modules/yaml');const d=Y.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log(Array.isArray(d)?'array ✅':'❌',d.length)" <patch>
+     ```
+  3. 验证通过再重启 App；崩溃窗口里**点 `Restart`**，不要点 "Disable third-party plugins…"（那会把我们的插件一起停掉）
 
 ---
 

@@ -1,6 +1,6 @@
 import type { AppContext } from '../core-types.js';
 import type { Config } from '../config.js';
-import type { FilterResult, KnowledgeItem, QAPair } from '../types.js';
+import type { FilterResult, KnowledgeItem, QAPair, Source } from '../types.js';
 import { normalizeForHash, sha1 } from '../util/hash.js';
 import { expandHome } from '../util/paths.js';
 import { newId, now } from '../util/time.js';
@@ -25,9 +25,24 @@ export interface KnowledgeQueryResult {
   }>;
 }
 
+export interface StructuredInput {
+  title: string;
+  topic: string;
+  content: string;
+  tags?: string[];
+  sources: Source[];
+}
+
 export interface KnowledgeService {
   init(): Promise<void>;
   capture(qa: QAPair): Promise<CaptureResult>;
+  /**
+   * **直写一条结构化条目**（绕过四层筛选）。
+   *
+   * 用途：用户显式要求的动作（如「整理当前对话」）—— 四层筛选是给自动捕获防噪声用的，
+   * 不该把用户点名要沉淀的内容挡在门外。仍然照常进索引、因而可被 `oblivion_query` 检索。
+   */
+  saveStructured(input: StructuredInput): Promise<KnowledgeItem>;
   query(args: { query: string; limit?: number }): Promise<KnowledgeQueryResult>;
   exactDuplicate(qa: QAPair): Promise<boolean>;
   semanticSimilar(qa: QAPair, threshold: number): Promise<SimilarVerdict>;
@@ -149,6 +164,30 @@ export function registerKnowledge(ctx: AppContext, config: Config): KnowledgeSer
     return { ...result, item };
   }
 
+  /**
+   * 直写一条结构化条目（见 `KnowledgeService.saveStructured` 的说明）。
+   * 与 `capture` 的 created 分支同一套落盘 + 索引刷新，只是**不问筛选**。
+   */
+  async function saveStructured(input: StructuredInput): Promise<KnowledgeItem> {
+    const at = now();
+    const item: KnowledgeItem = {
+      id: newId(at),
+      topic: input.topic || 'untitled',
+      title: input.title || 'untitled',
+      content: input.content,
+      sources: input.sources,
+      tags: input.tags ?? [],
+      status: 'active',
+      created_at: at,
+      updated_at: at,
+      version: 1,
+    };
+    await store.save(item);
+    await loadIndex();
+    touched = [item.id];
+    return item;
+  }
+
   async function query(args: { query: string; limit?: number }): Promise<KnowledgeQueryResult> {
     await ensureLoaded();
     const hits = index.search(args.query, args.limit ?? 10);
@@ -182,6 +221,7 @@ export function registerKnowledge(ctx: AppContext, config: Config): KnowledgeSer
       await loadIndex();
     },
     capture,
+    saveStructured,
     query,
     exactDuplicate,
     semanticSimilar,

@@ -15,6 +15,40 @@
 
 ---
 
+## [未发布] — `@oblivion/core` v0.1.10：**会话整理（`oblivion_digest`）** + 挂载自诊断；附一次 profile 补丁事故
+
+### 新增：整理当前对话
+
+- 新工具 **`oblivion_digest`**：在对话里说「整理一下当前对话」，模型产出结构
+  （**章节 / 决策 / 待办 / 未决问题 / `[[双链]]`**），插件负责落成
+  **① 一篇人读的整理笔记** `<mdRoot>/04_会话整理/<日期>-<标题>.md`
+  **② 一条可检索的知识条目**（进 JSON 库、进共现图、能被 `oblivion_query` 查到），并回填条目 id 到笔记标记
+- **分工的取舍**：摘要由**模型**做（它本来就把整场对话握在上下文里，是天然摘要器），
+  插件不调 LLM、不重放历史 —— 否则要新开授权面、处理重试，收益全是重复劳动
+- **绕过四层筛选**：用户显式要求的沉淀不该被 L3「答案太短」/L4 价值分拦下，走新增的
+  `knowledge.saveStructured()` 直写（仍进索引，因此照常可检索）
+- 新增分类目录 **`04_会话整理/`**（`mdClassify.session_digest`）—— 装载即建目录会自动带上它
+- 同一天同标题重复整理：**不覆盖**，追加一节（保历史，不静默丢）
+
+### 新增：挂载自诊断（`mount-diag.json`）
+
+`console` 日志在本机读不到，而「事件收不到」有四种可能（没有 inject / agents 服务不存在 / 列表为空 /
+订阅上了但派发被过滤），空探针无法区分。现在挂载那一刻与三个关键节点落盘：
+`hasOn`·`hasInject`·`hasGet`、`agentsDirect`·`agentsDirectCount`、`injectFired`·`injectAgentCount`、
+`rootSeen`·`agentSeen`·`mountedAgents`。
+
+### ⚠️ 事故与教训：别用正则改 profile 补丁
+
+我用 `-replace "(?ms)…\s*"` 摘除补丁行时把换行一起吃掉，补丁变成 `disabled: false- insert:`，
+**App 直接启动失败**（`parsePatchList` 抛错，弹出崩溃窗口）。已按备份修复并用 YAML 解析器验证
+（6 条目、两行 insert 都在）。教训写进 `HANDOFF.md` 坑清单 8：**先备份 → 改完必须 YAML 解析验证 → 再重启**。
+
+### 验证
+
+`typecheck` ✅ / `test` **14/14** ✅ / `selfcheck` **26/26** ✅（新增：会话整理落盘 + 条目 id 回填 + 建边）
+
+---
+
 ## [未发布] — `@oblivion/core` v0.1.7 / v0.1.8：**结案「问答没被捕获」—— `session/event` 是作用域过滤派发**
 
 ### 根因（逐字取证）

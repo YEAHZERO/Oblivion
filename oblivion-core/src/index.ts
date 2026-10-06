@@ -19,6 +19,7 @@ import type { AppContext } from './core-types.js';
 import { DEFAULT_CONFIG, type Config } from './config.js';
 import { registerFeedback } from './feedback/index.js';
 import { registerGraph } from './graph/index.js';
+import { registerDigest } from './digest/index.js';
 import { registerKnowledge } from './knowledge/index.js';
 import { registerPerspective } from './perspective/index.js';
 import { OBLIVION_SYSTEM_PROMPT } from './prompt.js';
@@ -56,6 +57,7 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
   const perspective = config.enablePerspective
     ? registerPerspective(ctx, config, { profile })
     : null;
+  const digest = registerDigest(ctx, config, { knowledge, graph });
 
   registerQaLoop(ctx, config, {
     knowledge,
@@ -83,7 +85,7 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
     'oblivion-core: system prompt section',
   );
 
-  registerTools(ctx, { knowledge, profile, feedback, graph, stats, perspectiveStats: () => perspective?.stats() ?? null });
+  registerTools(ctx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
 
   // 首次装载索引与目录；失败只记日志，不阻塞装载（此刻缓存与磁盘都可能还不存在）。
   void knowledge.init().catch((error: unknown) => {

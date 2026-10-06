@@ -171,15 +171,16 @@ oblivion-core/
 | --- | --- |
 | `pnpm run build` | ✅ `lib/index.js` ~67 KB + `lib/testkit.js`（v0.1.5） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **13/13**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 6 工具注册」） |
-| `pnpm run selfcheck` | ✅ **25/25**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、时钟保护、去重、阈值分布） |
-| `pnpm run check:version` | ✅ `0.1.5` 一致 |
+| `pnpm run test` | ✅ **14/14**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 7 工具注册 + 整理结构」） |
+| `pnpm run selfcheck` | ✅ **26/26**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、**会话整理落盘**、时钟保护、去重、阈值分布） |
+| `pnpm run check:version` | ✅ `0.1.10` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **8/8**（host / `tools`·`systemPrompt` / `session/event`·`turn/end` / `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
-| 真实 Host 装载 | ⏳ **仍未验证**（需要 App 重启后才能验证 v0.1.2 起的修复，见第九节） |
+| 真实 Host 装载 | ⏳ **仍未验证**：`agent/created` + `agents.list()` 两条作用域订阅已上线（v0.1.7/v0.1.8），但探针仍为空；v0.1.10 的 `mount-diag.json` 需要**重启一次 App** 才能上机 |
 
-> ⚠️ **Host 侧改码必须重启 App**：Host 复用 ESM 缓存里的模块命名空间，禁用再启用**不会**重新导入。
-> 验证 v0.1.2 的步骤见下一节。
+> ⚠️ **Host 侧改码必须重启 App**（2026-10-06 用四种手段实测确认）：只构建 lib / 重写补丁层 /
+> 摘掉再插回补丁行 / `dsh plugin add` 同一 link **全部无效**；补丁层只负责**新行的首次装载**。
+> 改 Host 半边 → `build` → 重启；改浏览器半边 → `build` → 硬刷新页面。
 
 ## 九、使用方法（速查）
 
@@ -240,16 +241,29 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
         dataRoot: '~/.oblivion/data'
 ```
 
-### 9.3 用六个模型面工具
+### 9.3 用七个模型面工具
 
 | 工具 | 用途 | 例 |
 | --- | --- | --- |
+| `oblivion_digest` | **整理当前对话**：模型产出结构（章节/决策/待办/未决/双链），插件落成**一篇整理笔记 + 一条可检索条目**（并建共现边） | 「整理一下当前对话」 |
 | `oblivion_status` | **观测与调参入口**：生效配置 + 真实统计 + 「该改哪个键」建议 + 最近判定 | 「这几天的捕获率多少？该调什么？」 |
 | `oblivion_query` | 关键词 + 共现扩展检索，带来源 | 「库里关于 cordis 注入的记录」 |
 | `oblivion_capture` | 手工沉淀一条问答（走同一套四层筛选） | 把一段读书笔记沉淀成条目 |
 | `oblivion_profile` | 读/改思维档案（`user_override` 优先） | 查当前风格画像 |
 | `oblivion_feedback` | 对某个视角记 👍/👎/⏺（累积 3 条同向才微调） | 标记「risk 维度有用」 |
 | `oblivion_graph_neighbors` | 查某实体的共现邻居（带惰性衰减后的有效权重） | 查 `cordis` 的邻居 |
+
+#### 9.3.1 整理当前对话（`oblivion_digest`）
+
+**分工**：**模型负责读懂并产出结构**（它本来就把整场对话握在上下文里，是天然的摘要器），
+**插件负责落成两样东西** —— 一篇人读的整理笔记 `04_会话整理/<日期>-<标题>.md`，
+以及一条可被 `oblivion_query` 检索、能进共现图的条目。所以这个工具**不把历史重放给插件**，
+也**不走四层筛选**（用户点名要沉淀的内容不该被 L3/L4 拦掉，走 `knowledge.saveStructured()` 直写）。
+
+结构固定成：**章节（heading + body）** / **决策** / **待办** / **未决问题** / **关联知识（`[[…]]` 双链）**
+—— 模型不必猜格式，人也能一眼扫完。触发方式就是在对话里说一句：
+
+> 「整理一下当前对话」「把这次讨论整理成一篇笔记」
 
 ### 9.4 调参（改 config，不写代码）
 

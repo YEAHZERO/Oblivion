@@ -94,6 +94,8 @@ export const DEFAULT_CONFIG: Config = {
     doc: '00_导入文件',
     wiki: '02_Wiki页面',
     content_creator: '03_创作产物',
+    // 用户显式要求的「整理当前对话」产物（`oblivion_digest` 工具）
+    session_digest: '04_会话整理',
   },
 
   /**

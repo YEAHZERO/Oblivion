@@ -4,6 +4,7 @@ import type { FeedbackService } from './feedback/index.js';
 import type { GraphService } from './graph/index.js';
 import type { KnowledgeService } from './knowledge/index.js';
 import type { ProfileService } from './profile/index.js';
+import type { DigestService } from './digest/index.js';
 import type { StatsService } from './stats/index.js';
 import type { Source, UserProfile } from './types.js';
 import { sha1 } from './util/hash.js';
@@ -44,6 +45,8 @@ export interface ToolDeps {
   graph: GraphService;
   /** 观测面（判定留痕 + 统计 + 调参建议）。 */
   stats?: StatsService | null;
+  /** 会话整理（`oblivion_digest`）。 */
+  digest?: DigestService | null;
   /** 陪伴模块的运行计数（触发闸门命中情况）。 */
   perspectiveStats?: () => Record<string, number> | null;
 }
@@ -179,6 +182,70 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
         reinforce_count: row.reinforce_count,
         last_reinforced_at: row.last_reinforced_at,
       })));
+    },
+  }));
+
+  /**
+   * **整理当前对话**（用户显式要求时用）。
+   *
+   * 分工：**模型负责读懂并产出结构**（它本来就把整场对话握在上下文里），
+   * 本工具负责落成两样东西 —— 一篇人读的整理笔记 + 一条可检索的知识条目（并建共现边）。
+   * 所以它**不需要**把历史重放给插件，也**不走四层筛选**（用户点名要沉淀的内容不该被拦）。
+   */
+  ctx.tools.register(defineTool({
+    name: 'oblivion_digest',
+    description:
+      'Organize the current conversation into a structured digest note plus one searchable knowledge item. ' +
+      'Use it when the user asks to tidy up / summarize / organize this conversation. ' +
+      'YOU produce the structure (you already hold the conversation): sections with headings and bodies, ' +
+      'key decisions, todos, open questions, and links to related entries. ' +
+      'The plugin writes <mdRoot>/04_会话整理/<date>-<title>.md, stores one item, and builds co-occurrence edges.',
+    parameters: {
+      title: { type: 'string', required: true, description: 'Digest title, e.g. "DSH 插件开发 · 会话整理".' },
+      topic: { type: 'string', description: 'Topic bucket for the note file and the item topic; derived from the title when omitted.' },
+      sections: {
+        type: 'array',
+        required: true,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            heading: { type: 'string', required: true },
+            body: { type: 'string', required: true },
+          },
+        },
+        description: 'Main body of the digest: 2-6 sections, each a heading plus the distilled content.',
+      },
+      decisions: { type: 'array', items: { type: 'string' }, description: 'Key decisions reached in this conversation.' },
+      todos: { type: 'array', items: { type: 'string' }, description: 'Action items that follow from this conversation.' },
+      open_questions: { type: 'array', items: { type: 'string' }, description: 'Questions left unresolved.' },
+      links: { type: 'array', items: { type: 'string' }, description: 'Related item ids or note names, written as [[...]] wikilinks.' },
+      session_id: { type: 'string', description: 'Optional session id recorded in the note and item sources.' },
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.digest) {
+        return asCanonical({ skipped: true, reason: 'digest service unavailable' });
+      }
+      const result = await deps.digest.save({
+        title: args.title,
+        topic: args.topic,
+        sections: (args.sections ?? []) as Array<{ heading: string; body: string }>,
+        decisions: args.decisions,
+        todos: args.todos,
+        openQuestions: args.open_questions,
+        links: args.links,
+        sessionId: args.session_id,
+      });
+      return asCanonical({
+        id: result.id,
+        title: result.title,
+        topic: result.topic,
+        sections: result.sections,
+        note: result.notePath,
+        item: result.itemId,
+        edges: result.entities,
+      });
     },
   }));
 

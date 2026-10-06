@@ -97,7 +97,7 @@ function fakeCtx() {
 }
 
 describe('装配（apply）', () => {
-  it('注册 6 个模型面工具（含观测面 oblivion_status）', () => {
+  it('注册 7 个模型面工具（含观测面与整理）', () => {
     const { ctx, seen } = fakeCtx();
     // 用系统临时目录：插件装载时会写 status.json / decisions.jsonl，绝不能落在仓库里
     const tmp = mkdtemp(join(tmpdir(), 'oblivion-tools-'));
@@ -105,6 +105,7 @@ describe('装配（apply）', () => {
       mod.apply(ctx, { dataRoot: join(tmp, 'data'), mdRoot: join(tmp, 'kb') });
       assert.deepEqual(seen.tools.sort(), [
         'oblivion_capture',
+        'oblivion_digest',
         'oblivion_feedback',
         'oblivion_graph_neighbors',
         'oblivion_profile',
@@ -160,7 +161,7 @@ describe('装配（apply）', () => {
       mod.apply(ctx, { dataRoot: join(root, 'data'), mdRoot: join(root, '自定义知识库') });
       // 目录创建是非阻塞链路（失败只记日志），给它一点时间
       await new Promise((r) => setTimeout(r, 300));
-      const expected = ['01_问答沉淀', '00_导入文件', '02_Wiki页面', '03_创作产物', '99_其他'];
+      const expected = ['01_问答沉淀', '00_导入文件', '02_Wiki页面', '03_创作产物', '04_会话整理', '99_其他'];
       const missing = expected.filter((dir) => !existsSync(join(root, '自定义知识库', dir)));
       assert.deepEqual(missing, [], '应自动创建全部分类目录，缺：' + missing.join('、'));
       // 消毒：配置里的分类目录不得逃出 mdRoot
@@ -169,5 +170,39 @@ describe('装配（apply）', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('会话整理：composeDigest 的结构与文件名消毒（纯函数）', async () => {
+    const kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+    const at = Date.UTC(2026, 9, 6, 1, 2, 3);
+    const composed = kit.composeDigest(
+      {
+        title: 'DSH 插件开发 / 会话整理',
+        topic: 'DSH 插件',
+        sections: [
+          { heading: '结论', body: '面板已可用。' },
+          { heading: '过程', body: '先定位作用域问题。' },
+        ],
+        decisions: ['走热挂，不迁 bundle 层'],
+        todos: ['重启 App 验证'],
+        openQuestions: ['向量检索要不要接'],
+        links: ['ts-123', '[[已有笔记]]'],
+      },
+      at,
+    );
+    assert.match(composed.markdown, /^# DSH 插件开发 \/ 会话整理/);
+    assert.match(composed.markdown, /## 结论\n\n面板已可用。/);
+    assert.match(composed.markdown, /## 决策\n\n- 走热挂，不迁 bundle 层/);
+    assert.match(composed.markdown, /## 待办\n\n- 重启 App 验证/);
+    assert.match(composed.markdown, /## 未决问题/);
+    assert.match(composed.markdown, /- \[\[ts-123\]\]/);
+    assert.match(composed.markdown, /- \[\[已有笔记\]\]/, '已经带方括号的链接不该重复包一层');
+    assert.match(composed.markdown, /<!-- oblivion:digest id=pending version=1 -->/);
+    assert.equal(composed.sections, 2);
+    assert.equal(composed.topic, 'DSH 插件');
+    assert.ok(composed.fileName.endsWith('-DSH 插件开发 _ 会话整理.md'), '文件名必须消毒路径分隔符，实际 ' + composed.fileName);
+    assert.equal(kit.safeFileName('a/b\\c:d*e?f"g<h>i|j'), 'a_b_c_d_e_f_g_h_i_j');
+    assert.equal(kit.safeFileName('   '), 'untitled');
+    assert.equal(kit.safeFileName('x'.repeat(200)).length, 80);
   });
 });

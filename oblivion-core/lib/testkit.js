@@ -601,7 +601,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join3(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.9",
+    version: "0.1.10",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -1043,6 +1043,130 @@ function registerPerspective(ctx, config, deps) {
   };
 }
 
+// src/digest/index.ts
+import { mkdir as mkdir4, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join5 } from "node:path";
+function safeFileName(input) {
+  const cleaned = (input || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim();
+  return (cleaned || "untitled").slice(0, 80);
+}
+function bulletList(items) {
+  if (!items || items.length === 0) return "";
+  return items.map((item) => "- " + String(item).trim()).join("\n");
+}
+function deriveTopic2(title) {
+  const m = title.match(/[\p{L}\p{N}_-]{2,20}/gu);
+  return m?.[0] ?? "untitled";
+}
+function composeDigest(input, at = now()) {
+  const title = (input.title || "\u672A\u547D\u540D\u6574\u7406").trim();
+  const topic = (input.topic ?? deriveTopic2(title)).trim() || "untitled";
+  const sections = Array.isArray(input.sections) ? input.sections : [];
+  const parts = [];
+  parts.push("# " + title);
+  parts.push("");
+  parts.push(">Date :  " + isoDate(at));
+  parts.push(">Source\uFF1AOblivion \xB7 \u4F1A\u8BDD\u6574\u7406");
+  if (input.sessionId) parts.push(">Session\uFF1A" + input.sessionId);
+  parts.push(">Topic\uFF1A " + topic);
+  parts.push("");
+  for (const section of sections) {
+    const heading = (section.heading || "\u8981\u70B9").trim();
+    parts.push("## " + heading);
+    parts.push("");
+    parts.push(String(section.body ?? "").trim());
+    parts.push("");
+  }
+  const decisions = bulletList(input.decisions);
+  if (decisions) {
+    parts.push("## \u51B3\u7B56");
+    parts.push("");
+    parts.push(decisions);
+    parts.push("");
+  }
+  const todos = bulletList(input.todos);
+  if (todos) {
+    parts.push("## \u5F85\u529E");
+    parts.push("");
+    parts.push(todos);
+    parts.push("");
+  }
+  const open = bulletList(input.openQuestions);
+  if (open) {
+    parts.push("## \u672A\u51B3\u95EE\u9898");
+    parts.push("");
+    parts.push(open);
+    parts.push("");
+  }
+  const links = (input.links ?? []).filter((l) => String(l).trim() !== "");
+  if (links.length) {
+    parts.push("## \u5173\u8054\u77E5\u8BC6");
+    parts.push("");
+    parts.push(links.map((link) => "- [[" + String(link).trim().replace(/^\[\[|\]\]$/g, "") + "]]").join("\n"));
+    parts.push("");
+  }
+  parts.push("<!-- oblivion:digest id=pending version=1 -->");
+  parts.push("");
+  return {
+    markdown: parts.join("\n"),
+    fileName: isoDate(at) + "-" + safeFileName(title) + ".md",
+    title,
+    topic,
+    sections: sections.length
+  };
+}
+function registerDigest(ctx, config, deps) {
+  const mdRoot = expandHome(config.mdRoot);
+  const classDir = safeDirName(config.mdClassify?.session_digest ?? "04_\u4F1A\u8BDD\u6574\u7406") || "04_\u4F1A\u8BDD\u6574\u7406";
+  async function save(input) {
+    const at = now();
+    const composed = composeDigest(input, at);
+    const ref = (input.sessionId ?? "local") + "#digest-" + isoDate(at);
+    const sources = [{ type: "session", ref, hash: shortHash(ref) }];
+    const item = await deps.knowledge.saveStructured({
+      title: composed.title,
+      topic: composed.topic,
+      content: composed.markdown,
+      tags: ["\u4F1A\u8BDD\u6574\u7406", ...input.todos?.length ? ["\u5F85\u529E"] : [], ...input.decisions?.length ? ["\u51B3\u7B56"] : []],
+      sources
+    });
+    const markdown = composed.markdown.replace("id=pending", "id=" + item.id);
+    const dir = join5(mdRoot, classDir);
+    await mkdir4(dir, { recursive: true });
+    const notePath = join5(dir, composed.fileName);
+    const existing = await readFile4(notePath, "utf8").catch(() => "");
+    if (existing.includes("oblivion:digest id=" + item.id)) {
+      await writeFile4(notePath, existing.trimEnd() + "\n\n---\n\n" + markdown, "utf8");
+    } else {
+      await writeFile4(notePath, markdown, "utf8");
+    }
+    const qa = {
+      question: composed.title,
+      answer: markdown,
+      sources,
+      sessionId: input.sessionId ?? "local",
+      turn: 0,
+      capturedAt: at
+    };
+    let entities = 0;
+    try {
+      entities = await deps.graph.recordCooccurrence(qa);
+    } catch (error) {
+      ctx.logger?.warn?.(config.logPrefix + " \u6574\u7406\u5EFA\u8FB9\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u843D\u76D8\uFF09\uFF1A%o", error);
+    }
+    return {
+      ...composed,
+      id: item.id,
+      itemId: item.id,
+      notePath,
+      entities: typeof entities === "number" ? entities : 0
+    };
+  }
+  ctx.effect(() => () => {
+  }, "oblivion-core: digest teardown");
+  return { compose: composeDigest, save };
+}
+
 // src/stats/summary.ts
 function ratio(part, whole) {
   return whole <= 0 ? 0 : Math.round(part / whole * 1e3) / 1e3;
@@ -1173,14 +1297,14 @@ function suggest(summary, config, extra = {}) {
 }
 
 // src/stats/trace.ts
-import { appendFile as appendFile2, mkdir as mkdir4, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname3, join as join5 } from "node:path";
+import { appendFile as appendFile2, mkdir as mkdir5, readFile as readFile5, writeFile as writeFile5 } from "node:fs/promises";
+import { dirname as dirname3, join as join6 } from "node:path";
 function createTraceStore(dataRoot, options) {
-  const path = join5(dataRoot, "decisions.jsonl");
+  const path = join6(dataRoot, "decisions.jsonl");
   const MS_PER_DAY3 = 864e5;
   async function readRaw() {
     try {
-      const raw = await readFile4(path, "utf8");
+      const raw = await readFile5(path, "utf8");
       const out = [];
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
@@ -1199,7 +1323,7 @@ function createTraceStore(dataRoot, options) {
     path,
     async record(entry) {
       try {
-        await mkdir4(dirname3(path), { recursive: true });
+        await mkdir5(dirname3(path), { recursive: true });
         await appendFile2(path, JSON.stringify(entry) + "\n", "utf8");
       } catch (error) {
         options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u5199\u5165\u5931\u8D25\uFF1A%o", error);
@@ -1212,7 +1336,7 @@ function createTraceStore(dataRoot, options) {
       const kept = fresh.length > options.maxEntries ? fresh.slice(fresh.length - options.maxEntries) : fresh;
       if (kept.length !== all.length) {
         try {
-          await writeFile4(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
+          await writeFile5(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
         } catch (error) {
           options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u88C1\u526A\u843D\u76D8\u5931\u8D25\uFF1A%o", error);
         }
@@ -1223,8 +1347,8 @@ function createTraceStore(dataRoot, options) {
 }
 
 // src/stats/index.ts
-import { writeFile as writeFile5, mkdir as mkdir5 } from "node:fs/promises";
-import { dirname as dirname4, join as join6 } from "node:path";
+import { writeFile as writeFile6, mkdir as mkdir6 } from "node:fs/promises";
+import { dirname as dirname4, join as join7 } from "node:path";
 function registerStats(ctx, config, meta) {
   const dataRoot = expandHome(config.dataRoot);
   const trace = createTraceStore(dataRoot, {
@@ -1265,8 +1389,8 @@ function registerStats(ctx, config, meta) {
     },
     async writeBootSnapshot(extra) {
       try {
-        const path = join6(dataRoot, "status.json");
-        await mkdir5(dirname4(path), { recursive: true });
+        const path = join7(dataRoot, "status.json");
+        await mkdir6(dirname4(path), { recursive: true });
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -1279,7 +1403,7 @@ function registerStats(ctx, config, meta) {
           tracePath: trace.path,
           ...extra
         };
-        await writeFile5(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        await writeFile6(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
         return;
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + " status.json \u5199\u5165\u5931\u8D25\uFF1A%o", error);
@@ -1304,7 +1428,9 @@ var DEFAULT_CONFIG = {
     // 设计书 §25.3 的其余分类（后续文档导入/创作能力落地后直接生效）
     doc: "00_\u5BFC\u5165\u6587\u4EF6",
     wiki: "02_Wiki\u9875\u9762",
-    content_creator: "03_\u521B\u4F5C\u4EA7\u7269"
+    content_creator: "03_\u521B\u4F5C\u4EA7\u7269",
+    // 用户显式要求的「整理当前对话」产物（`oblivion_digest` 工具）
+    session_digest: "04_\u4F1A\u8BDD\u6574\u7406"
   },
   /**
    * 价值阈值 —— **已按实测重标定，不要改回设计书原值 0.5**。
@@ -1378,6 +1504,7 @@ export {
   checkL3Rules,
   classifyDir,
   compareByOverlap,
+  composeDigest,
   createTraceStore,
   defaultProfile,
   deriveTitle,
@@ -1400,6 +1527,7 @@ export {
   mergeProfile,
   newId,
   normalizeForHash,
+  registerDigest,
   registerFeedback,
   registerPerspective,
   registerQaLoop,
@@ -1407,6 +1535,7 @@ export {
   reinforce,
   resolveConfig,
   safeDirName,
+  safeFileName,
   sha1,
   shortHash,
   suggest,
