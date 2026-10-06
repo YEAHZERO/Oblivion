@@ -124,12 +124,18 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
    * 目的只有一个：判断 `turn/end` 到底有没有到我们这里。
    */
   const probePath = join(expandHome(config.dataRoot), 'events-probe.jsonl');
-  async function probe(subject: SessionLike | undefined, event: TurnEventLike | undefined, sessionId: string): Promise<void> {
+  async function probe(
+    subject: SessionLike | undefined,
+    event: TurnEventLike | undefined,
+    sessionId: string,
+    origin: string,
+  ): Promise<void> {
     if (!config.enableEventProbe) return;
     try {
       const data = event?.data as Record<string, unknown> | undefined;
       const line = JSON.stringify({
         at: Date.now(),
+        origin,
         type: event?.type ?? null,
         seq: typeof event?.seq === 'number' ? event.seq : null,
         sessionIdOk: sessionId !== '',
@@ -250,10 +256,15 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
     }
   }
 
-  ctx.on('session/event', (subject: SessionLike, event: TurnEventLike) => {
+  /**
+   * 事件处理体。**同时挂在根上下文与每个 agent 上下文上**（见下面的订阅段）。
+   *
+   * @param origin - 哪条订阅收到的（探针用；`root` 或 `agent:<id>`）。
+   */
+  function onSessionEvent(subject: SessionLike, event: TurnEventLike, origin: string): void {
     const sessionId = subject && typeof subject.id === 'string' ? subject.id : '';
     // 临时事件探针：**在守卫之前**记，才能区分「事件没到」与「到了但被我们丢掉」。
-    void probe(subject, event, sessionId);
+    void probe(subject, event, sessionId, origin);
     if (!sessionId || !event || typeof event.type !== 'string') return;
 
     if (event.type === 'turn/start') {
@@ -291,11 +302,72 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
       const buffer = bufferOf(sessionId);
       if (buffer.events.length < MAX_EVENTS_PER_TURN) buffer.events.push(event);
     }
+  }
+
+  /**
+   * ## 为什么要在 agent 上下文里再订阅一次（2026-10-06 实测）
+   *
+   * `session/event` 是**作用域过滤派发**（`packages/core/session/src/index.ts:70`）：
+   *   > Scope-filtered dispatch（`@deepseek-ai/dsh-scope`）：agent-scoped listeners receive only
+   *   > events from sessions entered through that agent's context.
+   *
+   * 结果：挂在**根上下文**上的订阅收不到任何会话事件 —— 症状是「插件装载正常、路由 200，
+   * 但 `decisions.jsonl` 永远是空的」。官方同类插件的写法是**先听 `agent/created`，
+   * 再在 `agent.ctx` 里订阅**（`context/file-reference-local/src/index.ts:92`），
+   * 因为 `Agent` 暴露 `ctx`（`core/agent/src/runtime-types.ts:174`）且它就在该 agent 的作用域里。
+   *
+   * 两条订阅都保留：根订阅是兜底（万一作用域规则变了），agent 订阅是**真正生效的那条**；
+   * 探针里的 `origin` 字段会把「到底是谁收到了」写下来，便于以后一眼看清。
+   */
+  const agentDisposers = new Map<unknown, () => void>();
+
+  /** 给一个 agent 的作用域挂订阅（已挂过就跳过）。 */
+  function attachAgent(agent: { ctx?: AppContext } | undefined): void {
+    const agentCtx = agent?.ctx;
+    if (!agent || !agentCtx || typeof agentCtx.on !== 'function') return;
+    if (agentDisposers.has(agent)) return;
+    try {
+      const dispose = agentCtx.on('session/event', (...inner: never[]) => {
+        onSessionEvent(inner[0] as SessionLike, inner[1] as TurnEventLike, 'agent');
+      });
+      agentDisposers.set(agent, typeof dispose === 'function' ? (dispose as () => void) : () => undefined);
+    } catch (error) {
+      ctx.logger?.warn?.(config.logPrefix + ' agent 作用域订阅失败：%o', error);
+    }
+  }
+
+  // ① 以后新建的 agent：听 `agent/created`（官方 `file-reference-local` 的写法）。
+  ctx.on('agent/created', (...args: never[]) => {
+    attachAgent((args[0] as { agent?: { ctx?: AppContext } } | undefined)?.agent);
+  });
+
+  // ② **已经**在跑的 agent：装载时补挂一次。
+  //    这一条是实测补上的 —— profile 补丁热重挂时，当前会话的 agent 早已创建，
+  //    只听 `agent/created` 会漏掉它，症状是「改完代码重挂后依然一个事件都收不到」。
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['agents'], (scope: unknown) => {
+      const registry = (scope as { agents?: { list?: () => Array<{ ctx?: AppContext }> } }).agents;
+      const live = registry?.list?.() ?? [];
+      for (const agent of live) attachAgent(agent);
+      ctx.logger?.info?.(config.logPrefix + ' 已给 %d 个在跑的 agent 挂上会话事件订阅', live.length);
+    });
+  }
+
+  ctx.on('session/event', (...args: never[]) => {
+    onSessionEvent(args[0] as SessionLike, args[1] as TurnEventLike, 'root');
   });
 
   // 卸载即清所有内存状态：不留常驻集合，也不需要 timer。
   ctx.effect(() => () => {
     processed.clear();
     buffers.clear();
+    for (const dispose of agentDisposers.values()) {
+      try {
+        dispose();
+      } catch {
+        // 上下文可能已随 agent 一起销毁
+      }
+    }
+    agentDisposers.clear();
   }, 'oblivion-core: qa-loop teardown');
 }

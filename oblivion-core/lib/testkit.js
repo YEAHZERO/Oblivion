@@ -464,12 +464,13 @@ function registerQaLoop(ctx, config, deps) {
     return typeof data?.turn === "number" ? data.turn : fallback;
   }
   const probePath = join3(expandHome(config.dataRoot), "events-probe.jsonl");
-  async function probe(subject, event, sessionId) {
+  async function probe(subject, event, sessionId, origin) {
     if (!config.enableEventProbe) return;
     try {
       const data = event?.data;
       const line = JSON.stringify({
         at: Date.now(),
+        origin,
         type: event?.type ?? null,
         seq: typeof event?.seq === "number" ? event.seq : null,
         sessionIdOk: sessionId !== "",
@@ -563,9 +564,9 @@ function registerQaLoop(ctx, config, deps) {
       });
     }
   }
-  ctx.on("session/event", (subject, event) => {
+  function onSessionEvent(subject, event, origin) {
     const sessionId = subject && typeof subject.id === "string" ? subject.id : "";
-    void probe(subject, event, sessionId);
+    void probe(subject, event, sessionId, origin);
     if (!sessionId || !event || typeof event.type !== "string") return;
     if (event.type === "turn/start") {
       const buffer = bufferOf(sessionId);
@@ -597,10 +598,45 @@ function registerQaLoop(ctx, config, deps) {
       const buffer = bufferOf(sessionId);
       if (buffer.events.length < MAX_EVENTS_PER_TURN) buffer.events.push(event);
     }
+  }
+  const agentDisposers = /* @__PURE__ */ new Map();
+  function attachAgent(agent) {
+    const agentCtx = agent?.ctx;
+    if (!agent || !agentCtx || typeof agentCtx.on !== "function") return;
+    if (agentDisposers.has(agent)) return;
+    try {
+      const dispose = agentCtx.on("session/event", (...inner) => {
+        onSessionEvent(inner[0], inner[1], "agent");
+      });
+      agentDisposers.set(agent, typeof dispose === "function" ? dispose : () => void 0);
+    } catch (error) {
+      ctx.logger?.warn?.(config.logPrefix + " agent \u4F5C\u7528\u57DF\u8BA2\u9605\u5931\u8D25\uFF1A%o", error);
+    }
+  }
+  ctx.on("agent/created", (...args) => {
+    attachAgent(args[0]?.agent);
+  });
+  if (typeof ctx.inject === "function") {
+    ctx.inject(["agents"], (scope) => {
+      const registry = scope.agents;
+      const live = registry?.list?.() ?? [];
+      for (const agent of live) attachAgent(agent);
+      ctx.logger?.info?.(config.logPrefix + " \u5DF2\u7ED9 %d \u4E2A\u5728\u8DD1\u7684 agent \u6302\u4E0A\u4F1A\u8BDD\u4E8B\u4EF6\u8BA2\u9605", live.length);
+    });
+  }
+  ctx.on("session/event", (...args) => {
+    onSessionEvent(args[0], args[1], "root");
   });
   ctx.effect(() => () => {
     processed.clear();
     buffers.clear();
+    for (const dispose of agentDisposers.values()) {
+      try {
+        dispose();
+      } catch {
+      }
+    }
+    agentDisposers.clear();
   }, "oblivion-core: qa-loop teardown");
 }
 

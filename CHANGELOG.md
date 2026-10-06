@@ -15,6 +15,37 @@
 
 ---
 
+## [未发布] — `@oblivion/core` v0.1.7 / v0.1.8：**结案「问答没被捕获」—— `session/event` 是作用域过滤派发**
+
+### 根因（逐字取证）
+
+`packages/core/session/src/index.ts:70`：
+
+> Scope-filtered dispatch（`@deepseek-ai/dsh-scope`）：**agent-scoped listeners receive only events
+> from sessions entered through that agent's context.**
+
+`session/event`（含 `session/created`、`agent/*`）**只派发给在该 agent 作用域内的监听者**。
+我们把订阅挂在 **profile 根上下文**上 —— 事件名、写法、时机全对，但**根上下文不在 agent 作用域里**，
+所以**一个事件都收不到**。这解释了全部症状：插件装载正常、`status.json` 每次 apply 都写、只读路由 200，
+而 `stats.turns` 恒为 0、`decisions.jsonl` 从未生成。
+
+排除的旁支：① 没装载；② 订阅写法错（官方 14 处同写法）；③ 写盘失败；④ 会话在别的进程
+（进程取证：Host PID 27188 同时监听 19387 / 写 `host-mount.json` / 跑会话，只有一个 Host）。
+
+### 修法
+
+- **v0.1.7**：先听 `agent/created`，再在 **`agent.ctx`** 里订阅 `session/event`
+  （官方 `context/file-reference-local/src/index.ts:92` 的写法；`Agent.ctx` 见 `core/agent/src/runtime-types.ts:174`）
+- **v0.1.8**：**装载时也给「已在运行」的 agent 补挂一次**（`ctx.inject(['agents'], ctx => ctx.agents.list().forEach(attach))`）
+  —— 热重挂时当前会话的 agent 早已创建，只听 `agent/created` 会漏掉它
+- 探针保留并增强：每条记录带 `origin`（`root` / `agent`），一眼看出哪条订阅收到；链路稳定后关掉 `enableEventProbe`
+
+### 验证
+
+`typecheck` ✅ / `test` 13/13 ✅ / `selfcheck` 25/25 ✅ / 热重挂实测：构建后 **4 秒** `status.json` 变为 `0.1.8`
+
+---
+
 ## [未发布] — 新增 `@oblivion/panel` v0.0.1（认知面板）+ `@oblivion/core` v0.1.6（事件探针）
 
 ### 新增插件：`@oblivion/panel`（client 双半，热挂）

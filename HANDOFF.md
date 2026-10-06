@@ -172,29 +172,37 @@ Windows 没有支持该参数的 `ps`，`lsof` 也不存在 → `discoverWebHost
 **仍然正确的部分**：`dsh.bundle`（bundle 层）的插件改一次要重启；浏览器半边的改动要**硬刷新页面**
 （`Ctrl+Shift+R`），或再动一次 profile 补丁触发图重算。
 
-### 5.5 ⚠️ 未结案：`turn/end` 到底有没有到我们手里（2026-10-06）
+### 5.5 ✅ 已结案：`turn/end` 收不到 —— **`session/event` 是作用域过滤派发**（2026-10-06）
 
-**现象**：`oblivion-core` v0.1.5 自 08:53:05 装载后，`status.json` 的 `stats.turns` 一直是 0，
-`decisions.jsonl` 从未生成 —— 而这期间**至少有两轮问答走完了 `turn/end`**（我自己的两条回复）。
-`eventsSnapshot` 那条老根因已修，所以这不是同一个问题。
+**现象**：`oblivion-core` 装载正常（`status.json` 跟着构建时间刷新、只读路由 200），但 `stats.turns` 恒为 0、
+`decisions.jsonl` 从未生成；v0.1.6 的探针（守卫**之前**记录每个事件）连续几天**一行都没有**。
 
-**已排除**：① 插件没装载（`status.json` 每次 `apply()` 都写，且路由 200）；② 订阅姿势写错
-（官方 `context/agent-instructions`、`acp` 等 14 处 Host 侧代码用的都是 `ctx.on('session/event', (session, event) => …)`，与我们逐字一致）；
-③ `stats.record` 写盘失败（`status.json` 能写）。
+**根因**（逐字取证：`packages/core/session/src/index.ts:70`）：
 
-**已加的一次性诊断（v0.1.6）**：`enableEventProbe: true` → `<dataRoot>/events-probe.jsonl`，
-**守卫之前**记录每个事件（`type` / `seq` / `sessionIdOk` / `subjectKeys` / `dataKeys`，不含正文）。
+> Scope-filtered dispatch（`@deepseek-ai/dsh-scope`）：**agent-scoped listeners receive only events
+> from sessions entered through that agent's context.**
 
-**判读表**：
+即：`session/event`（以及 `session/created`、`agent/*` 这一批）**只派发给「在该 agent 作用域内」的监听者**。
+我们原来把订阅挂在 **profile 根上下文**上 —— 语法、事件名、订阅姿势全对（官方 14 处同样的写法），
+但**根上下文不在任何 agent 的作用域里，所以一个事件都收不到**。这就是「路由 200 + 零事件」的全部原因。
 
-| 探针结果 | 结论 | 下一步 |
-| --- | --- | --- |
-| 一行都没有 | `session/event` 根本没到本插件 | 查 `ctx.inject(['session'], …)` 是否是必要前置；或改用 session 服务上的订阅 |
-| 有事件但无 `turn/end` | 事件名/时机不对 | 打印全部事件类型分布，找真正的一轮结束信号 |
-| 有 `turn/end`，`sessionIdOk: false` | **是我们自己的守卫丢了事件**（`subject.id` 不是字符串） | 放宽守卫：用 `subject?.id ?? subject?.sessionId ?? '(unknown)'` |
-| 有 `turn/end` 且 `sessionIdOk: true` | 事件到了却没留痕 → `handle()` 内部异常 | 给 `handle` 包一层同样的探针 |
+**已排除的旁支**：① 插件没装载；② 订阅写法错；③ 写盘失败；④ 会话跑在另一个进程
+（进程取证：Host PID **27188** 同时监听 19387、写 `host-mount.json`、跑会话，只有一个 Host）。
 
-验证通过后把 `enableEventProbe` 设回 `false`。
+**修法（v0.1.7 / v0.1.8）**：先听 `agent/created`，再在 **`agent.ctx`** 里订阅 ——
+官方 `context/file-reference-local/src/index.ts:92` 就是这么写的，`Agent` 也暴露 `ctx`（`core/agent/src/runtime-types.ts:174`）：
+
+```ts
+ctx.on('agent/created', ({ agent }) => attachAgent(agent));   // 以后新建的
+ctx.inject(['agents'], (ctx) => ctx.agents.list().forEach(attachAgent));  // ★ 已在跑的（热重挂时必需）
+// attachAgent: agent.ctx.on('session/event', handler)
+```
+
+★ 那一条是**实测补上的**：profile 补丁热重挂时当前会话的 agent 早就创建了，只听 `agent/created` 会漏掉它。
+
+**探针保留 + 增强**：`events-probe.jsonl` 每条带 `origin`（`root` / `agent`），一眼看出是哪条订阅收到的。
+判读：**只有 `agent` 行、没有 `root` 行 = 作用域规则如文档所述**；两边都有 = 规则放宽了。
+链路稳定后把 `enableEventProbe` 设回 `false`。
 
 ### 6. `pnpm install` 会联网，可能很慢
 
