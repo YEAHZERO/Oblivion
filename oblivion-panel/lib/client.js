@@ -373,6 +373,7 @@ function OblivionPanel(props) {
 
 // src/client/polaris.ts
 var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
+var POLARIS_ICON_COLOR = "#4176e6";
 var POLARIS_ICON_PATH = "M512 132L579 350.3L780.7 243.3L673.7 445L892 512L673.7 579L780.7 780.7L579 673.7L512 892L445 673.7L243.3 780.7L350.3 579L132 512L350.3 445L243.3 243.3L445 350.3Z";
 
 // src/client/leftbar.tsx
@@ -384,7 +385,7 @@ function PolarisGlyph({ size = 16 }) {
       width: size,
       height: size,
       viewBox: "0 0 " + POLARIS_VIEWBOX.width + " " + POLARIS_VIEWBOX.height,
-      fill: "currentColor",
+      fill: POLARIS_ICON_COLOR,
       "aria-hidden": true,
       style: { display: "block", flex: "0 0 auto" },
       children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: POLARIS_ICON_PATH })

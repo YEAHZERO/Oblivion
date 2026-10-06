@@ -10,13 +10,13 @@
  */
 
 import type { JSX } from 'react';
-import { POLARIS_ICON_PATH, POLARIS_VIEWBOX } from './polaris.js';
+import { POLARIS_ICON_COLOR, POLARIS_ICON_PATH, POLARIS_VIEWBOX } from './polaris.js';
 
 /**
- * 北极星图标（**图标字重** + `currentColor`）。
+ * 北极星图标（**图标字重** + 指定蓝 `#4176e6`）。
  *
- * 与宿主图标集同风格的三条：① 粗实心（内/外半径比 0.46）② 单色 ③ **跟随 `currentColor`** ——
- * 于是它在左栏与 tab 卡片里和橙文件夹/绿定位/蓝终端是"一套"，而不是一颗发虚的渐变星。
+ * 与宿主图标集同风格的三条：① 粗实心（内/外半径比 0.46）② 单色 ③ **颜色 = `#4176e6`**
+ * （所有者指定，与那套图标里的蓝一致）—— 左栏与 tab 卡片因此和地球/侧边对话那几颗**同色同形**。
  */
 export function PolarisGlyph({ size = 16 }: { size?: number }): JSX.Element {
   return (
@@ -24,7 +24,7 @@ export function PolarisGlyph({ size = 16 }: { size?: number }): JSX.Element {
       width={size}
       height={size}
       viewBox={'0 0 ' + POLARIS_VIEWBOX.width + ' ' + POLARIS_VIEWBOX.height}
-      fill="currentColor"
+      fill={POLARIS_ICON_COLOR}
       aria-hidden
       style={{ display: 'block', flex: '0 0 auto' }}
     >
