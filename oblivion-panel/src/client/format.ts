@@ -116,15 +116,17 @@ export function reasonLabel(reason: unknown): string {
   return map[text] ?? text;
 }
 
-/** 主拦截原因（`byReason` 里计数最大的那个）。 */
-export function topReason(core: unknown): { reason: string; count: number } | null {
-  if (!core || typeof core !== 'object') return null;
-  const stats = (core as { stats?: unknown }).stats;
-  if (!stats || typeof stats !== 'object') return null;
-  const byReason = (stats as { byReason?: unknown }).byReason;
+/**
+ * 主要**拦截**原因：`byReason` 里**排除掉 `captured`** 之后计数最大的那个。
+ *
+ * 为什么排除 `captured`：`captured` 是「通过」而不是拦截。实测里全通过的那几轮，
+ * 早先的 `topReason()` 会把「主要拦截原因：captured（2 次）」摆出来（用户截图实证）。
+ * 一个拦截原因都没有时返回 null，由调用方显示「全部通过，无拦截」——用户 2026-10-06 裁定。
+ */
+export function topBlocker(byReason: unknown): { reason: string; count: number } | null {
   if (!byReason || typeof byReason !== 'object') return null;
   const entries = Object.entries(byReason as Record<string, unknown>)
-    .filter(([, count]) => typeof count === 'number')
+    .filter(([reason, count]) => reason !== 'captured' && typeof count === 'number' && count > 0)
     .sort((a, b) => Number(b[1]) - Number(a[1]));
   if (entries.length === 0) return null;
   return { reason: entries[0][0], count: Number(entries[0][1]) };

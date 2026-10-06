@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { RestartControl } from './RestartControl.js';
+import type { DecisionStats } from '../snapshot.js';
 import {
   actionLabel,
   hintLine,
@@ -23,7 +24,7 @@ import {
   relativeTime,
   scoreText,
   statNumber,
-  topReason,
+  topBlocker,
   type HintLike,
 } from './format.js';
 
@@ -37,6 +38,8 @@ interface PanelData {
   dataRoot?: string;
   mdRoot?: string;
   core?: { version?: string; generatedAt?: number; hints?: HintLike[]; stats?: Record<string, unknown> } | null;
+  /** Node 半边由留痕现算的统计（0.0.8 起）；老 host 不发时回落 `core.stats`。 */
+  live?: DecisionStats;
   trace?: { path?: string; recent?: Array<Record<string, unknown>> };
   items?: Array<{ id?: string; topic?: string; title?: string; created_at?: number; status?: string }>;
   notes?: Array<{ name?: string; path?: string; mtimeMs?: number; bytes?: number }>;
@@ -121,7 +124,8 @@ function emptyReason(data: PanelData): string {
   if (!data.core) {
     return '读不到 @oblivion/core 的 status.json —— 检查 core 是否装载（它的只读快照在每次装载时刷新）。';
   }
-  const turns = statNumber(data.core, 'turns');
+  // 轮数优先看**现算**的留痕统计（status.json 只记到装载那一刻）。
+  const turns = data.live ? data.live.turns : statNumber(data.core, 'turns');
   if (!turns) {
     return 'core 已装载（v' + String(data.core.version ?? '?') + '），但还没有走完的 turn/end —— 正常问一轮再看。';
   }
@@ -164,10 +168,15 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
     const data = state.data;
     const core = data.core ?? null;
     const hints = core?.hints ?? [];
-    const turns = statNumber(core, 'turns');
-    const evaluated = statNumber(core, 'evaluated');
-    const captureRate = (core?.stats ?? {}).captureRate;
-    const top = topReason(core);
+    // 顶部统计用**现算**的 live（读 decisions.jsonl），不是 core 装载时的 status.json ——
+    // 后者会停在重启那一刻（实测顶部「已沉淀 2」而下面列表有 4 条）。老 host 没有 live 时回落。
+    const live = data.live ?? null;
+    const turns = live ? live.turns : statNumber(core, 'turns');
+    const evaluated = live ? live.evaluated : statNumber(core, 'evaluated');
+    const captured = live ? live.captured : statNumber(core, 'captured');
+    const captureRate = live ? live.captureRate : (core?.stats ?? {}).captureRate;
+    // 有现算统计就用它；没有（老 host）才回落 core 装载快照里的 byReason。
+    const blocker = topBlocker(live ? live.byReason : (core?.stats ?? {}).byReason);
     const recent = data.trace?.recent ?? [];
     const items = data.items ?? [];
     const notes = data.notes ?? [];
@@ -192,21 +201,42 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
           {kpi('捕获率', percent(captureRate))}
           {kpi('判定轮数', String(turns ?? '—'))}
           {kpi('已评估', String(evaluated ?? '—'))}
-          {kpi('已沉淀', String(statNumber(core, 'captured') ?? '—'))}
+          {kpi('已沉淀', String(captured ?? '—'))}
+        </div>
+
+        <div style={{ ...S.dim, marginTop: 2 }}>
+          {live
+            ? '统计实时读自 ' +
+              live.parsed +
+              ' 行留痕（保留期 ' +
+              live.windowDays +
+              ' 天' +
+              (live.dropped > 0 ? '，按保留期/上限丢弃 ' + live.dropped + ' 行' : '') +
+              '）'
+            : '统计来自 core 装载时的 status.json 快照（需要面板 host ≥ 0.0.8 才是实时的）'}
         </div>
 
         {!core || !turns ? (
           <div style={{ ...S.card, marginTop: 10 }}>{emptyReason(data)}</div>
         ) : null}
 
-        {top ? (
-          <div style={{ ...S.dim, marginTop: 4 }}>
-            主要拦截原因：{top.reason}（{top.count} 次）
-          </div>
-        ) : null}
+        <div style={{ ...S.dim, marginTop: 4 }}>
+          {blocker
+            ? '主要拦截原因：' + reasonLabel(blocker.reason) + '（' + blocker.count + ' 次）'
+            : (turns ?? 0) > 0
+              ? '全部通过，无拦截'
+              : '还没有判定记录'}
+        </div>
 
         <div style={S.h}>
-          调参建议 {hints.length === 0 ? <span style={S.dim}>（暂无：样本不足时 core 刻意不开口）</span> : null}
+          调参建议{' '}
+          {hints.length === 0 ? (
+            <span style={S.dim}>
+              （暂无：core 在装载时按已评估 {evaluated ?? 0} 轮算，样本不足 20 轮刻意不开口）
+            </span>
+          ) : (
+            <span style={S.dim}>（core 在装载时算，不是实时的）</span>
+          )}
         </div>
         {hints.map((hint, index) => (
           <div key={String(hint.key ?? index)} style={S.card}>

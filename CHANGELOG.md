@@ -12,7 +12,41 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/panel` v0.0.7 + `@oblivion/core` v0.1.19：左栏入口点不动、链路真正连通、笔记可点开
+## [未发布] — `@oblivion/core` v0.1.20 + `@oblivion/panel` v0.0.8：顶部统计改现算、写盘一律原子、版本号只留一处
+
+### `@oblivion/panel` v0.0.8 —— 顶部统计不再「冻结在重启那一刻」
+
+- **症状**：顶部四个 KPI（捕获率 / 判定轮数 / 已评估 / 已沉淀）与「主要拦截原因」来自 core 的
+  `status.json`，而它**只在 core 装载那一刻写一次**（`writeBootSnapshot`）⇒ 实测同一屏上顶部写
+  「已沉淀 2」、下面「最近沉淀 (4)」，顶部写「判定轮数 2」、下面留痕 5 行。
+- **改法**（不动 core，按所有者裁定）：面板自己读 `<dataRoot>/decisions.jsonl` **现算** —— 新增
+  `summarizeDecisions(rows, extra)` 逐行**镜像** core `src/stats/summary.ts:40` 的 `summarize()` 口径
+  （`no-qa` 不计入分母、`captured` = `pass`、`score` 只收数字、`captureRate` 三位小数取整、`percentile`
+  同公式），并做与 `stats/trace.ts` 的 `read()` **相同**的保留期（`statsRetentionDays = 90`）与条数上限
+  （`statsMaxEntries = 5000`）过滤；**只读，绝不重写 core 的文件**，裁掉多少条如实报 `dropped`。
+- **「主要拦截原因」名不副实**：`topReason()` 取 `byReason` 计数最大者，通过时 `captured` 计数最大
+  ⇒ 把「通过」显示成「主要拦截原因」。改为 `topBlocker()`：**排除 `captured`**，一条拦截都没有就显示
+  「全部通过，无拦截」。
+- 调参建议仍显示 core 装载时算的那份，并在标题里注明「样本不足 20 轮时 core 刻意不开口」。
+- 自检 12 项（新增「留痕现算统计与 core 同口径」），`node --test` 14/14。
+
+### `@oblivion/core` v0.1.20 —— 写盘一律原子、版本号只留一处真源
+
+- **原子写成为默认**：`src/util/fs.ts` 新增 `writeFile`（与 `node:fs/promises.writeFile` **同名同签名**，
+  内部走 `writeTextAtomic`：写临时文件 → 同目录 rename）。此前只有 `status.json` 接了原子写，
+  其余 8 处仍是裸 `writeFile`（feedback / profile / graph / store / 笔记 / 索引页 / 整理件 / 冲突页、
+  `decisions.jsonl` 的惰性裁剪、`mount-diag.json`）—— 它们全是「另一个进程随时会读」的文件。
+  现在这些文件一律从 `'../util/fs.js'` 取 `writeFile`（8 个文件各改一行 import，**调用点一行没动**）。
+  追加（`appendFile`，留痕每条一行的小写入）**刻意不原子**，理由写在 `stats/trace.ts` 的 `record` 注释里。
+- **诊断不再整体丢失**：`mount-diag.json` 的 `routing` 一直是 `null` —— 整个 `describeScopeRouting()` 被
+  外层 `safeRead` 包住时，里面**任何一处**抛错都会让整块取证变成 `null`。现在每处可疑读取各自
+  `attempt()`（Cordis 的 `Fiber`/`Context` 是 Proxy：读未声明属性、`Object.getPrototypeOf`、
+  取 `fiber.parent` 都可能抛错），**看到多少算多少**。
+- **版本号第二来源清除**：`oblivion-core/lib/VERSION` 与 `oblivion-panel/lib/VERSION` 被 git 跟踪、
+  由构建脚本写出 ⇒ 与 `VERSION` / `package.json` 组成三个来源。两个文件删除、两个构建脚本的写入删掉，
+  `tools/check-workspace.ps1` 新增 `Assert-NoLibVersion`：**产物里再出现 `oblivion-*/lib/VERSION` 就直接失败**。
+
+### `@oblivion/panel` v0.0.7 + `@oblivion/core` v0.1.19：左栏入口点不动、链路真正连通、笔记可点开
 
 ### `@oblivion/panel` v0.0.7 —— 笔记可点开、版本号不再漂、判定行说人话
 

@@ -1,4 +1,5 @@
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { writeFile } from '../util/fs.js';
 import { dirname, join } from 'node:path';
 import type { AppContext } from '../core-types.js';
 import type { Config } from '../config.js';
@@ -442,35 +443,47 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
    * ③ 同一进程里的 **loader 条目名**（确认"拥有 agent 的应用"与"我们所在的应用"是不是同一个）。
    */
   function describeScopeRouting(self: AppContext, root: AppContext): Record<string, unknown> {
+    /**
+     * 每一处可疑读取**各自** try/catch —— 不能靠外层 `safeRead`。
+     *
+     * 实测（`0.1.19` 重启后 `mount-diag.json` 的 `routing` 是 `null`）：整个函数被 `safeRead`
+     * 包住时，里面**任何一处**抛错都会让 `routing` 整体变成 `null`，有用字段一起丢光。
+     * 而 Cordis 的 `Fiber`/`Context` 是 Proxy：读未声明属性、`Object.getPrototypeOf`、
+     * 取 `fiber.parent` 都可能抛错。诊断的价值在于「看到多少算多少」。
+     */
+    const attempt = <T>(fn: () => T, fallback: T): T => {
+      try {
+        return fn();
+      } catch {
+        return fallback;
+      }
+    };
     const symbolsOf = (value: unknown): string[] => {
       const out: string[] = [];
       let cursor: unknown = value;
       for (let depth = 0; depth < 8 && cursor !== null && typeof cursor === 'object'; depth += 1) {
-        const names = ((): string[] => {
-          try {
-            return Object.getOwnPropertySymbols(cursor).map((s) => String(s));
-          } catch {
-            return ['(throws)'];
-          }
-        })();
+        const names = attempt(() => Object.getOwnPropertySymbols(cursor).map((s) => String(s)), ['(throws)']);
         out.push(`depth${depth}:${names.length > 0 ? names.join('|') : '-'}`);
-        cursor = Object.getPrototypeOf(cursor);
+        const parent = attempt<unknown>(() => Object.getPrototypeOf(cursor), null);
+        if (parent === null) break;
+        cursor = parent;
       }
       return out;
     };
-    const nameOfFiber = (fiber: unknown): string => {
-      const anyFiber = fiber as { name?: unknown; runtime?: { name?: unknown }; entry?: { options?: { name?: unknown } } } | undefined;
-      const candidates = [anyFiber?.name, anyFiber?.runtime?.name, anyFiber?.entry?.options?.name];
-      for (const candidate of candidates) if (typeof candidate === 'string' && candidate !== '') return candidate;
-      return typeof fiber;
-    };
+    const nameOfFiber = (fiber: unknown): string =>
+      attempt(() => {
+        const anyFiber = fiber as { name?: unknown; runtime?: { name?: unknown }; entry?: { options?: { name?: unknown } } } | undefined;
+        const candidates = [anyFiber?.name, anyFiber?.runtime?.name, anyFiber?.entry?.options?.name];
+        for (const candidate of candidates) if (typeof candidate === 'string' && candidate !== '') return candidate;
+        return typeof fiber;
+      }, '(throws)');
     const chain: string[] = [];
-    let fiber: unknown = (self as { fiber?: unknown }).fiber;
+    let fiber: unknown = attempt<unknown>(() => (self as { fiber?: unknown }).fiber, undefined);
     for (let depth = 0; depth < 24 && fiber !== null && fiber !== undefined; depth += 1) {
-      const anyFiber = fiber as { parent?: unknown };
       chain.push(nameOfFiber(fiber));
-      if (anyFiber.parent === fiber) break;
-      fiber = anyFiber.parent;
+      const parent = attempt<unknown>(() => (fiber as { parent?: unknown }).parent, undefined);
+      if (parent === fiber || parent === undefined) break;
+      fiber = parent;
     }
     let loaderEntries: string[] = [];
     try {

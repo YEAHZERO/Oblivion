@@ -419,9 +419,21 @@ Cordis 的守卫：`ctx.agents` / `ctx.slots` 这类服务，只要没在插件 
 
 ### 工程基建
 
-- **`status.json` 必须原子写**：实测被写成"一个完整对象 + 另一次写入的碎片"（两个写者交错，面板报 JSON SyntaxError）。
-  已新增 `src/util/fs.ts` 的 `writeTextAtomic` / `writeJsonAtomic`（写临时文件 → 同目录 rename）。
-  `status.json` 已接入；`decisions.jsonl` 裁剪、`feedback`/`profile`/`graph`/知识条目、笔记写入**待接入**。
+- **写盘一律原子**：`src/util/fs.ts` 导出与 `node:fs/promises.writeFile` **同名同签名**的 `writeFile`
+  （内部 `writeTextAtomic`：写临时文件 → 同目录 rename），core 内所有写盘一律从 `'../util/fs.js'` 取它。
+  2026-10-06 审计：此前只有 `status.json` 接了原子写，其余 8 处（feedback / profile / graph / store / 笔记 /
+  索引页 / 整理件 / 冲突页 / `decisions.jsonl` 惰性裁剪 / `mount-diag.json`）都是裸 `writeFile`，
+  而它们全是「另一个进程随时会读」的文件。实测事故：`status.json` 被写成「一个完整对象 + 另一次写入的碎片」
+  （两个写者交错，面板报 JSON SyntaxError）。**唯一刻意不原子的是追加**（`appendFile`，留痕每条一行），
+  理由见 `stats/trace.ts` 的 `record`。**下次加新写入点：别直接引 `node:fs/promises` 的 `writeFile`。**
+- **产物里不准有 `lib/VERSION`**：它和 `VERSION` / `package.json` 组成三个版本来源 ⇒ 必漂。core / panel 的该文件
+  已删、两个构建脚本的写入已删，`tools/check-workspace.ps1` 的 `Assert-NoLibVersion` 会在它复现时直接失败。
+- **诊断永远不能有杀伤力**：`mount-diag.json` 的 `routing` 曾整体是 `null` —— 整个取证函数被 `safeRead` 包住时，
+  里面**任何一处**抛错都会连带丢光其它字段。**每处可疑读取各自 try/catch**（Cordis 的 `Fiber`/`Context` 是 Proxy：
+  读未声明属性、`Object.getPrototypeOf`、取 `fiber.parent` 都可能抛错）。
+- **`edit` 工具会丢掉 `.ps1` 的 UTF-8 BOM**：改完 `tools/*.ps1` 必须补 BOM
+  （`Set-Content -Encoding utf8BOM -NoNewline`），再用 `tools/lint-ps1-bom.ps1` 复验
+  （`[System.IO.File]::ReadAllBytes` 前 3 字节 = 239,187,191）；根 `check` 的 `lint:bom` 会抓 MISSING-BOM。
 - **`selfcheck` 才是抓"装载失败"的那一层**（今天的崩溃、路由数、导入缺失全靠它抓到）→ 已接进根 `check`。
 - **版本号只有一处来源**：进程里一律**运行时**读包根 `VERSION`（panel 的 `readVersion()`；core 用构建期
   常量 `__OBLIVION_CORE_VERSION__`）。panel 曾写死 `export const VERSION = '0.0.1'`，于是 bump 到 0.0.6

@@ -18,7 +18,7 @@
  * 实测体量对照：打进产物 330 KB，标 external 后 43 KB。
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -54,6 +54,7 @@ for (const entry of ['index', 'testkit']) {
   });
 }
 
-writeFileSync(join(LIB, 'VERSION'), version + '\n', 'utf8');
+// 刻意**不**写 `lib/VERSION`：产物里再存一份版本号就是第二个来源
+// （`tools/check-workspace.ps1` 的 Assert-NoLibVersion 会直接判失败）。
 const size = readFileSync(join(LIB, 'index.js'), 'utf8').length;
 process.stdout.write('@oblivion/core v' + version + ': lib/index.js (' + size + ' B) + lib/testkit.js\n');

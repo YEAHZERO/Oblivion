@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
+import { writeFile } from '../util/fs.js';
 import { join } from 'node:path';
 import type { KnowledgeItem } from '../types.js';
 

@@ -281,14 +281,30 @@ function reinforce(edge, cfg, at = now()) {
   };
 }
 
+// src/util/fs.ts
+import { mkdir, rename, writeFile as nodeWriteFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+async function writeTextAtomic(path, text) {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = join(dirname(path), "." + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + ".tmp");
+  await nodeWriteFile(tmp, text, "utf8");
+  await rename(tmp, path);
+}
+async function writeFile(path, text, _encoding) {
+  return writeTextAtomic(path, text);
+}
+async function writeJsonAtomic(path, value) {
+  await writeTextAtomic(path, JSON.stringify(value, null, 2) + "\n");
+}
+
 // src/util/paths.ts
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join as join2, resolve } from "node:path";
 function expandHome(p) {
   const home = homedir();
   if (!p) return home;
   if (p === "~") return home;
-  if (p.startsWith("~/") || p.startsWith("~\\")) return join(home, p.slice(2));
+  if (p.startsWith("~/") || p.startsWith("~\\")) return join2(home, p.slice(2));
   return isAbsolute(p) ? p : resolve(p);
 }
 
@@ -377,8 +393,8 @@ function extractQAPair(turn) {
 }
 
 // src/qa-loop/index.ts
-import { appendFile, mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname, join as join3 } from "node:path";
+import { appendFile, mkdir as mkdir3, readFile as readFile2 } from "node:fs/promises";
+import { dirname as dirname2, join as join4 } from "node:path";
 
 // src/util/ctx-shape.ts
 var PROBE_NAMES = [
@@ -464,8 +480,8 @@ function rememberRelatedKnowledge(titles, at = Date.now()) {
 }
 
 // src/qa-loop/md-writer.ts
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join as join2 } from "node:path";
+import { mkdir as mkdir2, readFile } from "node:fs/promises";
+import { join as join3 } from "node:path";
 var MD_FALLBACK_DIR = "99_\u5176\u4ED6";
 function safeDirName(input) {
   const cleaned = String(input ?? "").replace(/^[a-zA-Z]:/, "").split(/[\\/]+/).filter((seg) => seg !== "" && seg !== "." && seg !== "..").map((seg) => seg.replace(/[<>:"|?*]/g, "_").trim()).filter((seg) => seg !== "").join("/");
@@ -482,12 +498,12 @@ function mdDirNames(map) {
   return names;
 }
 async function ensureMdDirs(root, map) {
-  await mkdir(root, { recursive: true });
+  await mkdir2(root, { recursive: true });
   const dirs = mdDirNames(map);
   for (const dir of dirs) {
-    await mkdir(join2(root, dir), { recursive: true });
+    await mkdir2(join3(root, dir), { recursive: true });
   }
-  return dirs.map((dir) => join2(root, dir));
+  return dirs.map((dir) => join3(root, dir));
 }
 function classifyDir(item, map) {
   if (map) {
@@ -635,23 +651,23 @@ function appendSource(existing, payload) {
   return existing.trimEnd() + "\n" + line + "\n";
 }
 async function notePathFor(root, item, classify) {
-  const dir = join2(root, classifyDir(item, classify));
+  const dir = join3(root, classifyDir(item, classify));
   const name = safeName(item.topic);
-  const primary = join2(dir, name + ".md");
+  const primary = join3(dir, name + ".md");
   const primaryText = await readFile(primary, "utf8").catch(() => "");
   if (primaryText.includes(ID_MARKER) || primaryText.includes("oblivion:digest")) return primary;
-  const fallback = join2(dir, name + "-oblivion.md");
+  const fallback = join3(dir, name + "-oblivion.md");
   const fallbackText = await readFile(fallback, "utf8").catch(() => "");
   if (fallbackText.includes(ID_MARKER) || fallbackText.includes("oblivion:digest")) return fallback;
   return "";
 }
 async function writeMD(root, payload, classify) {
   if (payload.action === "conflict") {
-    const dir2 = join2(root, CONFLICTS_DIR);
-    await mkdir(dir2, { recursive: true });
+    const dir2 = join3(root, CONFLICTS_DIR);
+    await mkdir2(dir2, { recursive: true });
     const c = payload.conflict;
     const name2 = safeName(c?.topic || c?.question || "conflict");
-    const path2 = join2(dir2, name2 + ".md");
+    const path2 = join3(dir2, name2 + ".md");
     const existing2 = await readFile(path2, "utf8").catch(() => "");
     const block = renderConflict(payload, payload.conflict ? Date.now() : Date.now());
     if (c && existing2.includes("oblivion:conflict with=" + c.existingId)) return path2;
@@ -660,13 +676,13 @@ async function writeMD(root, payload, classify) {
   }
   const item = payload.item;
   if (!item) return "";
-  const dir = join2(root, classifyDir(item, classify));
-  await mkdir(dir, { recursive: true });
+  const dir = join3(root, classifyDir(item, classify));
+  await mkdir2(dir, { recursive: true });
   const name = safeName(item.topic);
-  let path = join2(dir, name + ".md");
+  let path = join3(dir, name + ".md");
   let existing = await readFile(path, "utf8").catch(() => "");
   if (existing !== "" && !existing.includes(ID_MARKER)) {
-    path = join2(dir, name + "-oblivion.md");
+    path = join3(dir, name + "-oblivion.md");
     existing = await readFile(path, "utf8").catch(() => "");
   }
   switch (payload.action) {
@@ -689,9 +705,9 @@ async function writeMD(root, payload, classify) {
 var CONFLICTS_DIR = "50-Conflicts";
 var INDEX_DIR = "00-Index";
 async function writeIndexNote(root, entries, at = Date.now()) {
-  const dir = join2(root, INDEX_DIR);
-  await mkdir(dir, { recursive: true });
-  const path = join2(dir, "\u7D22\u5F15.md");
+  const dir = join3(root, INDEX_DIR);
+  await mkdir2(dir, { recursive: true });
+  const path = join3(dir, "\u7D22\u5F15.md");
   await writeFile(path, renderIndex(entries, at), "utf8");
   return path;
 }
@@ -789,7 +805,7 @@ function registerQaLoop(ctx, config, deps) {
       return void 0;
     }
   }
-  const probePath = join3(expandHome(config.dataRoot), "events-probe.jsonl");
+  const probePath = join4(expandHome(config.dataRoot), "events-probe.jsonl");
   async function probe(subject, event, sessionId, origin) {
     if (!config.enableEventProbe) return;
     try {
@@ -803,12 +819,12 @@ function registerQaLoop(ctx, config, deps) {
         subjectKeys: subject && typeof subject === "object" ? Object.keys(subject).slice(0, 8) : null,
         dataKeys: data && typeof data === "object" ? Object.keys(data).slice(0, 10) : null
       });
-      await mkdir2(dirname(probePath), { recursive: true });
+      await mkdir3(dirname2(probePath), { recursive: true });
       await appendFile(probePath, line + "\n", "utf8");
       const raw = await readFile2(probePath, "utf8");
       const lines = raw.split("\n").filter((l) => l.trim() !== "");
       if (lines.length > config.eventProbeMax) {
-        await writeFile2(probePath, lines.slice(-config.eventProbeMax).join("\n") + "\n", "utf8");
+        await writeFile(probePath, lines.slice(-config.eventProbeMax).join("\n") + "\n", "utf8");
       }
     } catch {
     }
@@ -969,35 +985,38 @@ function registerQaLoop(ctx, config, deps) {
     }
   }
   function describeScopeRouting(self, root) {
+    const attempt = (fn, fallback) => {
+      try {
+        return fn();
+      } catch {
+        return fallback;
+      }
+    };
     const symbolsOf = (value) => {
       const out = [];
       let cursor = value;
       for (let depth = 0; depth < 8 && cursor !== null && typeof cursor === "object"; depth += 1) {
-        const names = (() => {
-          try {
-            return Object.getOwnPropertySymbols(cursor).map((s) => String(s));
-          } catch {
-            return ["(throws)"];
-          }
-        })();
+        const names = attempt(() => Object.getOwnPropertySymbols(cursor).map((s) => String(s)), ["(throws)"]);
         out.push(`depth${depth}:${names.length > 0 ? names.join("|") : "-"}`);
-        cursor = Object.getPrototypeOf(cursor);
+        const parent = attempt(() => Object.getPrototypeOf(cursor), null);
+        if (parent === null) break;
+        cursor = parent;
       }
       return out;
     };
-    const nameOfFiber = (fiber2) => {
+    const nameOfFiber = (fiber2) => attempt(() => {
       const anyFiber = fiber2;
       const candidates = [anyFiber?.name, anyFiber?.runtime?.name, anyFiber?.entry?.options?.name];
       for (const candidate of candidates) if (typeof candidate === "string" && candidate !== "") return candidate;
       return typeof fiber2;
-    };
+    }, "(throws)");
     const chain = [];
-    let fiber = self.fiber;
+    let fiber = attempt(() => self.fiber, void 0);
     for (let depth = 0; depth < 24 && fiber !== null && fiber !== void 0; depth += 1) {
-      const anyFiber = fiber;
       chain.push(nameOfFiber(fiber));
-      if (anyFiber.parent === fiber) break;
-      fiber = anyFiber.parent;
+      const parent = attempt(() => fiber.parent, void 0);
+      if (parent === fiber || parent === void 0) break;
+      fiber = parent;
     }
     let loaderEntries = [];
     try {
@@ -1023,9 +1042,9 @@ function registerQaLoop(ctx, config, deps) {
       loaderEntries
     };
   }
-  const diagPath = join3(expandHome(config.dataRoot), "mount-diag.json");
+  const diagPath = join4(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.19",
+    version: "0.1.20",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -1061,8 +1080,8 @@ function registerQaLoop(ctx, config, deps) {
   let diagDirty = false;
   async function flushDiag() {
     try {
-      await mkdir2(dirname(diagPath), { recursive: true });
-      await writeFile2(diagPath, JSON.stringify(diag, null, 2) + "\n", "utf8");
+      await mkdir3(dirname2(diagPath), { recursive: true });
+      await writeFile(diagPath, JSON.stringify(diag, null, 2) + "\n", "utf8");
     } catch {
     }
   }
@@ -1168,19 +1187,19 @@ function registerQaLoop(ctx, config, deps) {
 }
 
 // src/knowledge/store.ts
-import { mkdir as mkdir3, readFile as readFile3, readdir, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { mkdir as mkdir4, readFile as readFile3, readdir } from "node:fs/promises";
+import { join as join5 } from "node:path";
 var KnowledgeStore = class {
   constructor(root) {
     this.root = root;
   }
   root;
   get conflictsRoot() {
-    return join4(this.root, "conflicts");
+    return join5(this.root, "conflicts");
   }
   async init() {
-    await mkdir3(this.root, { recursive: true });
-    await mkdir3(this.conflictsRoot, { recursive: true });
+    await mkdir4(this.root, { recursive: true });
+    await mkdir4(this.conflictsRoot, { recursive: true });
   }
   async loadAll() {
     const files = await readdir(this.root).catch(() => []);
@@ -1188,7 +1207,7 @@ var KnowledgeStore = class {
     for (const f of files) {
       if (!f.endsWith(".json")) continue;
       try {
-        const raw = await readFile3(join4(this.root, f), "utf8");
+        const raw = await readFile3(join5(this.root, f), "utf8");
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.id === "string") items.push(parsed);
       } catch {
@@ -1198,13 +1217,13 @@ var KnowledgeStore = class {
   }
   async save(item) {
     await this.init();
-    await writeFile3(join4(this.root, item.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
+    await writeFile(join5(this.root, item.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
   }
   /** 冲突记录返回文件名，便于在日志/工具输出里指认。 */
   async saveConflict(payload) {
     await this.init();
     const id = "conflict-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
-    await writeFile3(join4(this.conflictsRoot, id + ".json"), JSON.stringify(payload, null, 2) + "\n", "utf8");
+    await writeFile(join5(this.conflictsRoot, id + ".json"), JSON.stringify(payload, null, 2) + "\n", "utf8");
     return id;
   }
 };
@@ -1397,8 +1416,8 @@ function deriveTags(qa) {
 }
 
 // src/feedback/index.ts
-import { mkdir as mkdir4, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname2, join as join5 } from "node:path";
+import { mkdir as mkdir5, readFile as readFile4 } from "node:fs/promises";
+import { dirname as dirname3, join as join6 } from "node:path";
 
 // src/feedback/tuner.ts
 async function tune(entries, target, profile, threshold) {
@@ -1425,7 +1444,7 @@ async function tune(entries, target, profile, threshold) {
 // src/feedback/index.ts
 var MS_PER_DAY2 = 864e5;
 function registerFeedback(ctx, config, profile) {
-  const path = join5(expandHome(config.dataRoot), "feedback.json");
+  const path = join6(expandHome(config.dataRoot), "feedback.json");
   let prunedTotal = 0;
   async function load() {
     try {
@@ -1436,8 +1455,8 @@ function registerFeedback(ctx, config, profile) {
     }
   }
   async function save(entries) {
-    await mkdir4(dirname2(path), { recursive: true });
-    await writeFile4(path, JSON.stringify(entries, null, 2) + "\n", "utf8");
+    await mkdir5(dirname3(path), { recursive: true });
+    await writeFile(path, JSON.stringify(entries, null, 2) + "\n", "utf8");
   }
   async function loadPruned() {
     const entries = await load();
@@ -1736,8 +1755,8 @@ function registerPerspective(ctx, config, deps) {
 }
 
 // src/digest/index.ts
-import { mkdir as mkdir5, readFile as readFile5, writeFile as writeFile5 } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { mkdir as mkdir6, readFile as readFile5 } from "node:fs/promises";
+import { join as join7 } from "node:path";
 var DIGEST_EDGE_TEXT_BUDGET = 1200;
 function safeFileName(input) {
   const cleaned = (input || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim();
@@ -1839,14 +1858,14 @@ function registerDigest(ctx, config, deps) {
       status: input.status ?? "active"
     });
     const markdown = composed.markdown.replace("id=pending", "id=" + item.id);
-    const dir = join6(mdRoot, classDir);
-    await mkdir5(dir, { recursive: true });
-    const notePath = join6(dir, composed.fileName);
+    const dir = join7(mdRoot, classDir);
+    await mkdir6(dir, { recursive: true });
+    const notePath = join7(dir, composed.fileName);
     const existing = await readFile5(notePath, "utf8").catch(() => "");
     if (existing.includes("oblivion:digest id=" + item.id)) {
-      await writeFile5(notePath, existing.trimEnd() + "\n\n---\n\n" + markdown, "utf8");
+      await writeFile(notePath, existing.trimEnd() + "\n\n---\n\n" + markdown, "utf8");
     } else {
-      await writeFile5(notePath, markdown, "utf8");
+      await writeFile(notePath, markdown, "utf8");
     }
     const edgeText = markdown.slice(0, DIGEST_EDGE_TEXT_BUDGET);
     const qa = {
@@ -2011,10 +2030,10 @@ function suggest(summary, config, extra = {}) {
 }
 
 // src/stats/trace.ts
-import { appendFile as appendFile2, mkdir as mkdir6, readFile as readFile6, writeFile as writeFile6 } from "node:fs/promises";
-import { dirname as dirname3, join as join7 } from "node:path";
+import { appendFile as appendFile2, mkdir as mkdir7, readFile as readFile6 } from "node:fs/promises";
+import { dirname as dirname4, join as join8 } from "node:path";
 function createTraceStore(dataRoot, options) {
-  const path = join7(dataRoot, "decisions.jsonl");
+  const path = join8(dataRoot, "decisions.jsonl");
   const MS_PER_DAY3 = 864e5;
   async function readRaw() {
     try {
@@ -2037,7 +2056,7 @@ function createTraceStore(dataRoot, options) {
     path,
     async record(entry) {
       try {
-        await mkdir6(dirname3(path), { recursive: true });
+        await mkdir7(dirname4(path), { recursive: true });
         await appendFile2(path, JSON.stringify(entry) + "\n", "utf8");
       } catch (error) {
         options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u5199\u5165\u5931\u8D25\uFF1A%o", error);
@@ -2050,7 +2069,7 @@ function createTraceStore(dataRoot, options) {
       const kept = fresh.length > options.maxEntries ? fresh.slice(fresh.length - options.maxEntries) : fresh;
       if (kept.length !== all.length) {
         try {
-          await writeFile6(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
+          await writeFile(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
         } catch (error) {
           options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u88C1\u526A\u843D\u76D8\u5931\u8D25\uFF1A%o", error);
         }
@@ -2062,21 +2081,6 @@ function createTraceStore(dataRoot, options) {
 
 // src/stats/index.ts
 import { join as join9 } from "node:path";
-
-// src/util/fs.ts
-import { mkdir as mkdir7, rename, writeFile as writeFile7 } from "node:fs/promises";
-import { dirname as dirname4, join as join8 } from "node:path";
-async function writeTextAtomic(path, text) {
-  await mkdir7(dirname4(path), { recursive: true });
-  const tmp = join8(dirname4(path), "." + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + ".tmp");
-  await writeFile7(tmp, text, "utf8");
-  await rename(tmp, path);
-}
-async function writeJsonAtomic(path, value) {
-  await writeTextAtomic(path, JSON.stringify(value, null, 2) + "\n");
-}
-
-// src/stats/index.ts
 function registerStats(ctx, config, meta) {
   const dataRoot = expandHome(config.dataRoot);
   const trace = createTraceStore(dataRoot, {

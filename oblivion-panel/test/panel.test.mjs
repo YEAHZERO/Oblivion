@@ -35,11 +35,13 @@ function seed() {
   mkdirSync(dataRoot, { recursive: true });
   mkdirSync(join(mdRoot, '01_问答沉淀'), { recursive: true });
 
+  const now = Date.now();
   writeFileSync(
     join(dataRoot, 'status.json'),
     JSON.stringify({
       version: '0.1.5',
       mdRoot,
+      config: { statsRetentionDays: 90, statsMaxEntries: 5000 },
       stats: { turns: 3, evaluated: 2, noQa: 1, captured: 1, rejected: 1, captureRate: 0.5, byReason: { captured: 1, 'below value threshold': 1 } },
       hints: [{ key: 'valueThreshold', current: 0.3, suggested: 0.25, why: '捕获率低' }],
     }),
@@ -48,8 +50,10 @@ function seed() {
   writeFileSync(
     join(dataRoot, 'decisions.jsonl'),
     [
-      JSON.stringify({ at: 1, action: 'created', pass: true, reason: 'captured', ms: 3 }),
-      JSON.stringify({ at: 2, action: 'ignored', pass: false, reason: 'below value threshold', score: 0.21, ms: 2 }),
+      // 时间戳必须落在保留期（core 默认 90 天）内：面板做与 core `trace.read()` 同样的裁剪，
+      // 远古时间戳（这里曾写 `at: 1`）会被当成过期留痕丢掉。
+      JSON.stringify({ at: now - 3000, action: 'created', pass: true, reason: 'captured', score: 0.8, ms: 3 }),
+      JSON.stringify({ at: now - 2000, action: 'ignored', pass: false, reason: 'below value threshold', score: 0.21, ms: 2 }),
       'not-json',
       '',
     ].join('\n'),
@@ -92,6 +96,18 @@ describe('观测快照（Node 半边数据面）', () => {
     assert.equal(snapshot.core.version, '0.1.5');
     assert.equal(snapshot.mdRoot, mdRoot, 'mdRoot 应取自 core 的 status.json');
     assert.equal(snapshot.trace.recent.length, 2, '坏行应被跳过');
+
+    // 顶部统计是**现算**的（live），不再用 core 装载时的 status.json（那份 stats 写的是 3 轮）
+    assert.equal(snapshot.live.turns, 2, 'live 统计应来自 decisions.jsonl');
+    assert.equal(snapshot.live.evaluated, 2);
+    assert.equal(snapshot.live.captured, 1);
+    assert.equal(snapshot.live.rejected, 1);
+    assert.equal(snapshot.live.captureRate, 0.5);
+    assert.equal(snapshot.live.byReason['below value threshold'], 1);
+    assert.equal(snapshot.live.score.belowThreshold, 1);
+    assert.equal(snapshot.live.dropped, 0, '保留期内的留痕不该被丢');
+    assert.equal(snapshot.live.windowDays, 90, '保留期取自 status.json 带回的 config');
+
     assert.equal(snapshot.items.length, 1);
     assert.equal(snapshot.items[0].title, '一条知识');
     assert.equal(snapshot.notes.length, 1);
@@ -190,10 +206,30 @@ describe('展示层纯函数', () => {
     assert.match(line, /捕获率低/);
   });
 
-  it('statNumber / topReason 容忍缺字段', () => {
+  it('statNumber / topBlocker 容忍缺字段（且不把 captured 当成拦截）', () => {
     assert.equal(kit.statNumber(null, 'turns'), undefined);
     assert.equal(kit.statNumber({ stats: { turns: 3 } }, 'turns'), 3);
-    assert.deepEqual(kit.topReason({ stats: { byReason: { a: 1, b: 5 } } }), { reason: 'b', count: 5 });
-    assert.equal(kit.topReason({}), null);
+    assert.deepEqual(kit.topBlocker({ captured: 9, a: 1, b: 5 }), { reason: 'b', count: 5 });
+    assert.equal(kit.topBlocker({ captured: 2 }), null, '全通过 → null（面板显示「全部通过，无拦截」）');
+    assert.equal(kit.topBlocker(null), null);
+    assert.equal(kit.topBlocker({}), null);
+  });
+
+  it('summarizeDecisions 逐行镜像 core 的 summarize 口径', () => {
+    const at = Date.now();
+    const live = kit.summarizeDecisions(
+      [
+        { at, action: 'created', pass: true, reason: 'captured', score: 0.8 },
+        { at, action: 'no-qa', pass: false, reason: '本轮没有问答轮' },
+      ],
+      { windowDays: 90 },
+    );
+    assert.equal(live.turns, 2);
+    assert.equal(live.noQa, 1);
+    assert.equal(live.evaluated, 1, 'no-qa 不计入已评估');
+    assert.equal(live.captured, 1);
+    assert.equal(live.captureRate, 1);
+    assert.equal(live.score.max, 0.8);
+    assert.equal(live.firstAt, at);
   });
 });

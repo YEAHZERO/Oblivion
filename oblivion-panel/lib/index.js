@@ -8,6 +8,65 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 var MAX_JSON_BYTES = 256 * 1024;
 var MAX_JSONL_BYTES = 2 * 1024 * 1024;
+var FALLBACK_RETENTION_DAYS = 90;
+var FALLBACK_MAX_ENTRIES = 5e3;
+var MS_PER_DAY = 864e5;
+function ratio(part, whole) {
+  return whole <= 0 ? 0 : Math.round(part / whole * 1e3) / 1e3;
+}
+function percentile(sorted, p) {
+  if (sorted.length === 0) return 0;
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p / 100 * sorted.length) - 1));
+  return Math.round(sorted[index] * 1e3) / 1e3;
+}
+function summarizeDecisions(rows, extra = {}) {
+  const byAction = {};
+  const byReason = {};
+  const scores = [];
+  let captured = 0;
+  let noQa = 0;
+  let belowThreshold = 0;
+  for (const row of rows) {
+    const action = String(row.action ?? "(none)");
+    byAction[action] = (byAction[action] ?? 0) + 1;
+    const reason = typeof row.reason === "string" && row.reason !== "" ? row.reason : "(none)";
+    byReason[reason] = (byReason[reason] ?? 0) + 1;
+    if (action === "no-qa") {
+      noQa += 1;
+      continue;
+    }
+    if (row.pass) captured += 1;
+    if (typeof row.score === "number" && Number.isFinite(row.score)) {
+      scores.push(row.score);
+      if (!row.pass) belowThreshold += 1;
+    }
+  }
+  const evaluated = rows.length - noQa;
+  scores.sort((a, b) => a - b);
+  const ats = rows.map((row) => row.at).filter((at) => typeof at === "number");
+  return {
+    windowDays: extra.windowDays ?? 0,
+    firstAt: ats.length > 0 ? Math.min(...ats) : null,
+    lastAt: ats.length > 0 ? Math.max(...ats) : null,
+    turns: rows.length,
+    evaluated,
+    noQa,
+    captured,
+    rejected: evaluated - captured,
+    captureRate: ratio(captured, evaluated),
+    byAction,
+    byReason,
+    score: scores.length > 0 ? {
+      min: scores[0],
+      p50: percentile(scores, 50),
+      p90: percentile(scores, 90),
+      max: scores[scores.length - 1],
+      belowThreshold
+    } : null,
+    parsed: extra.parsed ?? rows.length,
+    dropped: extra.dropped ?? 0
+  };
+}
 async function readJsonCapped(path, problems) {
   try {
     const info = await stat(path);
@@ -22,29 +81,36 @@ async function readJsonCapped(path, problems) {
     return void 0;
   }
 }
-async function readJsonlTail(path, limit, problems) {
+async function readJsonlRaw(path, problems) {
   try {
     const raw = await readFile(path, "utf8");
-    if (raw.length > MAX_JSONL_BYTES) {
-      problems.push(`${path} \u8D85\u8FC7 ${MAX_JSONL_BYTES} \u5B57\u8282\uFF0C\u53EA\u53D6\u5C3E\u90E8`);
-    }
-    const body = raw.length > MAX_JSONL_BYTES ? raw.slice(raw.length - MAX_JSONL_BYTES) : raw;
+    const truncated = raw.length > MAX_JSONL_BYTES;
+    if (truncated) problems.push(`${path} \u8D85\u8FC7 ${MAX_JSONL_BYTES} \u5B57\u8282\uFF0C\u53EA\u53D6\u5C3E\u90E8`);
+    const body = truncated ? raw.slice(raw.length - MAX_JSONL_BYTES) : raw;
     const lines = body.split("\n").filter((line) => line.trim() !== "");
-    const tail = lines.slice(-limit);
-    const out = [];
-    for (const line of tail) {
+    const rows = [];
+    let bad = 0;
+    for (const line of lines) {
       try {
-        out.push(JSON.parse(line));
+        rows.push(JSON.parse(line));
       } catch {
-        problems.push(`${path}: \u6709\u4E00\u884C\u4E0D\u662F\u5408\u6CD5 JSON\uFF0C\u5DF2\u8DF3\u8FC7`);
+        bad += 1;
       }
     }
-    return out;
+    if (bad > 0) problems.push(`${path}: \u6709 ${bad} \u884C\u4E0D\u662F\u5408\u6CD5 JSON\uFF0C\u5DF2\u8DF3\u8FC7`);
+    return { rows, parsed: rows.length, bad, truncated };
   } catch (error) {
     const code = error.code;
     if (code !== "ENOENT") problems.push(`${path}: ${String(error)}`);
-    return [];
+    return { rows: [], parsed: 0, bad: 0, truncated: false };
   }
+}
+async function readDecisions(path, options, problems) {
+  const { rows, parsed } = await readJsonlRaw(path, problems);
+  const cutoff = options.now - options.retentionDays * MS_PER_DAY;
+  const fresh = rows.filter((row) => typeof row.at === "number" && row.at >= cutoff);
+  const kept = fresh.length > options.maxEntries ? fresh.slice(fresh.length - options.maxEntries) : fresh;
+  return { rows: kept, parsed, dropped: parsed - kept.length };
 }
 async function readItems(dataRoot, limit, problems) {
   let names = [];
@@ -94,14 +160,21 @@ async function readNotes(mdRoot, limit, problems) {
   }
   return rows.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit);
 }
+function positiveInt(value, fallback) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
 async function buildSnapshot(options) {
   const problems = [];
   const limit = Math.min(50, Math.max(1, Math.floor(options.recentLimit) || 10));
   const now = options.now ?? (() => Date.now());
   const core = await readJsonCapped(join(options.dataRoot, "status.json"), problems);
   const mdRoot = typeof core?.mdRoot === "string" && core.mdRoot !== "" ? core.mdRoot : options.fallbackMdRoot;
-  const [recent, items, notes] = await Promise.all([
-    readJsonlTail(join(options.dataRoot, "decisions.jsonl"), limit, problems),
+  const config = core?.config ?? {};
+  const retentionDays = positiveInt(config.statsRetentionDays, FALLBACK_RETENTION_DAYS);
+  const maxEntries = positiveInt(config.statsMaxEntries, FALLBACK_MAX_ENTRIES);
+  const tracePath = join(options.dataRoot, "decisions.jsonl");
+  const [decisions, items, notes] = await Promise.all([
+    readDecisions(tracePath, { retentionDays, maxEntries, now: now() }, problems),
     readItems(options.dataRoot, limit, problems),
     readNotes(mdRoot, limit, problems)
   ]);
@@ -111,7 +184,12 @@ async function buildSnapshot(options) {
     dataRoot: options.dataRoot,
     mdRoot,
     core: core ?? null,
-    trace: { path: join(options.dataRoot, "decisions.jsonl"), recent },
+    live: summarizeDecisions(decisions.rows, {
+      parsed: decisions.parsed,
+      dropped: decisions.dropped,
+      windowDays: retentionDays
+    }),
+    trace: { path: tracePath, recent: decisions.rows.slice(-limit) },
     items,
     notes,
     problems

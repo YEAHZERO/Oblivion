@@ -81,7 +81,8 @@ const wrapped =
   '});\n';
 
 writeFileSync(join(LIB, 'client.js'), wrapped, 'utf8');
-writeFileSync(join(LIB, 'VERSION'), version + '\n', 'utf8');
+// 刻意**不**写 `lib/VERSION`：产物里再存一份版本号就是第二个来源
+// （`tools/check-workspace.ps1` 的 Assert-NoLibVersion 会直接判失败）。
 
 process.stdout.write(
   `@oblivion/panel v${version}: lib/index.js + lib/testkit.js + lib/client.js (${wrapped.length} B client bundle)\n`,

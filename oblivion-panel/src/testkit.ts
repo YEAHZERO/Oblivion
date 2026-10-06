@@ -4,7 +4,13 @@
  * 主入口只暴露 Cordis 插件所需的 `name` / `inject` / `apply` / `default`；
  * 纯函数与可测逻辑在这里导出，供 `scripts/selfcheck.mjs` 与 `test/` 直接验证。
  */
-export { buildSnapshot, type PanelSnapshot, type SnapshotOptions } from './snapshot.js';
+export {
+  buildSnapshot,
+  summarizeDecisions,
+  type DecisionStats,
+  type PanelSnapshot,
+  type SnapshotOptions,
+} from './snapshot.js';
 export {
   percent,
   relativeTime,
@@ -12,7 +18,7 @@ export {
   hintLine,
   formatValue,
   statNumber,
-  topReason,
+  topBlocker,
   scoreText,
   reasonLabel,
 } from './client/format.js';

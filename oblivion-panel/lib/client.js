@@ -186,13 +186,9 @@ function reasonLabel(reason) {
   };
   return map[text] ?? text;
 }
-function topReason(core) {
-  if (!core || typeof core !== "object") return null;
-  const stats = core.stats;
-  if (!stats || typeof stats !== "object") return null;
-  const byReason = stats.byReason;
+function topBlocker(byReason) {
   if (!byReason || typeof byReason !== "object") return null;
-  const entries = Object.entries(byReason).filter(([, count]) => typeof count === "number").sort((a, b) => Number(b[1]) - Number(a[1]));
+  const entries = Object.entries(byReason).filter(([reason, count]) => reason !== "captured" && typeof count === "number" && count > 0).sort((a, b) => Number(b[1]) - Number(a[1]));
   if (entries.length === 0) return null;
   return { reason: entries[0][0], count: Number(entries[0][1]) };
 }
@@ -256,7 +252,7 @@ function emptyReason(data) {
   if (!data.core) {
     return "\u8BFB\u4E0D\u5230 @oblivion/core \u7684 status.json \u2014\u2014 \u68C0\u67E5 core \u662F\u5426\u88C5\u8F7D\uFF08\u5B83\u7684\u53EA\u8BFB\u5FEB\u7167\u5728\u6BCF\u6B21\u88C5\u8F7D\u65F6\u5237\u65B0\uFF09\u3002";
   }
-  const turns = statNumber(data.core, "turns");
+  const turns = data.live ? data.live.turns : statNumber(data.core, "turns");
   if (!turns) {
     return "core \u5DF2\u88C5\u8F7D\uFF08v" + String(data.core.version ?? "?") + "\uFF09\uFF0C\u4F46\u8FD8\u6CA1\u6709\u8D70\u5B8C\u7684 turn/end \u2014\u2014 \u6B63\u5E38\u95EE\u4E00\u8F6E\u518D\u770B\u3002";
   }
@@ -296,10 +292,12 @@ function OblivionPanel(props) {
     const data = state.data;
     const core = data.core ?? null;
     const hints = core?.hints ?? [];
-    const turns = statNumber(core, "turns");
-    const evaluated = statNumber(core, "evaluated");
-    const captureRate = (core?.stats ?? {}).captureRate;
-    const top = topReason(core);
+    const live = data.live ?? null;
+    const turns = live ? live.turns : statNumber(core, "turns");
+    const evaluated = live ? live.evaluated : statNumber(core, "evaluated");
+    const captured = live ? live.captured : statNumber(core, "captured");
+    const captureRate = live ? live.captureRate : (core?.stats ?? {}).captureRate;
+    const blocker = topBlocker(live ? live.byReason : (core?.stats ?? {}).byReason);
     const recent = data.trace?.recent ?? [];
     const items = data.items ?? [];
     const notes = data.notes ?? [];
@@ -320,19 +318,19 @@ function OblivionPanel(props) {
         kpi("\u6355\u83B7\u7387", percent(captureRate)),
         kpi("\u5224\u5B9A\u8F6E\u6570", String(turns ?? "\u2014")),
         kpi("\u5DF2\u8BC4\u4F30", String(evaluated ?? "\u2014")),
-        kpi("\u5DF2\u6C89\u6DC0", String(statNumber(core, "captured") ?? "\u2014"))
+        kpi("\u5DF2\u6C89\u6DC0", String(captured ?? "\u2014"))
       ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, marginTop: 2 }, children: live ? "\u7EDF\u8BA1\u5B9E\u65F6\u8BFB\u81EA " + live.parsed + " \u884C\u7559\u75D5\uFF08\u4FDD\u7559\u671F " + live.windowDays + " \u5929" + (live.dropped > 0 ? "\uFF0C\u6309\u4FDD\u7559\u671F/\u4E0A\u9650\u4E22\u5F03 " + live.dropped + " \u884C" : "") + "\uFF09" : "\u7EDF\u8BA1\u6765\u81EA core \u88C5\u8F7D\u65F6\u7684 status.json \u5FEB\u7167\uFF08\u9700\u8981\u9762\u677F host \u2265 0.0.8 \u624D\u662F\u5B9E\u65F6\u7684\uFF09" }),
       !core || !turns ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.card, marginTop: 10 }, children: emptyReason(data) }) : null,
-      top ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { ...S.dim, marginTop: 4 }, children: [
-        "\u4E3B\u8981\u62E6\u622A\u539F\u56E0\uFF1A",
-        top.reason,
-        "\uFF08",
-        top.count,
-        " \u6B21\uFF09"
-      ] }) : null,
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, marginTop: 4 }, children: blocker ? "\u4E3B\u8981\u62E6\u622A\u539F\u56E0\uFF1A" + reasonLabel(blocker.reason) + "\uFF08" + blocker.count + " \u6B21\uFF09" : (turns ?? 0) > 0 ? "\u5168\u90E8\u901A\u8FC7\uFF0C\u65E0\u62E6\u622A" : "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55" }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
-        "\u8C03\u53C2\u5EFA\u8BAE ",
-        hints.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: S.dim, children: "\uFF08\u6682\u65E0\uFF1A\u6837\u672C\u4E0D\u8DB3\u65F6 core \u523B\u610F\u4E0D\u5F00\u53E3\uFF09" }) : null
+        "\u8C03\u53C2\u5EFA\u8BAE",
+        " ",
+        hints.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: S.dim, children: [
+          "\uFF08\u6682\u65E0\uFF1Acore \u5728\u88C5\u8F7D\u65F6\u6309\u5DF2\u8BC4\u4F30 ",
+          evaluated ?? 0,
+          " \u8F6E\u7B97\uFF0C\u6837\u672C\u4E0D\u8DB3 20 \u8F6E\u523B\u610F\u4E0D\u5F00\u53E3\uFF09"
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: S.dim, children: "\uFF08core \u5728\u88C5\u8F7D\u65F6\u7B97\uFF0C\u4E0D\u662F\u5B9E\u65F6\u7684\uFF09" })
       ] }),
       hints.map((hint, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.card, children: hintLine(hint) }, String(hint.key ?? index))),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.h, children: "\u6700\u8FD1\u5224\u5B9A" }),

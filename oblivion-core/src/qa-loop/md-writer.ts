@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { writeFile } from '../util/fs.js';
 import { join } from 'node:path';
 import type { KnowledgeItem } from '../types.js';
 import { isoDate } from '../util/time.js';
@@ -373,7 +374,8 @@ export async function appendRelatedLinks(notePath: string, titles: string[]): Pr
   const existing = await readFile(notePath, 'utf8').catch(() => '');
   if (existing === '' || !existing.includes(ID_MARKER)) return false;
 
-  const missing = links.filter((t) => !existing.includes('[[' + t + ']]'));  if (missing.length === 0) return false;
+  const missing = links.filter((t) => !existing.includes('[[' + t + ']]'));
+  if (missing.length === 0) return false;
 
   const block = [
     '',

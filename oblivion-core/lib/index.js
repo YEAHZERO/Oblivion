@@ -77,17 +77,35 @@ var DEFAULT_CONFIG = {
 };
 
 // src/feedback/index.ts
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join as join2 } from "node:path";
+import { mkdir as mkdir2, readFile } from "node:fs/promises";
+
+// src/util/fs.ts
+import { mkdir, rename, writeFile as nodeWriteFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+async function writeTextAtomic(path, text) {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = join(dirname(path), "." + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + ".tmp");
+  await nodeWriteFile(tmp, text, "utf8");
+  await rename(tmp, path);
+}
+async function writeFile(path, text, _encoding) {
+  return writeTextAtomic(path, text);
+}
+async function writeJsonAtomic(path, value) {
+  await writeTextAtomic(path, JSON.stringify(value, null, 2) + "\n");
+}
+
+// src/feedback/index.ts
+import { dirname as dirname2, join as join3 } from "node:path";
 
 // src/util/paths.ts
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join as join2, resolve } from "node:path";
 function expandHome(p) {
   const home = homedir();
   if (!p) return home;
   if (p === "~") return home;
-  if (p.startsWith("~/") || p.startsWith("~\\")) return join(home, p.slice(2));
+  if (p.startsWith("~/") || p.startsWith("~\\")) return join2(home, p.slice(2));
   return isAbsolute(p) ? p : resolve(p);
 }
 
@@ -132,7 +150,7 @@ async function tune(entries, target, profile, threshold) {
 // src/feedback/index.ts
 var MS_PER_DAY2 = 864e5;
 function registerFeedback(ctx, config, profile) {
-  const path = join2(expandHome(config.dataRoot), "feedback.json");
+  const path = join3(expandHome(config.dataRoot), "feedback.json");
   let prunedTotal = 0;
   async function load() {
     try {
@@ -143,7 +161,7 @@ function registerFeedback(ctx, config, profile) {
     }
   }
   async function save(entries) {
-    await mkdir(dirname(path), { recursive: true });
+    await mkdir2(dirname2(path), { recursive: true });
     await writeFile(path, JSON.stringify(entries, null, 2) + "\n", "utf8");
   }
   async function loadPruned() {
@@ -190,8 +208,8 @@ function registerFeedback(ctx, config, profile) {
 }
 
 // src/graph/index.ts
-import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join3 } from "node:path";
+import { mkdir as mkdir3, readFile as readFile2 } from "node:fs/promises";
+import { join as join4 } from "node:path";
 
 // src/graph/decay.ts
 function effectiveWeight(edge, cfg, at = now()) {
@@ -225,8 +243,8 @@ function edgeKey(a, b) {
 }
 function registerGraph(ctx, config) {
   const root = expandHome(config.dataRoot);
-  const statePath = join3(root, "graph.json");
-  const eventPath = join3(root, "graph-events.json");
+  const statePath = join4(root, "graph.json");
+  const eventPath = join4(root, "graph-events.json");
   let edges = /* @__PURE__ */ new Map();
   let log = [];
   const loaded = (async () => {
@@ -243,9 +261,9 @@ function registerGraph(ctx, config) {
     }
   })();
   async function persist() {
-    await mkdir2(root, { recursive: true });
-    await writeFile2(statePath, JSON.stringify([...edges.values()], null, 2) + "\n", "utf8");
-    await writeFile2(eventPath, JSON.stringify(log.slice(-2e3), null, 2) + "\n", "utf8");
+    await mkdir3(root, { recursive: true });
+    await writeFile(statePath, JSON.stringify([...edges.values()], null, 2) + "\n", "utf8");
+    await writeFile(eventPath, JSON.stringify(log.slice(-2e3), null, 2) + "\n", "utf8");
   }
   function neighborsOf(id, limit) {
     const at = now();
@@ -318,8 +336,8 @@ function registerGraph(ctx, config) {
 }
 
 // src/digest/index.ts
-import { mkdir as mkdir4, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
-import { join as join5 } from "node:path";
+import { mkdir as mkdir5, readFile as readFile4 } from "node:fs/promises";
+import { join as join6 } from "node:path";
 
 // src/util/hash.ts
 import { createHash } from "node:crypto";
@@ -334,8 +352,8 @@ function shortHash(input) {
 }
 
 // src/qa-loop/md-writer.ts
-import { mkdir as mkdir3, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { mkdir as mkdir4, readFile as readFile3 } from "node:fs/promises";
+import { join as join5 } from "node:path";
 var MD_FALLBACK_DIR = "99_\u5176\u4ED6";
 function safeDirName(input) {
   const cleaned = String(input ?? "").replace(/^[a-zA-Z]:/, "").split(/[\\/]+/).filter((seg) => seg !== "" && seg !== "." && seg !== "..").map((seg) => seg.replace(/[<>:"|?*]/g, "_").trim()).filter((seg) => seg !== "").join("/");
@@ -352,12 +370,12 @@ function mdDirNames(map) {
   return names;
 }
 async function ensureMdDirs(root, map) {
-  await mkdir3(root, { recursive: true });
+  await mkdir4(root, { recursive: true });
   const dirs = mdDirNames(map);
   for (const dir of dirs) {
-    await mkdir3(join4(root, dir), { recursive: true });
+    await mkdir4(join5(root, dir), { recursive: true });
   }
-  return dirs.map((dir) => join4(root, dir));
+  return dirs.map((dir) => join5(root, dir));
 }
 function classifyDir(item, map) {
   if (map) {
@@ -505,52 +523,52 @@ function appendSource(existing, payload) {
   return existing.trimEnd() + "\n" + line + "\n";
 }
 async function notePathFor(root, item, classify) {
-  const dir = join4(root, classifyDir(item, classify));
+  const dir = join5(root, classifyDir(item, classify));
   const name2 = safeName(item.topic);
-  const primary = join4(dir, name2 + ".md");
+  const primary = join5(dir, name2 + ".md");
   const primaryText = await readFile3(primary, "utf8").catch(() => "");
   if (primaryText.includes(ID_MARKER) || primaryText.includes("oblivion:digest")) return primary;
-  const fallback = join4(dir, name2 + "-oblivion.md");
+  const fallback = join5(dir, name2 + "-oblivion.md");
   const fallbackText = await readFile3(fallback, "utf8").catch(() => "");
   if (fallbackText.includes(ID_MARKER) || fallbackText.includes("oblivion:digest")) return fallback;
   return "";
 }
 async function writeMD(root, payload, classify) {
   if (payload.action === "conflict") {
-    const dir2 = join4(root, CONFLICTS_DIR);
-    await mkdir3(dir2, { recursive: true });
+    const dir2 = join5(root, CONFLICTS_DIR);
+    await mkdir4(dir2, { recursive: true });
     const c = payload.conflict;
     const name3 = safeName(c?.topic || c?.question || "conflict");
-    const path2 = join4(dir2, name3 + ".md");
+    const path2 = join5(dir2, name3 + ".md");
     const existing2 = await readFile3(path2, "utf8").catch(() => "");
     const block = renderConflict(payload, payload.conflict ? Date.now() : Date.now());
     if (c && existing2.includes("oblivion:conflict with=" + c.existingId)) return path2;
-    await writeFile3(path2, existing2 ? existing2.trimEnd() + "\n\n---\n\n" + block : block, "utf8");
+    await writeFile(path2, existing2 ? existing2.trimEnd() + "\n\n---\n\n" + block : block, "utf8");
     return path2;
   }
   const item = payload.item;
   if (!item) return "";
-  const dir = join4(root, classifyDir(item, classify));
-  await mkdir3(dir, { recursive: true });
+  const dir = join5(root, classifyDir(item, classify));
+  await mkdir4(dir, { recursive: true });
   const name2 = safeName(item.topic);
-  let path = join4(dir, name2 + ".md");
+  let path = join5(dir, name2 + ".md");
   let existing = await readFile3(path, "utf8").catch(() => "");
   if (existing !== "" && !existing.includes(ID_MARKER)) {
-    path = join4(dir, name2 + "-oblivion.md");
+    path = join5(dir, name2 + "-oblivion.md");
     existing = await readFile3(path, "utf8").catch(() => "");
   }
   switch (payload.action) {
     case "created": {
       if (existing.includes("oblivion:id=" + item.id)) return path;
       const body = existing ? existing.trimEnd() + "\n\n" + renderNew(item) : renderNew(item);
-      await writeFile3(path, body, "utf8");
+      await writeFile(path, body, "utf8");
       return path;
     }
     case "appended":
-      await writeFile3(path, appendSection(existing, item), "utf8");
+      await writeFile(path, appendSection(existing, item), "utf8");
       return path;
     case "duplicate":
-      await writeFile3(path, appendSource(existing, payload), "utf8");
+      await writeFile(path, appendSource(existing, payload), "utf8");
       return path;
     default:
       return path;
@@ -559,10 +577,10 @@ async function writeMD(root, payload, classify) {
 var CONFLICTS_DIR = "50-Conflicts";
 var INDEX_DIR = "00-Index";
 async function writeIndexNote(root, entries, at = Date.now()) {
-  const dir = join4(root, INDEX_DIR);
-  await mkdir3(dir, { recursive: true });
-  const path = join4(dir, "\u7D22\u5F15.md");
-  await writeFile3(path, renderIndex(entries, at), "utf8");
+  const dir = join5(root, INDEX_DIR);
+  await mkdir4(dir, { recursive: true });
+  const path = join5(dir, "\u7D22\u5F15.md");
+  await writeFile(path, renderIndex(entries, at), "utf8");
   return path;
 }
 async function appendRelatedLinks(notePath, titles) {
@@ -579,7 +597,7 @@ async function appendRelatedLinks(notePath, titles) {
     missing.map((t) => "- [[" + t.replace(/^\[\[|\]\]$/g, "") + "]]").join("\n"),
     ""
   ].join("\n");
-  await writeFile3(notePath, existing.trimEnd() + "\n" + block, "utf8");
+  await writeFile(notePath, existing.trimEnd() + "\n" + block, "utf8");
   return true;
 }
 
@@ -685,14 +703,14 @@ function registerDigest(ctx, config, deps) {
       status: input.status ?? "active"
     });
     const markdown = composed.markdown.replace("id=pending", "id=" + item.id);
-    const dir = join5(mdRoot, classDir);
-    await mkdir4(dir, { recursive: true });
-    const notePath = join5(dir, composed.fileName);
+    const dir = join6(mdRoot, classDir);
+    await mkdir5(dir, { recursive: true });
+    const notePath = join6(dir, composed.fileName);
     const existing = await readFile4(notePath, "utf8").catch(() => "");
     if (existing.includes("oblivion:digest id=" + item.id)) {
-      await writeFile4(notePath, existing.trimEnd() + "\n\n---\n\n" + markdown, "utf8");
+      await writeFile(notePath, existing.trimEnd() + "\n\n---\n\n" + markdown, "utf8");
     } else {
-      await writeFile4(notePath, markdown, "utf8");
+      await writeFile(notePath, markdown, "utf8");
     }
     const edgeText = markdown.slice(0, DIGEST_EDGE_TEXT_BUDGET);
     const qa = {
@@ -978,19 +996,19 @@ function flipSignals(text) {
 }
 
 // src/knowledge/store.ts
-import { mkdir as mkdir5, readFile as readFile5, readdir, writeFile as writeFile5 } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { mkdir as mkdir6, readFile as readFile5, readdir } from "node:fs/promises";
+import { join as join7 } from "node:path";
 var KnowledgeStore = class {
   constructor(root) {
     this.root = root;
   }
   root;
   get conflictsRoot() {
-    return join6(this.root, "conflicts");
+    return join7(this.root, "conflicts");
   }
   async init() {
-    await mkdir5(this.root, { recursive: true });
-    await mkdir5(this.conflictsRoot, { recursive: true });
+    await mkdir6(this.root, { recursive: true });
+    await mkdir6(this.conflictsRoot, { recursive: true });
   }
   async loadAll() {
     const files = await readdir(this.root).catch(() => []);
@@ -998,7 +1016,7 @@ var KnowledgeStore = class {
     for (const f of files) {
       if (!f.endsWith(".json")) continue;
       try {
-        const raw = await readFile5(join6(this.root, f), "utf8");
+        const raw = await readFile5(join7(this.root, f), "utf8");
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.id === "string") items.push(parsed);
       } catch {
@@ -1008,13 +1026,13 @@ var KnowledgeStore = class {
   }
   async save(item) {
     await this.init();
-    await writeFile5(join6(this.root, item.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
+    await writeFile(join7(this.root, item.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
   }
   /** 冲突记录返回文件名，便于在日志/工具输出里指认。 */
   async saveConflict(payload) {
     await this.init();
     const id = "conflict-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
-    await writeFile5(join6(this.conflictsRoot, id + ".json"), JSON.stringify(payload, null, 2) + "\n", "utf8");
+    await writeFile(join7(this.conflictsRoot, id + ".json"), JSON.stringify(payload, null, 2) + "\n", "utf8");
     return id;
   }
 };
@@ -1506,8 +1524,8 @@ function readRelatedHint(now2 = Date.now()) {
 }
 
 // src/profile/index.ts
-import { mkdir as mkdir6, readFile as readFile6, writeFile as writeFile6 } from "node:fs/promises";
-import { dirname as dirname2, join as join7 } from "node:path";
+import { mkdir as mkdir7, readFile as readFile6 } from "node:fs/promises";
+import { dirname as dirname3, join as join8 } from "node:path";
 
 // src/profile/schema.ts
 function defaultProfile() {
@@ -1543,7 +1561,7 @@ function mergeProfile(cur, signal) {
 // src/profile/index.ts
 var CONFIDENCE_FLOOR = 0.3;
 function registerProfile(ctx, config) {
-  const path = join7(expandHome(config.dataRoot), "profile.json");
+  const path = join8(expandHome(config.dataRoot), "profile.json");
   async function raw() {
     try {
       const parsed = JSON.parse(await readFile6(path, "utf8"));
@@ -1558,8 +1576,8 @@ function registerProfile(ctx, config) {
     return { ...mergeProfile(p, p.user_override), user_override: p.user_override };
   }
   async function write(p) {
-    await mkdir6(dirname2(path), { recursive: true });
-    await writeFile6(path, JSON.stringify(p, null, 2) + "\n", "utf8");
+    await mkdir7(dirname3(path), { recursive: true });
+    await writeFile(path, JSON.stringify(p, null, 2) + "\n", "utf8");
     return p;
   }
   ctx.effect(() => () => {
@@ -1604,8 +1622,8 @@ function extractStyleSignal(qa) {
 }
 
 // src/qa-loop/index.ts
-import { appendFile, mkdir as mkdir7, readFile as readFile7, writeFile as writeFile7 } from "node:fs/promises";
-import { dirname as dirname3, join as join8 } from "node:path";
+import { appendFile, mkdir as mkdir8, readFile as readFile7 } from "node:fs/promises";
+import { dirname as dirname4, join as join9 } from "node:path";
 
 // src/util/ctx-shape.ts
 var PROBE_NAMES = [
@@ -1811,7 +1829,7 @@ function registerQaLoop(ctx, config, deps) {
       return void 0;
     }
   }
-  const probePath = join8(expandHome(config.dataRoot), "events-probe.jsonl");
+  const probePath = join9(expandHome(config.dataRoot), "events-probe.jsonl");
   async function probe(subject, event, sessionId, origin) {
     if (!config.enableEventProbe) return;
     try {
@@ -1825,12 +1843,12 @@ function registerQaLoop(ctx, config, deps) {
         subjectKeys: subject && typeof subject === "object" ? Object.keys(subject).slice(0, 8) : null,
         dataKeys: data && typeof data === "object" ? Object.keys(data).slice(0, 10) : null
       });
-      await mkdir7(dirname3(probePath), { recursive: true });
+      await mkdir8(dirname4(probePath), { recursive: true });
       await appendFile(probePath, line + "\n", "utf8");
       const raw = await readFile7(probePath, "utf8");
       const lines = raw.split("\n").filter((l) => l.trim() !== "");
       if (lines.length > config.eventProbeMax) {
-        await writeFile7(probePath, lines.slice(-config.eventProbeMax).join("\n") + "\n", "utf8");
+        await writeFile(probePath, lines.slice(-config.eventProbeMax).join("\n") + "\n", "utf8");
       }
     } catch {
     }
@@ -1991,35 +2009,38 @@ function registerQaLoop(ctx, config, deps) {
     }
   }
   function describeScopeRouting(self, root) {
+    const attempt = (fn, fallback) => {
+      try {
+        return fn();
+      } catch {
+        return fallback;
+      }
+    };
     const symbolsOf = (value) => {
       const out = [];
       let cursor = value;
       for (let depth = 0; depth < 8 && cursor !== null && typeof cursor === "object"; depth += 1) {
-        const names = (() => {
-          try {
-            return Object.getOwnPropertySymbols(cursor).map((s) => String(s));
-          } catch {
-            return ["(throws)"];
-          }
-        })();
+        const names = attempt(() => Object.getOwnPropertySymbols(cursor).map((s) => String(s)), ["(throws)"]);
         out.push(`depth${depth}:${names.length > 0 ? names.join("|") : "-"}`);
-        cursor = Object.getPrototypeOf(cursor);
+        const parent = attempt(() => Object.getPrototypeOf(cursor), null);
+        if (parent === null) break;
+        cursor = parent;
       }
       return out;
     };
-    const nameOfFiber = (fiber2) => {
+    const nameOfFiber = (fiber2) => attempt(() => {
       const anyFiber = fiber2;
       const candidates = [anyFiber?.name, anyFiber?.runtime?.name, anyFiber?.entry?.options?.name];
       for (const candidate of candidates) if (typeof candidate === "string" && candidate !== "") return candidate;
       return typeof fiber2;
-    };
+    }, "(throws)");
     const chain = [];
-    let fiber = self.fiber;
+    let fiber = attempt(() => self.fiber, void 0);
     for (let depth = 0; depth < 24 && fiber !== null && fiber !== void 0; depth += 1) {
-      const anyFiber = fiber;
       chain.push(nameOfFiber(fiber));
-      if (anyFiber.parent === fiber) break;
-      fiber = anyFiber.parent;
+      const parent = attempt(() => fiber.parent, void 0);
+      if (parent === fiber || parent === void 0) break;
+      fiber = parent;
     }
     let loaderEntries = [];
     try {
@@ -2045,9 +2066,9 @@ function registerQaLoop(ctx, config, deps) {
       loaderEntries
     };
   }
-  const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
+  const diagPath = join9(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.19",
+    version: "0.1.20",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -2083,8 +2104,8 @@ function registerQaLoop(ctx, config, deps) {
   let diagDirty = false;
   async function flushDiag() {
     try {
-      await mkdir7(dirname3(diagPath), { recursive: true });
-      await writeFile7(diagPath, JSON.stringify(diag, null, 2) + "\n", "utf8");
+      await mkdir8(dirname4(diagPath), { recursive: true });
+      await writeFile(diagPath, JSON.stringify(diag, null, 2) + "\n", "utf8");
     } catch {
     }
   }
@@ -2191,19 +2212,6 @@ function registerQaLoop(ctx, config, deps) {
 
 // src/stats/index.ts
 import { join as join11 } from "node:path";
-
-// src/util/fs.ts
-import { mkdir as mkdir8, rename, writeFile as writeFile8 } from "node:fs/promises";
-import { dirname as dirname4, join as join9 } from "node:path";
-async function writeTextAtomic(path, text) {
-  await mkdir8(dirname4(path), { recursive: true });
-  const tmp = join9(dirname4(path), "." + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + ".tmp");
-  await writeFile8(tmp, text, "utf8");
-  await rename(tmp, path);
-}
-async function writeJsonAtomic(path, value) {
-  await writeTextAtomic(path, JSON.stringify(value, null, 2) + "\n");
-}
 
 // src/stats/summary.ts
 function ratio(part, whole) {
@@ -2335,7 +2343,7 @@ function suggest(summary, config, extra = {}) {
 }
 
 // src/stats/trace.ts
-import { appendFile as appendFile2, mkdir as mkdir9, readFile as readFile8, writeFile as writeFile9 } from "node:fs/promises";
+import { appendFile as appendFile2, mkdir as mkdir9, readFile as readFile8 } from "node:fs/promises";
 import { dirname as dirname5, join as join10 } from "node:path";
 function createTraceStore(dataRoot, options) {
   const path = join10(dataRoot, "decisions.jsonl");
@@ -2374,7 +2382,7 @@ function createTraceStore(dataRoot, options) {
       const kept = fresh.length > options.maxEntries ? fresh.slice(fresh.length - options.maxEntries) : fresh;
       if (kept.length !== all.length) {
         try {
-          await writeFile9(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
+          await writeFile(path, kept.map((entry) => JSON.stringify(entry)).join("\n") + (kept.length ? "\n" : ""), "utf8");
         } catch (error) {
           options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u88C1\u526A\u843D\u76D8\u5931\u8D25\uFF1A%o", error);
         }
@@ -2663,7 +2671,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt", "agents"];
-var VERSION = "0.1.19";
+var VERSION = "0.1.20";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;

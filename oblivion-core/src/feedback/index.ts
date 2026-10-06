@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { writeFile } from '../util/fs.js';
 import { dirname, join } from 'node:path';
 import type { AppContext } from '../core-types.js';
 import type { Config } from '../config.js';

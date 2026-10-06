@@ -47,6 +47,24 @@ function Assert-ScriptBom {
 }
 Assert-ScriptBom
 
+# ---- 自检：构建产物里不得再有第二份版本号 ----
+#
+# `lib/VERSION` 曾是 build 脚本的产物，于是版本号有了第二个来源：包根 `VERSION`（真源）与
+# `lib/VERSION`（产物）。2026-10-06 实测面板标题栏长期显示 0.0.1 —— 就是这个病。
+# 产物随时可以重建，绝不该承载真源；所以这里机器检查，删掉就不会再悄悄长回来。
+function Assert-NoLibVersion {
+  $bad = @()
+  Get-ChildItem $repoRoot -Directory -Filter 'oblivion-*' | ForEach-Object {
+    $artifact = Join-Path $_.FullName 'lib\VERSION'
+    if (Test-Path $artifact) { $bad += ($_.Name + '/lib/VERSION') }
+  }
+  if ($bad.Count -gt 0) {
+    throw ('以下构建产物里有第二份版本号（VERSION 是唯一真源，产物不许再存一份）：' + ($bad -join ', ') +
+      '。修法：删掉该文件，并确认 scripts/build.mjs 不再写它。')
+  }
+}
+Assert-NoLibVersion
+
 $runtimeRoot = $env:DSH_RUNTIME_ROOT
 if (-not $runtimeRoot) {
   $runtimeRoot = Join-Path $env:USERPROFILE '.dsh\dsh-runtimes\dsh-primary-runtime'

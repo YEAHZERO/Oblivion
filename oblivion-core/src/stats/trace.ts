@@ -1,4 +1,5 @@
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { writeFile } from '../util/fs.js';
 import { dirname, join } from 'node:path';
 import { now } from '../util/time.js';
 

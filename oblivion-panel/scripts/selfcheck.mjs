@@ -42,12 +42,13 @@ mkdirSync(dataRoot, { recursive: true });
 mkdirSync(join(mdRoot, '01_问答沉淀'), { recursive: true });
 writeFileSync(
   join(dataRoot, 'status.json'),
-  JSON.stringify({ version: '0.1.5', mdRoot, stats: { turns: 4, evaluated: 3, noQa: 1, captured: 1, rejected: 2, captureRate: 0.333, byReason: { captured: 1, 'answer-too-short': 2 } }, hints: [] }),
+  JSON.stringify({ version: '0.1.5', mdRoot, config: { statsRetentionDays: 90, statsMaxEntries: 5000 }, stats: { turns: 4, evaluated: 3, noQa: 1, captured: 1, rejected: 2, captureRate: 0.333, byReason: { captured: 1, 'answer-too-short': 2 } }, hints: [] }),
   'utf8',
 );
 writeFileSync(
   join(dataRoot, 'decisions.jsonl'),
-  [JSON.stringify({ at: 3, action: 'ignored', pass: false, reason: 'answer-too-short', ms: 1 })].join('\n') + '\n',
+  // `at` 必须落在保留期内：面板与 core `trace.read()` 同口径裁剪，过期留痕会被丢掉。
+  [JSON.stringify({ at: Date.now() - 1000, action: 'ignored', pass: false, reason: 'answer-too-short', ms: 1 })].join('\n') + '\n',
   'utf8',
 );
 writeFileSync(join(dataRoot, 'ts-9.json'), JSON.stringify({ id: 'ts-9', topic: 't', title: '自检条目', created_at: 9, status: 'active', version: 1, sources: [] }), 'utf8');
@@ -104,9 +105,42 @@ await check('路由真跑：GET 返回快照 JSON（含 stats / recent / items /
   assert.equal(json.ok, true);
   assert.equal(json.core.version, '0.1.5');
   assert.equal(json.trace.recent.length, 1);
+  // 顶部 KPI 现算：status.json 里写的是 4 轮 / 已沉淀 1，留痕里其实只有 1 行、0 条沉淀
+  assert.equal(json.live.turns, 1, 'live 统计应来自 decisions.jsonl，而不是 core 的装载快照');
+  assert.equal(json.live.evaluated, 1);
+  assert.equal(json.live.captured, 0);
+  assert.equal(json.live.captureRate, 0);
+  const kit = await import(pathToFileURL(kitPath).href);
+  assert.deepEqual(
+    kit.topBlocker(json.live.byReason),
+    { reason: 'answer-too-short', count: 1 },
+    'captured 不能被当成拦截原因',
+  );
   assert.equal(json.items.length, 1);
   assert.equal(json.notes.length, 1);
   return 'core v' + json.core.version + ' / 判定 ' + json.trace.recent.length + ' / 条目 ' + json.items.length + ' / 笔记 ' + json.notes.length;
+});
+
+await check('留痕现算统计与 core 同口径（no-qa 不计入已评估 / captured 不算拦截）', async () => {
+  const kit = await import(pathToFileURL(kitPath).href);
+  const at = Date.now();
+  const rows = [
+    { at, action: 'created', pass: true, reason: 'captured', score: 0.8 },
+    { at, action: 'ignored', pass: false, reason: 'below value threshold', score: 0.21 },
+    { at, action: 'ignored', pass: false, reason: 'below value threshold', score: 0.19 },
+    { at, action: 'no-qa', pass: false, reason: '本轮没有问答轮' },
+  ];
+  const live = kit.summarizeDecisions(rows, { parsed: 4, dropped: 0, windowDays: 90 });
+  assert.equal(live.turns, 4);
+  assert.equal(live.noQa, 1);
+  assert.equal(live.evaluated, 3, 'no-qa 不计入已评估（与 core summarize 一致）');
+  assert.equal(live.captured, 1);
+  assert.equal(live.rejected, 2);
+  assert.equal(live.captureRate, 0.333);
+  assert.equal(live.score.belowThreshold, 2);
+  assert.deepEqual(kit.topBlocker(live.byReason), { reason: 'below value threshold', count: 2 });
+  assert.equal(kit.topBlocker({ captured: 5 }), null, '全通过时应返回 null（面板显示「全部通过，无拦截」）');
+  return 'evaluated ' + live.evaluated + ' / captured ' + live.captured + ' / 拦截 ' + kit.topBlocker(live.byReason).reason;
 });
 
 await check('非 GET 一律 405（只读面不接受写）', async () => {
