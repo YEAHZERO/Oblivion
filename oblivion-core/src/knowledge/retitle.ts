@@ -32,6 +32,12 @@ export interface NoteMeta {
   topic: string;
   tags: string[];
   ask: string;
+  /**
+   * 这篇名字是谁起的：`'model'` 表示模型起的（`oblivion_retitle` / 模型回填）。
+   * 规则管线（`rename-notes.mjs` 的字符串命名）看到这个标记就**不再改动它** ——
+   * 否则下一次回填会把模型起的内容名重新算回「去水词后的整句问句」。
+   */
+  namedBy: string;
   id: string;
   version: number;
 }
@@ -54,6 +60,8 @@ export interface NoteRef {
    * ⇒ `listNotes()` 统一回退到 `title`，模型在候选列表里也就一定能看到「这篇原来在问什么」。
    */
   ask: string;
+  /** 名字来源（`'model'` 表示模型起的）—— 规则管线据此让路，见 `NoteMeta.namedBy`。 */
+  namedBy: string;
   excerpt: string;
   mtime: number;
 }
@@ -61,6 +69,7 @@ export interface RetitleEntry {
   id: string;
   title: string;
   tags?: string[];
+  namedBy?: string;
 }
 export interface RetitleResult {
   id: string;
@@ -117,6 +126,7 @@ export function parseNote(raw: string): ParsedNote {
       topic: asString(field('topic')),
       tags: asArray(field('tags')),
       ask: asString(field('ask')),
+      namedBy: asString(field('named_by')),
       id: marker ? marker[1] : '',
       version: marker ? Number(marker[2]) : 0,
     },
@@ -144,11 +154,15 @@ function setField(frontmatter: string, key: string, value: string): string {
  * 并在第一次改名时把**原问句**留成 `ask:` / `>Ask：` —— 名字回答「这里讲了什么」，
  * `ask` 回答「我当时问的是什么」，两个都要留下。
  */
-export function renderNote(parsed: ParsedNote, next: { title: string; tags?: string[]; ask?: string }): string {
+export function renderNote(
+  parsed: ParsedNote,
+  next: { title: string; tags?: string[]; ask?: string; namedBy?: string },
+): string {
   const title = next.title.trim();
   // 注意用 `||` 而不是 `??`：`parseNote()` 把缺失字段读成**空串**，`??` 会认它「已给值」，
   // 于是 `ask` 永远为空 —— 回填那一轮 54 篇笔记就这样漏掉了 `ask:`/`>Ask：`。
   const ask = (next.ask || parsed.meta.ask || parsed.meta.title).trim();
+  const namedBy = (next.namedBy || parsed.meta.namedBy || '').trim();
   let frontmatter = parsed.frontmatter;
   if (frontmatter !== '') {
     frontmatter = setField(frontmatter, 'title', JSON.stringify(title));
@@ -156,6 +170,7 @@ export function renderNote(parsed: ParsedNote, next: { title: string; tags?: str
       frontmatter = setField(frontmatter, 'tags', '[' + next.tags.map((t) => JSON.stringify(t)).join(', ') + ']');
     }
     if (ask !== '') frontmatter = setField(frontmatter, 'ask', JSON.stringify(ask));
+    if (namedBy !== '') frontmatter = setField(frontmatter, 'named_by', JSON.stringify(namedBy));
   }
 
   const lines = parsed.body.split(/\r?\n/);
@@ -197,6 +212,7 @@ export async function listNotes(dir: string, limit = 10): Promise<NoteRef[]> {
       topic: parsed.meta.topic,
       tags: parsed.meta.tags,
       ask: parsed.meta.ask || parsed.meta.title,
+      namedBy: parsed.meta.namedBy,
       excerpt: contentSection(parsed.body).replace(/\s+/g, ' ').slice(0, 80),
       mtime: info ? info.mtimeMs : 0,
     });
@@ -243,7 +259,7 @@ export async function applyRetitle(
 
     const raw = await readFile(note.path, 'utf8');
     const parsed = parseNote(raw);
-    const content = renderNote(parsed, { title, tags: entry.tags });
+    const content = renderNote(parsed, { title, tags: entry.tags, namedBy: entry.namedBy });
     await writeFile(note.path, content, 'utf8');
 
     let target = note.file;

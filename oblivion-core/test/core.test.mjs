@@ -429,6 +429,31 @@ related_wiki: []
     }
   });
 
+  it('文件名绝不带首尾的点/空格（模型给过「.gitignore …」这种名字）', () => {
+    assert.equal(kit.fileNameOf({ title: '.gitignore 整棵忽略 + 搜索插件分工' }), 'gitignore 整棵忽略 + 搜索插件分工');
+    assert.equal(kit.fileNameOf({ title: '结尾的点.' }), '结尾的点');
+    assert.equal(kit.fileNameOf({ title: '...' }), 'untitled', '全被清掉时不能变成空名');
+  });
+
+  it('名字来源可标记：named_by: model 写进 frontmatter，listNotes 读得回', async () => {
+    const f = fixture();
+    try {
+      const svc = serviceOf(f);
+      await svc.apply([{ id: 'ts-test-1', title: 'Oblivion 具体实施计划', namedBy: 'model' }]);
+      const note = readFileSync(join(f.mdDir, 'Oblivion 具体实施计划.md'), 'utf8');
+      assert.ok(note.includes('named_by: "model"'), '要写下名字来源，规则管线据此让路');
+      const again = await kit.listNotes(f.mdDir, 10);
+      assert.equal(again[0].namedBy, 'model');
+      // 再改一次名字时标记不该被抹掉（模型起的名字始终是模型起的）
+      await svc.apply([{ id: 'ts-test-1', title: 'Oblivion 落地步骤' }]);
+      const moved = readFileSync(join(f.mdDir, 'Oblivion 落地步骤.md'), 'utf8');
+      assert.ok(moved.includes('named_by: "model"'), '标记要保住');
+      assert.equal((moved.match(/named_by:/g) ?? []).length, 1, 'named_by 行只写一次');
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+
   it('工具两段式：不带 items 给候选，带 items 落地；服务缺席时只回 skipped', async () => {
     const f = fixture();
     try {
@@ -453,6 +478,11 @@ related_wiki: []
       assert.equal(applied.total, 1);
       assert.equal(applied.renamed, 1);
       assert.deepEqual(applied.failed, []);
+      // 工具这条路的名字一律记来源：规则管线（rename-notes.mjs）看到它就跳过
+      assert.ok(
+        readFileSync(join(f.mdDir, 'Oblivion 具体实施计划.md'), 'utf8').includes('named_by: "model"'),
+        '模型面工具改的名要标 named_by: model',
+      );
 
       const none = new Map();
       const ctx2 = { tools: { register: (d) => none.set(d.name, d) } };

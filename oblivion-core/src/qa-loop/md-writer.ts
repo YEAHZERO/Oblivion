@@ -93,7 +93,16 @@ export function classifyDir(item: KnowledgeItem, map: MdClassifyMap | undefined)
 }
 
 function safeName(topic: string): string {
-  return (topic || 'untitled').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
+  const cleaned = (topic || 'untitled')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    // 首尾的点/空格是**实际踩过的坑**：模型给的名字是「.gitignore 整棵忽略 + 搜索插件分工」，
+    // 落成的文件以 `.` 开头 ⇒ `listNotes()`（有意跳过点开头文件）再也看不到它，
+    // 面板不显示、改名工具找不到（`note-not-found`）。Windows 还会吃掉结尾的点与空格。
+    .replace(/^[.\s]+/, '')
+    .replace(/[.\s]+$/, '')
+    .slice(0, 80)
+    .trim();
+  return cleaned === '' ? 'untitled' : cleaned;
 }
 
 /**

@@ -307,7 +307,9 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
           })),
         });
       }
-      const { results, index } = await deps.retitle.apply(items);
+      // 走这条路的名字都记成 `named_by: "model"`：字符串命名管线（回填脚本）看到标记就让路，
+      // 免得下一次回填把模型起的内容名重新算回「去水词后的整句问句」。
+      const { results, index } = await deps.retitle.apply(items.map((it) => ({ ...it, namedBy: 'model' })));
       const ok = results.filter((r) => r.ok);
       return asCanonical({
         mode: 'apply',

@@ -13,6 +13,9 @@
  *   node scripts/rename-notes.mjs                       # 预览
  *   node scripts/rename-notes.mjs --apply               # 落地
  *   node scripts/rename-notes.mjs --apply --clean-tmp   # 顺带清掉原子写残留的 .*.tmp
+ *
+ * **不碰模型起过名的笔记**：笔记 frontmatter 里带 `named_by: "model"`（`oblivion_retitle` 写的）
+ * 时直接跳过 —— 字符串规则只会把它算回「去水词后的整句问句」，那是倒退。要强行覆盖用 `--force`。
  */
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -35,6 +38,7 @@ const apply = flag('apply');
 const withTags = !flag('no-tags');
 const cleanTmp = flag('clean-tmp');
 const asJson = flag('json');
+const force = flag('force');
 const limit = Number(value('limit', '0')) || 0;
 const tmpAgeMin = Number(value('tmp-age-min', '10')) || 10;
 const mdRoot = resolve(expandHome(value('root', DEFAULT_CONFIG.mdRoot)));
@@ -89,12 +93,17 @@ const dirs = (await readdir(mdRoot, { withFileTypes: true }).catch(() => []))
   .sort();
 
 const plan = [];
+const modelNamed = [];
 for (const dir of dirs) {
   const dirPath = join(mdRoot, dir);
   const notes = await listNotes(dirPath, limit);
   for (const note of notes) {
     const raw = await readFile(note.path, 'utf8').catch(() => '');
     if (raw === '') continue;
+    if (note.namedBy === 'model' && !force) {
+      modelNamed.push(`${dir}/${note.file}`);
+      continue;
+    }
     const parsed = parseNote(raw);
     const question = note.ask || note.title;
     const answer = contentSection(parsed.body);
@@ -110,7 +119,7 @@ for (const dir of dirs) {
   }
 }
 
-const result = { apply, mdRoot, dataDir, planned: plan.length, renamed: plan.filter((p) => p.renamed).length, retagged: plan.filter((p) => p.retagged).length, notes: plan };
+const result = { apply, mdRoot, dataDir, planned: plan.length, renamed: plan.filter((p) => p.renamed).length, retagged: plan.filter((p) => p.retagged).length, modelNamed: modelNamed.length, notes: plan };
 
 if (asJson) {
   console.log(JSON.stringify(result, null, 2));
@@ -123,6 +132,12 @@ if (asJson) {
     console.log(`  ${mark} ${item.dir}/${item.file} → ${item.renamed ? item.nextFile : item.file}${tail}`);
   }
   console.log(`共 ${plan.length} 篇需要动：改名 ${result.renamed}、只改标签 ${plan.filter((p) => p.retagged && !p.renamed).length}`);
+  if (modelNamed.length > 0) {
+    console.log(`另有 ${modelNamed.length} 篇是模型起的名（named_by: model），规则管线让路，不改：`);
+    for (const name of modelNamed.slice(0, 5)) console.log(`  跳过 ${name}`);
+    if (modelNamed.length > 5) console.log(`  …另有 ${modelNamed.length - 5} 篇`);
+    console.log('  要强行覆盖：加 --force');
+  }
 }
 
 if (apply && plan.length > 0) {

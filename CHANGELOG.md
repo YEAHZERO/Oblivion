@@ -12,7 +12,30 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/brand` v0.1.3 + `@oblivion/core` v0.2.2 + `@oblivion/panel` v0.0.13：沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+## [未发布] — `@oblivion/brand` v0.1.3 + `@oblivion/core` v0.2.3 + `@oblivion/panel` v0.0.13：沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+
+### `@oblivion/core` v0.2.3 —— 模型起的名不再被规则管线改回去（`named_by`）+ 文件名不带头尾的点
+
+- 所有者要的「让模型……顺手给最近的笔记改名打标签」在 `v0.2.2` 交付了工具，本次**真的用它改了名**：
+  对**最近 24 篇**逐篇读「原问句 + 答案小标题 + 首段」后给出内容名与 2–5 个标签，
+  24/24 成功、索引重建 73 条。例：
+  `还是不行.md → 三条证据推翻环境变量假说.md`、
+  `继续查并修掉这个激活问题.md → 激活排查：schema 方言与 inject 服务名.md`、
+  `%LOCALAPPDATA%_ms-playwright_ch.md → ms-playwright 版本错配：1234 不是 1243.md`、
+  `是哪个插件.md → 截图里的插件是 dsh-better-sidebar.md`、
+  `C__Programs_AITech_CodexCLI_npm.md → CodexCLI 缓存调查：插件接口细节与三个坑.md`。
+- **新增 `named_by` 标记（`"model"`）**：`NoteMeta.namedBy` / `NoteRef.namedBy` / `RetitleEntry.namedBy`，
+  `renderNote()` 写 frontmatter `named_by`；`oblivion_retitle` 落地时一律带 `named_by: "model"`；
+  `scripts/rename-notes.mjs` 见到这个标记**直接跳过**（打印前 5 条 + 「另有 N 篇」，`--force` 可覆盖）。
+  理由：字符串命名只会把内容名重新算回「去水词后的整句问句」—— 那是倒退，
+  一次回填就会把模型的工作全部抹平。实测现在的 dry-run 输出是
+  `共 0 篇需要动：改名 0、只改标签 0` + `另有 24 篇是模型起的名（named_by: model），规则管线让路，不改`。
+- **修掉 `safeName()` 的首尾点/空格**（本机真实撞到）：模型给的名字「`.gitignore` 整棵忽略 + 搜索插件分工」
+  落成的文件以 `.` 开头，而 `listNotes()` 有意跳过点开头的文件（避免 `.tmp` 之类）⇒
+  这篇笔记**从插件视野里消失**：面板不显示，改名工具对它报 `note-not-found`（24 条里唯一一条失败）。
+  现在 `safeName()` 先清首尾 `.` 与空白、再截断、清空了就退回 `untitled`（Windows 也会吃掉结尾的点与空格）。
+  已把那份笔记手工改成不带点的名字并重新落地。
+- `test/core.test.mjs` **25/25**（新增：`named_by` 写入与保住 / 文件名不带首尾点 / 工具落地也带标记）。
 
 ### `@oblivion/core` v0.2.2 —— 存量回填（53 篇）+ 清临时文件 + 模型面改名工具 `oblivion_retitle`
 

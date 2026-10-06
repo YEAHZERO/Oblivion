@@ -284,6 +284,11 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
 改名不丢信息（原问句进 `ask`）；改名必须同步条目 JSON（落盘路径是按名字算的，
 只改文件名不同步条目，下一次同条目写入会按旧名再起一份）。
 
+模型起的名会写 frontmatter `named_by: "model"`，**规则管线看到就让路**：`rename-notes.mjs`
+跳过这类笔记（要强行覆盖用 `--force`）—— 否则下一次回填会把内容名重新算回
+「去水词后的整句问句」，等于把模型的工作抹掉。文件名另有一层保护：首尾的点与空白会被清掉，
+因为以 `.` 开头的笔记会被 `listNotes()` 跳过（面板与工具都看不见它）。
+
 存量回填用同一套读写逻辑，走脚本（默认 dry-run）：
 
 ```powershell
