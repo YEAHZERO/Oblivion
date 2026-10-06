@@ -566,6 +566,39 @@ describe('关联知识双链：单段合并、去重、丢弱标题（md-writer�
     }
   });
 
+  it('prune 模式：陈旧双链（目标笔记已不在盘上）可以被清掉', async () => {
+    const tmp = mkdtemp(join(tmpdir(), 'oblivion-links3-'));
+    try {
+      const path = join(tmp, '笔记.md');
+      writeFileSync(path, CLUTTERED, 'utf8');
+      // 合并模式会**保住**已有链接 —— 这正是现场 513 条双链里 478 条悬空的原因
+      // （候选来自条目，条目的 title 被改名回填改掉之后，旧链接就再也指不到文件了）。
+      assert.equal(
+        await kit.appendRelatedLinks(path, ['继续查并修掉这个激活问题'], { prune: true }),
+        true,
+      );
+      const pruned = readFileSync(path, 'utf8');
+      assert.ok(pruned.includes('- [[继续查并修掉这个激活问题]]'), pruned);
+      assert.ok(!pruned.includes('[[激活排查]]') && !pruned.includes('[[数据目录归属之谜]]'), '陈旧链接要清掉：' + pruned);
+      assert.equal(pruned.split(kit.RELATED_HEADER).length - 1, 1, '仍然只有一段');
+      assert.ok(pruned.includes('正文不能被双链改写。'), '正文不动');
+
+      // 幂等
+      assert.equal(
+        await kit.appendRelatedLinks(path, ['继续查并修掉这个激活问题'], { prune: true }),
+        false,
+      );
+
+      // prune + 空列表 ⇒ 段整个去掉（不留空标题）
+      assert.equal(await kit.appendRelatedLinks(path, [], { prune: true }), true);
+      const empty = readFileSync(path, 'utf8');
+      assert.ok(!empty.includes(kit.RELATED_HEADER), '没有链接就不该留空段：' + empty);
+      assert.ok(empty.includes('正文不能被双链改写。'), '正文还在');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('用户自有笔记与「全是弱标题」两种情况都不动文件', async () => {
     const tmp = mkdtemp(join(tmpdir(), 'oblivion-links2-'));
     try {

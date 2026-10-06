@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { writeFile } from '../util/fs.js';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { AppContext } from '../core-types.js';
 import type { Config } from '../config.js';
 import type { GraphService } from '../graph/index.js';
@@ -314,23 +314,41 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
 
       // 双链写回 + 索引重建：都是"锦上添花"，失败只记日志，不影响捕获本身。
       try {
-        const related = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
+        const all = deps.knowledge.index.all();
+        const related = findRelatedItems(result.item, all, { limit: 5 });
+        // 双链指向的是**落盘文件名**（`[[标题]]` 在 Obsidian 里按文件名解析），而条目 `title`
+        // 会被改名回填改掉 ⇒ 一条链接只有在「那篇笔记真的在盘上」时才算数，否则就是点不开的
+        // 悬空链接（现场实测 513 条双链里只有 35 条能对上文件，全是这么来的）。
+        const stemOf = async (id: string): Promise<string> => {
+          const item = all.find((candidate) => candidate.id === id);
+          if (!item) return '';
+          const path = await notePathFor(mdRoot, item, config.mdClassify);
+          return path === '' ? '' : basename(path).replace(/\.md$/i, '');
+        };
+        const newStem = notePath === '' ? '' : basename(notePath).replace(/\.md$/i, '');
         // 正向：新笔记里指向相关条目
-        if (related.length > 0 && notePath !== '') {
-          await appendRelatedLinks(notePath, related.map((item) => item.title));
+        if (newStem !== '') {
+          const forward: string[] = [];
+          for (const rel of related) {
+            const stem = await stemOf(rel.id);
+            if (stem !== '') forward.push(stem);
+          }
+          if (forward.length > 0) await appendRelatedLinks(notePath, forward);
         }
         // 反向（①：双链反向回填既有笔记）：相关条目的笔记里也指向这条新笔记，
         // 否则链接是单向的 —— 在 Obsidian 里读旧笔记永远看不到新沉淀。
         // 安全前提：`appendRelatedLinks` 只写含 `oblivion:` 标记的笔记，
         // 用户自有笔记一个字都不动；`notePathFor` 找不到文件时返回 ''（绝不新建）。
-        for (const item of related) {
-          const existingItem = deps.knowledge.index.all().find((candidate) => candidate.id === item.id);
-          if (!existingItem) continue;
-          const path = await notePathFor(mdRoot, existingItem, config.mdClassify);
-          if (path === '') continue;
-          await appendRelatedLinks(path, [result.item.title]);
+        if (newStem !== '') {
+          for (const rel of related) {
+            const item = all.find((candidate) => candidate.id === rel.id);
+            if (!item) continue;
+            const path = await notePathFor(mdRoot, item, config.mdClassify);
+            if (path === '') continue;
+            await appendRelatedLinks(path, [newStem]);
+          }
         }
-        await writeIndexNote(mdRoot, deps.knowledge.index.all());
+        await writeIndexNote(mdRoot, all);
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + ' 双链/索引写回失败：%o', error);
       }

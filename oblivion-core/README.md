@@ -169,11 +169,11 @@ oblivion-core/
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` 132,183 B + `lib/testkit.js`（v0.2.5） |
+| `pnpm run build` | ✅ `lib/index.js` 132,862 B + `lib/testkit.js`（v0.2.6） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **33/33**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 9 工具注册 + 整理结构 + 改名打标签 + **双链单段化** + **双链按文件名** + **主题页落盘/回链/重跑**」） |
+| `pnpm run test` | ✅ **34/34**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 9 工具注册 + 整理结构 + 改名打标签 + **双链单段化** + **双链按文件名** + **prune 清陈旧双链** + **主题页落盘/回链/重跑**」） |
 | `pnpm run selfcheck` | ✅ **32/32**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、**会话整理落盘**、**盲区修正（superseded + 00-Index）**、**冲突并列页**、**图谱双链**、**命名与打标签**、**关联知识单段化**、**双链按文件名**、**主题页**） |
-| `pnpm run check:version` | ✅ `0.2.5` 一致 |
+| `pnpm run check:version` | ✅ `0.2.6` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **8/8**（host / `tools`·`systemPrompt` / `session/event`·`turn/end` / `dsh-tools`·`dsh-system-prompt` / mount `dependencies`） |
 | 真实 Host 装载 | ⏳ **仍未验证**：`agent/created` + `agents.list()` 两条作用域订阅已上线（v0.1.7/v0.1.8），但探针仍为空；v0.1.10 的 `mount-diag.json` 需要**重启一次 App** 才能上机 |
@@ -336,6 +336,13 @@ node scripts/rename-notes.mjs --dirs 01_问答沉淀 --apply --clean-tmp --tmp-a
 上限 30 条；内容没有变化时直接返回 `false` **不写盘**（幂等 —— 重试与重跑不会把笔记改出 diff）。
 写出去之前，链接文本统一过一遍 `safeName()`（`safeName` 已导出）—— 于是**按文件名解析**，
 且「从文件里读出的旧链接」与「新链接」在归一化之后能正确去重。
+
+**链向真实存在的笔记**：候选来自**条目**（`findRelatedItems()` 拿 `item.title`），而条目 `title`
+会被改名回填改掉 ⇒ 只用 `notePathFor()` 找得到笔记的条目做双链，找不到就不连。
+现场实测（v0.2.6 前）：56 篇笔记里 513 条双链只有 35 条能对上文件 —— 全是"条目名改过、链接没跟着改"
+留下的。维护时用 `appendRelatedLinks(path, titles, { prune: true })` **重建**该段
+（丢掉不在 `titles` 里的旧链接；`titles` 为空则把段整个去掉）；重建后现场剩 381 条、全部可解析、
+复跑写盘 0 篇。
 
 ### 9.4 调参（改 config，不写代码）
 

@@ -747,7 +747,17 @@ await check('关联知识双链：重复段并成一段 + 丢弱标题 + 幂等�
   const fixed = readFileSync(path, 'utf8');
   assert.ok(fixed.includes('- [[清理死进程残留 + cordis_group 形状核对]]'), '关联知识要按文件名：' + fixed);
   assert.equal(await kit.appendRelatedLinks(path, ['数据目录归属之谜']), false, '第二次不该再写盘');
-  return '段 1 个 / 链接 3 条 / 弱标题已清 / 链接按文件名';
+  // prune：维护脚本用它清掉「目标笔记已不在盘上」的陈旧双链（现场 513 条里 478 条指不到文件）
+  assert.equal(
+    await kit.appendRelatedLinks(path, ['数据目录归属之谜'], { prune: true }),
+    true,
+    'prune 模式应该把不在列表里的链接清掉',
+  );
+  const pruned = readFileSync(path, 'utf8');
+  assert.ok(!pruned.includes('- [[激活排查]]'), 'prune 后只留本次给的链接：' + pruned);
+  assert.ok(pruned.includes('- [[数据目录归属之谜]]'), '本次给的链接要在');
+  assert.equal(await kit.appendRelatedLinks(path, ['数据目录归属之谜'], { prune: true }), false, 'prune 也要幂等');
+  return '段 1 个 / 链接按文件名 / prune 清陈旧 / 幂等';
 });
 
 await check('主题页（oblivion_wiki）：模型判簇 → 落 02_Wiki页面/ + 成员回链 + 重跑更新同一页', async () => {

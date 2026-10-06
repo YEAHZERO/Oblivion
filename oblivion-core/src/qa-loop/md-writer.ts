@@ -430,6 +430,16 @@ function splitRelated(text: string): { head: string; links: string[] } {
   return { head: kept.join('\n'), links };
 }
 
+export interface RelatedOptions {
+  /**
+   * **重建**而不是合并：丢掉段里已有的链接，只留本次 `titles`。
+   *
+   * 给维护脚本用（`graph/backlink` 的候选来自条目，而条目的 `title` 会被改名回填改掉 ⇒
+   * 段里会留下指向「已不存在的笔记」的陈旧链接；合并模式永远清不掉它们）。
+   */
+  prune?: boolean;
+}
+
 /**
  * 给既有笔记写「关联知识」双链段（图谱生长的"双链写回"）。
  *
@@ -437,28 +447,41 @@ function splitRelated(text: string): { head: string; links: string[] } {
  * （`[[OK]]`、`[[继续]]` 这类应答不构成知识），最多 `RELATED_MAX` 条。
  * 因此这个函数现在也是**清理器**：老笔记里堆着的重复段会在下一次写回时被并成一段。
  *
+ * 从 0.2.6 起：`options.prune` 走**重建**语义（见 `RelatedOptions`）。
+ *
  * 幂等：段已经是「单段、无重复、无弱标题、无新增」时**不写盘**（返回 `false`）。
  * **只动我们自己写的笔记**（含 `oblivion:` 标记）—— 用户自有笔记一个字都不改（与防误伤同一条原则）。
  */
-export async function appendRelatedLinks(notePath: string, titles: string[]): Promise<boolean> {
+export async function appendRelatedLinks(
+  notePath: string,
+  titles: string[],
+  options: RelatedOptions = {},
+): Promise<boolean> {
   // 双链写的是**磁盘文件名**：`[[标题]]` 里若带 `:` `/`，Obsidian 找不到那篇笔记（悬空链接）。
   const target = (t: string): string => safeName(String(t).trim().replace(/^\[\[|\]\]$/g, ''));
   const wanted = titles
     .map(target)
     // 弱标题不进双链：回填实测的 `[[OK]]`、`[[继续]]` 就是从这里漏进来的。
     .filter((t) => t !== '' && t !== 'untitled' && !isWeakTitle(t));
-  if (wanted.length === 0) return false;
+  if (wanted.length === 0 && options.prune !== true) return false;
   const existing = await readFile(notePath, 'utf8').catch(() => '');
   if (existing === '' || !existing.includes(ID_MARKER)) return false;
 
   const { head, links } = splitRelated(existing);
-  const merged = links.map(target).filter((t) => t !== '' && t !== 'untitled' && !isWeakTitle(t));
+  const merged =
+    options.prune === true
+      ? []
+      : links.map(target).filter((t) => t !== '' && t !== 'untitled' && !isWeakTitle(t));
   for (const title of wanted) if (!merged.includes(title)) merged.push(title);
   const final = merged.slice(0, RELATED_MAX);
 
   const clean = head.trimEnd();
-  const block = ['', RELATED_HEADER, '', final.map((t) => '- [[' + t + ']]').join('\n'), ''].join('\n');
-  const rebuilt = clean + '\n' + block;
+  // 重建后一条都没有：把段整个去掉（别留一个空标题）
+  const block =
+    final.length === 0
+      ? ''
+      : ['', RELATED_HEADER, '', final.map((t) => '- [[' + t + ']]').join('\n'), ''].join('\n');
+  const rebuilt = final.length === 0 ? clean + '\n' : clean + '\n' + block;
   // 逐字比「重建结果」而不是比链接个数：这样「段之间的空行/重复段被并掉/弱标题被清掉」
   // 这些**规范化**动作都会被认成「需要写盘」，而真正干净的文件一个字都不会被碰。
   if (rebuilt.trimEnd() === existing.trimEnd()) return false;
