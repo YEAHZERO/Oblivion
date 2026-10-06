@@ -410,7 +410,7 @@ export function apply(ctx: Context) {
 |---|---|---|
 | **服务访问** | 通过属性名访问已注册的服务 | `ctx.llm`、`ctx.knowledge`、`ctx.tools` |
 | **依赖声明** | 通过 `inject` 声明需要哪些服务 | `export const inject = ['llm', 'knowledge']` |
-| **事件系统** | `ctx.on()` 订阅、`ctx.emit()` 发布 | `ctx.on('session:complete', handler)` |
+| **事件系统** | `ctx.on()` 订阅、`ctx.emit()` 发布 | `ctx.on('session/event', (session, event) => { if (event.type !== 'turn/end') return; /* handler */ })` |
 | **副作用管理** | `ctx.effect()` 注册清理函数 | `ctx.effect(() => { const t = setInterval(...); return () => clearInterval(t); })` |
 | **服务注册** | 插件通过 `ctx.provide()` 对外暴露能力 | `ctx.provide('knowledge', knowledgeService)` |
 | **子上下文** | `ctx.isolate()` 创建隔离作用域 | 用于多会话隔离 |
@@ -843,7 +843,9 @@ export const name = 'oblivion-qa-loop';
 export const inject = ['llm', 'knowledge', 'session'];  // ← 用 DSH 的服务名
 
 export function apply(ctx: Context) {
-  ctx.on('session:complete', async (session) => {
+  ctx.on('session/event', async (session, event) => {
+    if (event.type !== 'turn/end') return;
+    // turn/end 的 data.turn 是轮次号（没有 event.turnId）
     const answer = session.lastAnswer;
     if (await isHighValue(answer, ctx)) {
       await ctx.knowledge.inject(answer);
@@ -898,7 +900,7 @@ export function apply(ctx: Context) {
     return () => clearInterval(timer);
   });
 
-  ctx.on('session:complete', handler);
+  ctx.on('session/event', (session, event) => { if (event.type !== 'turn/end') return; /* handler */ });
 }
 ```
 
@@ -1180,7 +1182,7 @@ Oblivion/
 | 项 | 内容 |
 |---|---|
 | 依赖 | DSH `llm`、`session`、Oblivion `knowledge` |
-| 触发 | 订阅 DSH `session:complete` 事件 |
+| 触发 | 订阅 DSH `session/event` 的 `turn/end` 事件（**没有** `session:complete`，实测 0 命中） |
 | 逻辑 | 捕获问答 → 四层筛选 → 注入知识库 |
 | 配置 | `semanticThreshold`（默认 0.85）、`autoInject`（默认 true） |
 
@@ -1189,7 +1191,7 @@ Oblivion/
 | 项 | 内容 |
 |---|---|
 | 依赖 | DSH `llm`、`session` |
-| 触发 | 主动触发（`session:complete`）+ 深度触发（连续 3 次同维度） |
+| 触发 | 主动触发（`turn/end`）+ 深度触发（连续 3 次同维度） |
 | 输出 | 通过 DSH `session:thinking` 事件注入 UI |
 | 配置 | `autoTriggerEnabled`、`maxAutoPerSession`（默认 3）、`maxStimulationsPerSession`（默认 5） |
 
@@ -1896,7 +1898,7 @@ md_sync:
 
 | 事件                 | 触发时机     | 载荷                                          |
 | -------------------- | ------------ | --------------------------------------------- |
-| `session:complete`   | 会话完成     | `{ sessionId, question, answer, references }` |
+| `turn/end`           | 一轮问答结束 | `{ sessionId, turn, question, answer, references }`（**实测**：`session:complete` 不存在） |
 | `session:thinking`   | 思维激荡生成 | `{ sessionId, perspective }`                  |
 | `knowledge:created`  | 知识创建     | `{ knowledgeId, sourceType }`                 |
 | `knowledge:updated`  | 知识更新     | `{ knowledgeId }`                             |

@@ -1,0 +1,19 @@
+# ============================================================
+# @oblivion/core — DSHX 清单
+#
+# id 必须与 package.json 的 name 逐字相同（dshx 有一条硬校验
+# plugin.id === packageName）。目录名 oblivion-core 只用于人读，
+# 同时也是 pnpm-workspace.yaml 里 `oblivion-*` glob 的匹配项。
+#
+# marker 必须与 src/index.ts 里的 console.log 逐字相同，
+# dshx verify-boot 用它证明 apply() 真的跑过。
+#
+# 本机限制：MCP 工具面（dshx_check 等）全废，因为都要先跑
+# `dshx creator claim`，而 claim 依赖 POSIX `ps -o lstart=`。
+# 改用 CLI：见 README 的「安装」一节。
+# ============================================================
+id: '@oblivion/core'
+entry: src/index.ts
+marker: "[oblivion-core] loaded"
+kind: object
+profile: desktop

@@ -15,6 +15,49 @@
 
 ---
 
+## [未发布] — `@oblivion/core` v0.1.2：修掉「捕获恒为空」的根因 + 补齐设计书 4 个差距 + 修正设计书钩子名
+
+### 修复：`turn/end` 捕获恒为空（插件首版的致命 bug）
+
+**症状**：插件装好了、自检全绿，但 `~/.oblivion/data` 与 `~/OblivionKB/10-Topics` **永远是空的**，且不报错。
+
+**根因**（实测 `@deepseek-ai/dsh-session` 产物）：
+`session.eventsSnapshot` 是 **private** 字段，且只在标着 `deprecated`（"new calls are prohibited"）的
+`snapshotEvents()` 里 `??=` 懒加载 → 插件直读它**恒为 `undefined`** → 每轮提取不到问答 → 静默不落盘。
+
+**修法**：订阅公开的 `session/event`，**在事件流里自累积本轮事件**
+（`turn/start` → `user/message`/`assistant/message` → `turn/end`）；`eventsSnapshot` 只作兜底并打一次告警。
+同时按实测的 `source.kind` **只把真人提问当问题**（`agent.inject()` 注入的上下文不再被沉淀）。
+
+> **教训（已写进 README 第五节）**：旧自检也用 `eventsSnapshot` 造数据 → 「自检 11/11 全绿」与
+> 「真实知识库永远为空」同时成立。现在自检走真实事件流（`emitTurn()`），不再绕过真实链路。
+
+### 补齐：设计书 4 个遗留差距
+
+| # | 差距 | 设计书 | 0.1.2 |
+| --- | --- | --- | --- |
+| 1 | L3 只判长度 | §25.1 | 四条规则全实现（<5 字 / 仅无意义词 / 开头 40 字内「不知道」/ 纯寒暄），每条带 reason |
+| 2 | F3 深度触发降级 | §25.4 | 连续同维度计数：≥3 次 → **≥3 个候选视角**；闸门单会话 ≤5 次 |
+| 3 | F5 无保留期 | §25.7 | **90 天保留期 + 读取时惰性裁剪**（不引入定时任务），裁剪结果落盘，`feedback.stats()` 可查 |
+| 4 | F2 闸门与设计不同 | §25.4 | 三通道：主动（会话 ≤3 + 问题 ≥10 字 + 有来源）/ 深度 / 陪伴期；共用置信度 ≥0.3 与「被拒 ≥2 次不再提」 |
+
+### 修正：设计书里不存在的钩子
+
+- `.design/ARCHITECTURE.MD` 4 处、`.memory/TODO.md` 1 处：`session:complete` → **`turn/end`**
+  （实测 `session:complete` / `session/complete` 在官方 287 个包里 **0 命中**；`turn` 类只有 `turn/start` / `turn/end`）
+- 保留「⚠️ 此处原写 `session:complete`，实测不存在」的注记，防止后来者照旧写法实现
+
+### 其它
+
+- 补 `oblivion-core/scripts/bump-version.mjs` + `version:bump` / `check:version` 脚本项（此前该插件缺递增器）
+- 修一条过期测试：`dsh.compat` 是**兼容声明**（宿主范围 + 依赖服务/事件），不是 `dsh.bundle`；断言收紧到 bundle 本身
+- 自检 11 → **17 项**（新增：真实事件流端到端、注入上下文过滤、兜底路径、L3 四规则、F3 深度候选、F2/F3 闸门、F5 保留期）
+
+**验收**：`build` ✅ / `typecheck` ✅ / `test` **12/12** ✅ / `selfcheck` **17/17** ✅ / `check:version` `0.1.2` ✅ / `dshx check` ✅。
+真实 Host 装载待**重启 App** 后验证（Host 侧改码不会靠禁用再启用重新导入）。
+
+---
+
 ## [未发布] — 仓库工程化：依赖改用 pnpm workspace（与 DSH Profile 同一模型）
 
 ### 变更：npm 单包 → pnpm workspace

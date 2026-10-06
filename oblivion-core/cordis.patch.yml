@@ -1,0 +1,30 @@
+# ============================================================
+# @oblivion/core — 组合插入行
+#
+# 本文件是「让包自己声明怎么被组合」的声明。两种用法二选一：
+#
+#   ① 热挂路径（推荐，本机实测无需重启 App）
+#      package.json 里 **不写** dsh.bundle；把下面这段 insert 手工追加到
+#      %USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml 末尾。
+#      profile 补丁层被监视，落盘即装载。
+#
+#   ② bundle 路径（package.json 里写 dsh.bundle.patch 指向本文件）
+#      走官方 profile 的 bundle 机制，改一次需要重启。
+#
+# 本包按 ① 交付：认知层要能频繁迭代，不能每次改都重启。
+# patch 会**替换整段 config**而非合并，所以这里不写 config ——
+# 留空即使用 src/config.ts 里的默认值。
+#
+# 常用调参（要改就整段写进 config，缺省键由 resolveConfig 补默认）：
+#   dataRoot: '~/.oblivion/data'      # JSON 存储 + profile.json
+#   mdRoot:   '~/OblivionKB'          # MD 落盘（10-Topics/<topic>.md）
+#   valueThreshold: 0.3               # L4 价值闸门（勿改回 0.5，见 config.ts 注释）
+#   enablePerspective / enableFeedback: true
+#   perspectiveActiveSessionMax: 3    # §25.4 主动触发：只在最早 3 个会话
+#   perspectiveDeepTriggerRepeats: 3  # §25.4 深度触发：连续 3 次同维度
+#   feedbackRetentionDays: 90         # §25.7 保留期（读取时惰性裁剪）
+# ============================================================
+
+- insert:
+    - id: '@oblivion/core'
+      name: '@oblivion/core'

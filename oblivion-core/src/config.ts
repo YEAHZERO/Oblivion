@@ -1,0 +1,114 @@
+/**
+ * 运行时配置。
+ *
+ * 用纯字面量默认值而不是 schemastery：本机让 `@deepseek-ai/schemastery`
+ * 在插件包的解析路径里可得，需要把它放进 peerDependencies，而 WORKSPACE.md
+ * 的铁律是「框架包只放 peer、框架包解析必须显式」。这里不需要 schema 校验
+ * 能力（Host 已按 Config 形状传参），所以用最薄的实现。
+ */
+
+export interface Config {
+  readonly dataRoot: string;
+  readonly mdRoot: string;
+
+  readonly semanticThreshold: number;
+  readonly valueThreshold: number;
+
+  readonly enablePerspective: boolean;
+  readonly enableFeedback: boolean;
+  readonly perspectiveMinSessions: number;
+  readonly perspectiveMinConfidence: number;
+  readonly perspectiveMinMisses: number;
+  readonly perspectiveDeepDiveTurns: number;
+  /** §25.4 主动触发闸门：只在最早这些次会话里做主动激荡。 */
+  readonly perspectiveActiveSessionMax: number;
+  /** §25.4 主动触发闸门：问题至少多少字。 */
+  readonly perspectiveMinQuestionLength: number;
+  /** §25.4 深度触发：连续多少次追问同一维度。 */
+  readonly perspectiveDeepTriggerRepeats: number;
+  /** §25.4 深度触发：至少给几个候选视角。 */
+  readonly perspectiveDeepMinCandidates: number;
+  /** §25.4 深度触发闸门：单会话总激荡次数上限。 */
+  readonly perspectiveDeepSessionMax: number;
+  /** §25.7 反馈保留期（天）；读取时惰性裁剪，不用定时任务。 */
+  readonly feedbackRetentionDays: number;
+
+  readonly graphInitialWeight: number;
+  readonly graphReinforceDelta: number;
+  readonly graphWeightCap: number;
+  readonly graphDecayBase: number;
+  readonly graphDecayPeriodDays: number;
+
+  readonly feedbackTuneThreshold: number;
+  readonly promptSectionOrder: number;
+  readonly maxPerspectivePerTurn: number;
+
+  readonly minAnswerLength: number;
+  readonly logPrefix: string;
+}
+
+export const DEFAULT_CONFIG: Config = {
+  dataRoot: '~/.oblivion/data',
+  mdRoot: '~/OblivionKB',
+
+  /**
+   * 价值阈值 —— **已按实测重标定，不要改回设计书原值 0.5**。
+   *
+   * 实测分布（heuristicScore）：
+   *   真实 233 字技术回答（有来源 + 结构 + 代码）  0.370
+   *   500 字普通回答                              ~0.42
+   *   900 字低信息密度（大量重复）                 0.454
+   *   "ok"                                      0.113
+   *
+   * 原值 0.5 落在「真实回答之上、重复文本之下」，会让正常问答**一律被丢弃**
+   * ——症状是插件装好了但知识库永远为空，且不报错。0.30 把「ok 类噪声」
+   * 挡住，同时放行正常回答。这是端到端自检用例抓出来的，改动请同步更新
+   * test/ 与 scripts/selfcheck.mjs 的断言。
+   */
+  semanticThreshold: 0.85,
+  valueThreshold: 0.3,
+
+  enablePerspective: true,
+  enableFeedback: true,
+  perspectiveMinSessions: 4,
+  perspectiveMinConfidence: 0.3,
+  perspectiveMinMisses: 3,
+  perspectiveDeepDiveTurns: 5,
+
+  // §25.4 双模式闸门（设计书原值）
+  perspectiveActiveSessionMax: 3,
+  perspectiveMinQuestionLength: 10,
+  perspectiveDeepTriggerRepeats: 3,
+  perspectiveDeepMinCandidates: 3,
+  perspectiveDeepSessionMax: 5,
+
+  // §25.7 保留期（读取时惰性裁剪，满足「无定时任务」约束）
+  feedbackRetentionDays: 90,
+
+  graphInitialWeight: 0.3,
+  graphReinforceDelta: 0.05,
+  graphWeightCap: 1.0,
+  graphDecayBase: 0.95,
+  graphDecayPeriodDays: 30,
+
+  feedbackTuneThreshold: 3,
+  promptSectionOrder: 50,
+  maxPerspectivePerTurn: 2,
+
+  /**
+   * L3 最低答案长度 —— **设计书 §25.1 原值 5**（旧实现用 20，等于把 L3 当成了价值闸门）。
+   * 5 字以下直接判无意义；「短但可能有用」留给 L4 价值评估（`valueThreshold`）兜底。
+   */
+  minAnswerLength: 5,
+  logPrefix: '[oblivion-core]',
+};
+
+/** 部分覆盖：只接受显式给出的键，缺省落回 DEFAULT_CONFIG。 */
+export function resolveConfig(input?: Partial<Config>): Config {
+  if (!input) return DEFAULT_CONFIG;
+  const out = { ...DEFAULT_CONFIG } as Record<string, unknown>;
+  for (const [k, v] of Object.entries(input)) {
+    if (v !== undefined && v !== null) out[k] = v;
+  }
+  return out as unknown as Config;
+}

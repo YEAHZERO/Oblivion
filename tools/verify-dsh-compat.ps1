@@ -221,11 +221,37 @@ foreach ($dir in $pluginDirs) {
     }
   }
 
-  # ⑤ 服务名（较弱：只证明这个名字在客户端包里出现过）
+  # ⑤ 服务名（弱证据：只证明这个名字在宿主/客户端源码里出现过）
+  #    宿主侧插件依赖的服务（tools / systemPrompt）不在 packages\client 下，
+  #    所以这里搜整个 packages\ —— 2026-10-06 补，此前只搜 client 会把 host 插件误判为 FAIL。
   if ($req.services) {
     foreach ($svc in $req.services) {
-      $ev = Find-InHarness ("'" + $svc + "'") 'packages\client' @('*.ts')
-      Add-Check 'service' $svc ([bool]$ev) $(if ($ev) { $ev + '（仅证明名字出现）' } else { '客户端包里找不到该服务名' })
+      $ev = Find-InHarness ("'" + $svc + "'") 'packages' @('*.ts')
+      Add-Check 'service' $svc ([bool]$ev) $(if ($ev) { $ev + '（仅证明名字出现）' } else { '源码里找不到该服务名' })
+    }
+  }
+
+  # ⑥ 事件名（宿主侧插件挂在 session/event 这类事件上）
+  if ($req.events) {
+    foreach ($name in $req.events) {
+      $ev = Find-InHarness ("'" + $name + "'") 'packages' @('*.ts')
+      Add-Check 'event' $name ([bool]$ev) $(if ($ev) { $ev } else { '源码里找不到该事件名' })
+    }
+  }
+
+  # ⑦ 宿主侧包存在（含 core\ 等非 client 分组）
+  if ($req.hostPackages) {
+    $allNames = @{}
+    if (Test-Path (Join-Path $harnessRoot 'packages')) {
+      Get-ChildItem (Join-Path $harnessRoot 'packages') -Recurse -Filter 'package.json' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
+        ForEach-Object {
+          try { $allNames[(Read-Json $_.FullName).name] = $_.Directory.Name } catch { }
+        }
+    }
+    foreach ($want in $req.hostPackages) {
+      $found = $allNames.ContainsKey($want)
+      Add-Check 'hostPkg' $want $found $(if ($found) { 'packages\**\' + $allNames[$want] } else { 'checkout 里没有这个包名' })
     }
   }
 

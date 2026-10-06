@@ -1,0 +1,65 @@
+{
+  "name": "@oblivion/core",
+  "version": "0.1.2",
+  "description": "Oblivion 认知插件组内核：问答即生长、认知陪伴、可溯源、零侵入。一个包，六个模块，JSON 文件存储，turn/end 单触发，无定时任务。",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./testkit": "./lib/testkit.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "compat": {
+      "host": ">=0.2.0-rc.2 <0.3.0",
+      "requires": {
+        "services": [
+          "tools",
+          "systemPrompt"
+        ],
+        "events": [
+          "session/event",
+          "turn/end"
+        ],
+        "hostPackages": [
+          "@deepseek-ai/dsh-tools",
+          "@deepseek-ai/dsh-system-prompt"
+        ]
+      }
+    }
+  },
+  "files": [
+    "lib",
+    "dshx.yml",
+    "cordis.patch.yml",
+    "README.md",
+    "VERSION"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test",
+    "selfcheck": "node scripts/selfcheck.mjs",
+    "version:bump": "node scripts/bump-version.mjs",
+    "check:version": "node scripts/bump-version.mjs --check"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@types/node": "^26.6.4",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.6.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  }
+}
