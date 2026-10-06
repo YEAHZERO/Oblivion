@@ -1,0 +1,38 @@
+# ============================================================
+# @oblivion/bundle —— Oblivion 插件组的组合层（bundle）
+#
+# 本包**不是插件**：没有 `apply(ctx)`，`lib/index.js` 是 `export {};` 空壳，
+# 存在的意义只有这一个 patch 文件 —— 声明「装哪些插件、怎么配」。
+# 与 DSH 自身的 `@deepseek-ai/dsh-base` / `dsh-web-app` 同类。
+#
+# 用法（一条命令装齐）：
+#     dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-bundle'
+#   装完后 profile 的 `dsh.profile.bundles` 会带上本包，下面的行按序生效。
+#
+# ── 为什么这里只插 core / panel，不插 brand / vimc ──────────────
+#
+# brand 与 vimc **自带** `dsh.bundle.patch`（自己声明怎么被组合），
+# 已经由安装器写进 `dsh.profile.bundles`。若本 bundle 再插一次同名行，
+# 同一插件会被挂载两次 —— 第三方生态的实测结论是「两个 Node 半边、
+# 重复注册前缀路由，整棵插件树启动失败」。所以本包对它们只做
+# **依赖声明**（一条命令照样装齐），挂载交给它们自己的 patch。
+#
+# 只有**不自带 bundle patch** 的包（core / panel，走用户层热挂）才在这里插行。
+#
+# ── 行的语义 ────────────────────────────────────────────────
+#   · patch 会**替换整段的 config**而非合并；这里一律不写 config，
+#     缺省即各插件 `src/config.ts` 里的默认值。
+#   · `@` 开头的标量必须加引号。
+#   · 行顺序不承载加载语义（激活由服务可用性驱动），分组只为可读。
+# ============================================================
+
+- insert:
+    - id: '@oblivion/core'
+      name: '@oblivion/core'
+
+    - id: '@oblivion/panel'
+      name: '@oblivion/panel'
+
+    # 内容创作（Phase 6）—— 尚未开工，留位：
+    # - id: '@oblivion/content-creator'
+    #   name: '@oblivion/content-creator'

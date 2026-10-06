@@ -1,0 +1,40 @@
+{
+  "name": "@oblivion/bundle",
+  "version": "0.0.1",
+  "description": "Oblivion 插件组安装入口：一条命令装齐 brand / vimc / core / panel（未来的 content-creator 已留位），并给出一组默认配置。它自己不是插件，只有 cordis.patch.yml。",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "compat": {
+      "host": ">=0.2.0-rc.2 <0.3.0",
+      "requires": {
+        "npmPackages": [
+          "@oblivion/brand",
+          "@oblivion/vimc",
+          "@oblivion/core",
+          "@oblivion/panel"
+        ]
+      }
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "VERSION"
+  ],
+  "scripts": {
+    "version:bump": "node scripts/bump-version.mjs",
+    "check:version": "node scripts/bump-version.mjs --check"
+  },
+  "dependencies": {
+    "@oblivion/brand": "link:../oblivion-brand",
+    "@oblivion/vimc": "link:../oblivion-vimc",
+    "@oblivion/core": "link:../oblivion-core",
+    "@oblivion/panel": "link:../oblivion-panel"
+  }
+}

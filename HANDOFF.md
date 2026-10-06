@@ -312,3 +312,20 @@ VISUAL_BEHAVIOR_VERIFIED→ 人眼/实测确认行为
 | D. 补工程债 | 根 VERSION 递增器 / 测试框架 / CI | `.memory/TODO.md` 的 A1 与 D 节（core 已自带 `bump-version.mjs`） |
 
 **建议顺序：先做第 1 步（重启验证闭环），再 A → (D 里的根 VERSION 递增器) → 最后看 B。**
+
+---
+
+## 六、知识库的版本约定（盲区修正，2026-10-06）
+
+| 位置 | 放什么 | 规则 |
+| --- | --- | --- |
+| `00-Index/索引.md` | **只放指针**（主题 / 条目 id / 标题 / 状态 / 落地 / 更新） | 每次写库自动重建，别手工编辑 |
+| `01_问答沉淀/` | 自动捕获的问答笔记 | 带 YAML frontmatter（status/impl/topic） |
+| `04_会话整理/` | `oblivion_digest` 的整理笔记 | 同上 + 决策/待办/未决/双链 |
+| `50-Conflicts/` | **冲突对照页**（新旧并列） | 设计铁律：**不合并**；同一条冲突重复写不追加第二段 |
+| `<dataRoot>/conflicts/` | 冲突的机器可读副本 | 与 50-Conflicts 同时写 |
+
+**状态口径**：`active` 现行 / `superseded` 已被新版取代（不删，带 `supersededBy`）/ `draft` 草稿 / `conflict` 有冲突 / `archived` 归档。
+**落地口径**：`implemented` / `designed` / `placeholder` —— 设计书里「26 个包 vs 8 个插件」那类混淆，根因就是缺这个字段。
+
+**安装入口**：`@oblivion/bundle`（一条命令装齐四个插件；只插 core/panel 两行，brand/vimc 自带 bundle patch 由安装器负责）。

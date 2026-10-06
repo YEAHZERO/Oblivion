@@ -30,7 +30,7 @@
 | `oblivion-brand/` · `oblivion-vimc/` · `oblivion-core/` | **三个插件**（见下） | ✅ 已实现（core 待重启验证） |
 | `tools/` | 运维脚本（`check-workspace.ps1` / `verify-dsh-compat.ps1` / `lint-ps1-bom.ps1` …） | 可用 |
 
-**已实现的插件（4 个）**：
+**已实现的包（5 个：4 个插件 + 1 个安装入口）**：@oblivion/bundle 是安装入口（不是插件：没有 pply(ctx)，只有 cordis.patch.yml），一条命令装齐其余四个。
 
 ① [`@oblivion/brand`](oblivion-brand/README.md) v0.1.0：
 

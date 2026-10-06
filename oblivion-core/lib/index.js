@@ -71,7 +71,9 @@ var DEFAULT_CONFIG = {
   statusRecentLimit: 20,
   // 临时事件探针（链路验证通过后设 false）
   enableEventProbe: true,
-  eventProbeMax: 200
+  eventProbeMax: 200,
+  // 盲区修正：同主题新版本自动降级旧版本（不删，只标 superseded）
+  autoSupersede: true
 };
 
 // src/feedback/index.ts
@@ -370,11 +372,37 @@ function safeName(topic) {
   return (topic || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
 }
 var ID_MARKER = "oblivion:";
+function renderFrontmatter(item, extra = {}) {
+  const lines = ["---"];
+  const push = (key, value) => {
+    if (value === void 0) return;
+    if (Array.isArray(value)) {
+      lines.push(key + ": [" + value.map((v) => JSON.stringify(v)).join(", ") + "]");
+      return;
+    }
+    lines.push(key + ": " + JSON.stringify(value));
+  };
+  push("title", item.title);
+  push("topic", item.topic);
+  push("source", item.sources[0]?.type ?? "session");
+  push("ref", item.sources[0]?.ref ?? "");
+  push("created_at", isoDate(item.created_at));
+  push("updated_at", isoDate(item.updated_at));
+  push("tags", item.tags);
+  push("status", item.status);
+  push("impl", item.impl ?? "implemented");
+  if (item.supersededBy) push("superseded_by", item.supersededBy);
+  for (const [key, value] of Object.entries(extra)) push(key, value);
+  lines.push("---");
+  return lines.join("\n");
+}
 function renderNew(item) {
   const tags = item.tags.map((t) => "#" + t).join(" ");
   const sources = item.sources.map((s) => "- `" + s.type + "`: " + s.ref).join("\n");
   const note = item.content.replace(/\s+/g, " ").slice(0, 100);
   return [
+    renderFrontmatter(item, { related_wiki: [] }),
+    "",
     "# " + item.title,
     "",
     ">Date :  " + isoDate(item.created_at),
@@ -393,6 +421,67 @@ function renderNew(item) {
     "<!-- oblivion:id=" + item.id + " version=" + item.version + " -->",
     ""
   ].join("\n");
+}
+function renderConflict(payload, at) {
+  const c = payload.conflict;
+  if (!c) return "";
+  return [
+    "# \u51B2\u7A81\uFF1A" + (c.topic || c.question.slice(0, 40)),
+    "",
+    ">Detected\uFF1A" + isoDate(at),
+    ">Source\uFF1AOblivion \xB7 \u51B2\u7A81\u8BB0\u5F55",
+    ">Policy\uFF1A**\u4E0D\u5408\u5E76**\uFF0C\u4E24\u4E2A\u7248\u672C\u90FD\u4FDD\u7559",
+    c.reason ? ">Reason\uFF1A" + c.reason : "",
+    "",
+    "## \u65B0\uFF08\u672A\u5165\u5E93\uFF09",
+    "",
+    "**Q**\uFF1A" + c.question,
+    "",
+    c.answer,
+    "",
+    "## \u65E7\uFF08\u5DF2\u5728\u5E93\uFF09",
+    "",
+    "- \u6761\u76EE\uFF1A`" + c.existingId + "`",
+    "- \u6807\u9898\uFF1A" + c.existingTitle,
+    "",
+    "<!-- oblivion:conflict with=" + c.existingId + " at=" + at + " -->",
+    ""
+  ].filter((line) => line !== "").join("\n");
+}
+function renderIndex(entries, at) {
+  const byTopic = /* @__PURE__ */ new Map();
+  for (const item of entries) {
+    const list = byTopic.get(item.topic) ?? [];
+    list.push(item);
+    byTopic.set(item.topic, list);
+  }
+  const lines = [
+    "---",
+    'title: "Oblivion \u77E5\u8BC6\u7D22\u5F15"',
+    'source: "index"',
+    "created_at: " + JSON.stringify(isoDate(at)),
+    'status: "active"',
+    'impl: "implemented"',
+    "---",
+    "",
+    "# Oblivion \u77E5\u8BC6\u7D22\u5F15",
+    "",
+    "> \u672C\u9875\u7531\u63D2\u4EF6\u81EA\u52A8\u91CD\u5EFA\uFF0C**\u53EA\u653E\u6307\u9488**\uFF1B\u6743\u5A01\u5185\u5BB9\u5728\u5404\u81EA\u6761\u76EE\u4E0E\u7B14\u8BB0\u91CC\u3002",
+    "> \u72B6\u6001\u53E3\u5F84\uFF1A`active` \u73B0\u884C / `superseded` \u5DF2\u88AB\u65B0\u7248\u53D6\u4EE3 / `draft` \u8349\u7A3F / `conflict` \u6709\u51B2\u7A81 / `archived` \u5F52\u6863\u3002",
+    "",
+    "| \u4E3B\u9898 | \u6761\u76EE | \u6807\u9898 | \u72B6\u6001 | \u843D\u5730 | \u66F4\u65B0 |",
+    "| --- | --- | --- | --- | --- | --- |"
+  ];
+  for (const [topic, items] of [...byTopic.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const item of items.sort((a, b) => b.updated_at - a.updated_at)) {
+      lines.push(
+        "| " + topic + " | `" + item.id + "` | " + item.title.replace(/\|/g, "\\|") + " | " + item.status + " | " + (item.impl ?? "implemented") + " | " + isoDate(item.updated_at) + " |"
+      );
+    }
+  }
+  if (byTopic.size === 0) lines.push("| \u2014 | \u2014 | \u8FD8\u6CA1\u6709\u6761\u76EE | \u2014 | \u2014 | \u2014 |");
+  lines.push("");
+  return lines.join("\n");
 }
 function appendSection(existing, item) {
   const parts = item.content.split("\n\n---\n\n");
@@ -416,9 +505,23 @@ function appendSource(existing, payload) {
   return existing.trimEnd() + "\n" + line + "\n";
 }
 async function writeMD(root, payload, classify) {
-  const dir = join4(root, classifyDir(payload.item, classify));
+  if (payload.action === "conflict") {
+    const dir2 = join4(root, CONFLICTS_DIR);
+    await mkdir3(dir2, { recursive: true });
+    const c = payload.conflict;
+    const name3 = safeName(c?.topic || c?.question || "conflict");
+    const path2 = join4(dir2, name3 + ".md");
+    const existing2 = await readFile3(path2, "utf8").catch(() => "");
+    const block = renderConflict(payload, payload.conflict ? Date.now() : Date.now());
+    if (c && existing2.includes("oblivion:conflict with=" + c.existingId)) return path2;
+    await writeFile3(path2, existing2 ? existing2.trimEnd() + "\n\n---\n\n" + block : block, "utf8");
+    return path2;
+  }
+  const item = payload.item;
+  if (!item) return "";
+  const dir = join4(root, classifyDir(item, classify));
   await mkdir3(dir, { recursive: true });
-  const name2 = safeName(payload.item.topic);
+  const name2 = safeName(item.topic);
   let path = join4(dir, name2 + ".md");
   let existing = await readFile3(path, "utf8").catch(() => "");
   if (existing !== "" && !existing.includes(ID_MARKER)) {
@@ -427,18 +530,46 @@ async function writeMD(root, payload, classify) {
   }
   switch (payload.action) {
     case "created": {
-      if (existing.includes("oblivion:id=" + payload.item.id)) return path;
-      const body = existing ? existing.trimEnd() + "\n\n" + renderNew(payload.item) : renderNew(payload.item);
+      if (existing.includes("oblivion:id=" + item.id)) return path;
+      const body = existing ? existing.trimEnd() + "\n\n" + renderNew(item) : renderNew(item);
       await writeFile3(path, body, "utf8");
       return path;
     }
     case "appended":
-      await writeFile3(path, appendSection(existing, payload.item), "utf8");
+      await writeFile3(path, appendSection(existing, item), "utf8");
       return path;
     case "duplicate":
       await writeFile3(path, appendSource(existing, payload), "utf8");
       return path;
+    default:
+      return path;
   }
+}
+var CONFLICTS_DIR = "50-Conflicts";
+var INDEX_DIR = "00-Index";
+async function writeIndexNote(root, entries, at = Date.now()) {
+  const dir = join4(root, INDEX_DIR);
+  await mkdir3(dir, { recursive: true });
+  const path = join4(dir, "\u7D22\u5F15.md");
+  await writeFile3(path, renderIndex(entries, at), "utf8");
+  return path;
+}
+async function appendRelatedLinks(notePath, titles) {
+  const links = titles.map((t) => String(t).trim()).filter((t) => t !== "");
+  if (links.length === 0) return false;
+  const existing = await readFile3(notePath, "utf8").catch(() => "");
+  if (existing === "" || !existing.includes(ID_MARKER)) return false;
+  const missing = links.filter((t) => !existing.includes("[[" + t + "]]"));
+  if (missing.length === 0) return false;
+  const block = [
+    "",
+    "## \u5173\u8054\u77E5\u8BC6\uFF08\u81EA\u52A8\uFF09",
+    "",
+    missing.map((t) => "- [[" + t.replace(/^\[\[|\]\]$/g, "") + "]]").join("\n"),
+    ""
+  ].join("\n");
+  await writeFile3(notePath, existing.trimEnd() + "\n" + block, "utf8");
+  return true;
 }
 
 // src/digest/index.ts
@@ -459,6 +590,19 @@ function composeDigest(input, at = now()) {
   const topic = (input.topic ?? deriveTopic(title)).trim() || "untitled";
   const sections = Array.isArray(input.sections) ? input.sections : [];
   const parts = [];
+  const status = input.status ?? "active";
+  const impl = input.impl ?? "implemented";
+  parts.push("---");
+  parts.push("title: " + JSON.stringify(title));
+  parts.push("topic: " + JSON.stringify(topic));
+  parts.push('source: "session_digest"');
+  parts.push("session: " + JSON.stringify(input.sessionId ?? ""));
+  parts.push("created_at: " + JSON.stringify(isoDate(at)));
+  parts.push('tags: ["\u4F1A\u8BDD\u6574\u7406"' + (input.todos?.length ? ', "\u5F85\u529E"' : "") + (input.decisions?.length ? ', "\u51B3\u7B56"' : "") + "]");
+  parts.push("status: " + JSON.stringify(status));
+  parts.push("impl: " + JSON.stringify(impl));
+  parts.push("---");
+  parts.push("");
   parts.push("# " + title);
   parts.push("");
   parts.push(">Date :  " + isoDate(at));
@@ -524,7 +668,9 @@ function registerDigest(ctx, config, deps) {
       topic: composed.topic,
       content: composed.markdown,
       tags: ["\u4F1A\u8BDD\u6574\u7406", ...input.todos?.length ? ["\u5F85\u529E"] : [], ...input.decisions?.length ? ["\u51B3\u7B56"] : []],
-      sources
+      sources,
+      impl: input.impl ?? "implemented",
+      status: input.status ?? "active"
     });
     const markdown = composed.markdown.replace("id=pending", "id=" + item.id);
     const dir = join5(mdRoot, classDir);
@@ -549,6 +695,11 @@ function registerDigest(ctx, config, deps) {
       entities = await deps.graph.recordCooccurrence(qa);
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + " \u6574\u7406\u5EFA\u8FB9\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u843D\u76D8\uFF09\uFF1A%o", error);
+    }
+    try {
+      await writeIndexNote(mdRoot, deps.knowledge.index.all());
+    } catch (error) {
+      ctx.logger?.warn?.(config.logPrefix + " \u7D22\u5F15\u91CD\u5EFA\u5931\u8D25\uFF1A%o", error);
     }
     return {
       ...composed,
@@ -930,6 +1081,7 @@ function registerKnowledge(ctx, config) {
       sources: mergeSources([], qa, fp),
       tags: deriveTags(qa),
       status: "active",
+      impl: "implemented",
       created_at: at,
       updated_at: at,
       version: 1
@@ -937,7 +1089,19 @@ function registerKnowledge(ctx, config) {
     await store.save(item);
     await loadIndex();
     touched = [item.id];
+    if (config.autoSupersede) await supersedeOlder(item.topic, item.id);
     return { ...result, item };
+  }
+  async function supersedeOlder(topic, keepId) {
+    const older = index.all().filter((item) => item.topic === topic && item.id !== keepId && item.status === "active");
+    const demoted = [];
+    for (const item of older) {
+      const next = { ...item, status: "superseded", supersededBy: keepId, updated_at: now(), version: item.version + 1 };
+      await store.save(next);
+      demoted.push(item.id);
+    }
+    if (demoted.length) await loadIndex();
+    return demoted;
   }
   async function saveStructured(input) {
     const at = now();
@@ -948,7 +1112,8 @@ function registerKnowledge(ctx, config) {
       content: input.content,
       sources: input.sources,
       tags: input.tags ?? [],
-      status: "active",
+      status: input.status ?? "active",
+      impl: input.impl ?? "implemented",
       created_at: at,
       updated_at: at,
       version: 1
@@ -956,6 +1121,7 @@ function registerKnowledge(ctx, config) {
     await store.save(item);
     await loadIndex();
     touched = [item.id];
+    if (item.status === "active" && config.autoSupersede) await supersedeOlder(item.topic, item.id);
     return item;
   }
   async function query(args) {
@@ -1230,7 +1396,64 @@ var OBLIVION_SYSTEM_PROMPT = [
   "- \u6269\u5C55\u601D\u8003\uFF1A\u540C\u4E00\u7EF4\u5EA6\u88AB\u53CD\u590D\u9057\u6F0F\u65F6\uFF0C\u5728\u56DE\u7B54\u672B\u5C3E\u8FFD\u52A0\u300C\u{1F9ED} \u6269\u5C55\u601D\u8003\u300D\uFF0C\u53EA\u5199\u4E00\u53E5\uFF0C\u4E0D\u5C55\u5F00\u3002",
   "- \u51B2\u7A81\u5904\u7406\uFF1A\u4E0E\u77E5\u8BC6\u5E93\u65E7\u7ED3\u8BBA\u77DB\u76FE\u65F6\uFF0C\u660E\u786E\u6307\u51FA\u5DEE\u5F02\u4E0E\u5404\u81EA\u6765\u6E90\uFF0C\u4E0D\u9759\u9ED8\u5408\u5E76\u3002",
   "- \u9690\u79C1\uFF1A\u7EDD\u4E0D\u590D\u8FF0\u7528\u6237\u601D\u7EF4\u6863\u6848\u7684\u539F\u6587\uFF0C\u53EA\u6309\u89C4\u5219\u884C\u4E8B\u3002",
-  "- \u9ED8\u8BA4\u8F93\u51FA\u9AA8\u67B6\uFF1A\u7ED3\u8BBA \u2192 \u8981\u70B9 \u2192 \u76F2\u533A \u2192 \u4E0B\u4E00\u6B65\u3002"
+  "",
+  "## \u8F93\u51FA\u6A21\u677F\uFF08\u9ED8\u8BA4 T1\uFF1B\u6309\u95EE\u9898\u7C7B\u578B\u5207\u6362\uFF09",
+  "",
+  "**T1 \xB7 \u6807\u51C6\u95EE\u7B54\uFF08\u9ED8\u8BA4\uFF09**",
+  "",
+  "```md",
+  "## \u7ED3\u8BBA",
+  "\u4E00\u53E5\u8BDD\u56DE\u7B54\u3002",
+  "",
+  "## \u8981\u70B9",
+  "- \u8981\u70B9 1",
+  "- \u8981\u70B9 2",
+  "",
+  "## \u76F2\u533A",
+  "- \u4F60\u6CA1\u63D0\u5230\u7684\u7EF4\u5EA6\uFF08\u5982\u6709\uFF1B\u6CA1\u6709\u5C31\u7701\u7565\u8FD9\u4E00\u8282\uFF09",
+  "",
+  "## \u4E0B\u4E00\u6B65",
+  "- \u53EF\u6267\u884C\u52A8\u4F5C\uFF08\u5982\u6709\uFF1B\u6CA1\u6709\u5C31\u7701\u7565\u8FD9\u4E00\u8282\uFF09",
+  "```",
+  "",
+  "**T2 \xB7 \u8BBE\u8BA1 / \u51B3\u7B56\u7C7B**\uFF08\u95EE\u300C\u8BE5\u600E\u4E48\u505A\u3001\u9009\u54EA\u4E2A\u3001\u8981\u4E0D\u8981\u300D\u65F6\u7528\uFF09",
+  "",
+  "```md",
+  "## \u7ED3\u8BBA",
+  "\u51B3\u7B56\u662F\u4EC0\u4E48\u3002",
+  "",
+  "## \u65B9\u6848\u5BF9\u6BD4",
+  "| \u65B9\u6848 | \u4F18 | \u52A3 | \u91C7\u7EB3 |",
+  "| --- | --- | --- | --- |",
+  "",
+  "## \u8BBE\u8BA1\u8981\u70B9",
+  "- \u6A21\u5757 / \u63A5\u53E3 / \u8FB9\u754C",
+  "",
+  "## \u98CE\u9669",
+  "- RISK-xxx",
+  "",
+  "## \u843D\u5730\u72B6\u6001",
+  "- implemented / designed / placeholder",
+  "```",
+  "",
+  "**T3 \xB7 \u6587\u6863\u6574\u7406\u7C7B**\uFF08\u95EE\u300C\u8FD9\u4EFD\u6587\u6863\u662F\u4EC0\u4E48\u3001\u8BE5\u653E\u54EA\u300D\u65F6\u7528\uFF1B\u4E5F\u53EF\u76F4\u63A5\u7528 `oblivion_digest` \u843D\u76D8\uFF09",
+  "",
+  "```md",
+  "## \u7ED3\u8BBA",
+  "\u8FD9\u4EFD\u6587\u6863\u7684\u5B9A\u4F4D\u3002",
+  "",
+  "## \u72B6\u6001",
+  "- status: active / superseded / draft",
+  "- \u6743\u5A01\u7248\u672C: xxx",
+  "",
+  "## \u51B2\u7A81",
+  "- \u4E0E xxx \u51B2\u7A81\uFF0C\u5DEE\u5F02\u662F xxx",
+  "",
+  "## \u5F52\u6863\u5EFA\u8BAE",
+  "- \u79FB\u52A8\u5230 xxx",
+  "```",
+  "",
+  "> \u4E09\u5957\u6A21\u677F\u5171\u540C\u7684\u786C\u8981\u6C42\uFF1A**\u7ED3\u8BBA\u5148\u884C**\uFF1B\u6709\u5206\u6B67\u5C31\u5E76\u5217\u800C\u975E\u6298\u4E2D\uFF1B\u4E0D\u786E\u5B9A\u5C31\u5199\u300C\u672A\u9A8C\u8BC1\u300D\uFF0C\u4E0D\u8981\u7F16\u9020\u3002"
 ].join("\n");
 
 // src/profile/index.ts
@@ -1394,6 +1617,24 @@ function extractQAPair(turn) {
   };
 }
 
+// src/graph/backlink.ts
+var CONTENT_PREFIX = 600;
+function findRelatedItems(current, candidates, options = {}) {
+  const limit = Math.max(0, options.limit ?? 5);
+  if (limit === 0) return [];
+  const minScore = options.minScore ?? 0.05;
+  const recent = Math.max(1, options.recent ?? 60);
+  const base = new Set(tokenize(current.title + "\n" + current.content.slice(0, CONTENT_PREFIX)));
+  const pool = candidates.filter((item) => item.id !== current.id && item.status === "active").sort((a, b) => b.updated_at - a.updated_at).slice(0, recent);
+  const scored = [];
+  for (const item of pool) {
+    const other = new Set(tokenize(item.title + "\n" + item.content.slice(0, CONTENT_PREFIX)));
+    const score = jaccard(base, other);
+    if (score >= minScore) scored.push({ id: item.id, title: item.title, topic: item.topic, score });
+  }
+  return scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id)).slice(0, limit);
+}
+
 // src/qa-loop/index.ts
 var MAX_EVENTS_PER_TURN = 400;
 var MAX_TRACKED_SESSIONS = 32;
@@ -1502,8 +1743,27 @@ function registerQaLoop(ctx, config, deps) {
         sources: qa.sources.length,
         startedAt
       });
-      if (!result.pass || !result.item) return;
-      await writeMD(
+      if (!result.pass || !result.item) {
+        if (result.action === "conflict" && result.existing) {
+          await writeMD(
+            mdRoot,
+            {
+              action: "conflict",
+              conflict: {
+                question: qa.question,
+                answer: qa.answer,
+                existingId: result.existing.id,
+                existingTitle: result.existing.title,
+                reason: result.reason,
+                topic: result.existing.topic
+              }
+            },
+            config.mdClassify
+          );
+        }
+        return;
+      }
+      const notePath = await writeMD(
         mdRoot,
         {
           action: result.action,
@@ -1513,6 +1773,15 @@ function registerQaLoop(ctx, config, deps) {
       );
       await deps.graph.recordCooccurrence(qa);
       await deps.profile.updateFromQA(qa);
+      try {
+        const related = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
+        if (related.length > 0 && notePath !== "") {
+          await appendRelatedLinks(notePath, related.map((item) => item.title));
+        }
+        await writeIndexNote(mdRoot, deps.knowledge.index.all());
+      } catch (error) {
+        ctx.logger?.warn?.(config.logPrefix + " \u53CC\u94FE/\u7D22\u5F15\u5199\u56DE\u5931\u8D25\uFF1A%o", error);
+      }
       deps.onCaptured?.({
         question: qa.question,
         answer: qa.answer,
@@ -1572,7 +1841,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.10",
+    version: "0.1.11",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -2127,7 +2396,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.10";
+var VERSION = "0.1.11";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;

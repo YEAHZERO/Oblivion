@@ -190,7 +190,11 @@ describe('装配（apply）', () => {
       },
       at,
     );
-    assert.match(composed.markdown, /^# DSH 插件开发 \/ 会话整理/);
+    assert.match(composed.markdown, /^---\n/, '盲区修正：笔记必须以 YAML frontmatter 开头');
+    assert.match(composed.markdown, /title: "DSH 插件开发 \/ 会话整理"/);
+    assert.match(composed.markdown, /status: "active"/);
+    assert.match(composed.markdown, /impl: "implemented"/);
+    assert.match(composed.markdown, /\n# DSH 插件开发 \/ 会话整理\n/);
     assert.match(composed.markdown, /## 结论\n\n面板已可用。/);
     assert.match(composed.markdown, /## 决策\n\n- 走热挂，不迁 bundle 层/);
     assert.match(composed.markdown, /## 待办\n\n- 重启 App 验证/);

@@ -27,6 +27,21 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  oblivion-bundle:
+    dependencies:
+      '@oblivion/brand':
+        specifier: link:../oblivion-brand
+        version: link:../oblivion-brand
+      '@oblivion/core':
+        specifier: link:../oblivion-core
+        version: link:../oblivion-core
+      '@oblivion/panel':
+        specifier: link:../oblivion-panel
+        version: link:../oblivion-panel
+      '@oblivion/vimc':
+        specifier: link:../oblivion-vimc
+        version: link:../oblivion-vimc
+
   oblivion-core:
     dependencies:
       '@deepseek-ai/cordis':

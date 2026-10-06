@@ -7,6 +7,19 @@ export interface Source {
   hash: string;
 }
 
+/** 文档/知识条目的版本状态（盲区修正：口径漂移靠它显式标注，而不是靠人记）。 */
+export type ItemStatus =
+  | 'active'
+  | 'conflict'
+  | 'archived'
+  /** 被同一主题的新版本取代（旧版不删，只降级）。 */
+  | 'superseded'
+  /** 草稿：还没定稿，读的人要知道它不可引用。 */
+  | 'draft';
+
+/** 落地状态：设计书里「26 个包 vs 8 个插件」那类混淆，根因就是缺这个字段。 */
+export type ImplStatus = 'implemented' | 'designed' | 'placeholder';
+
 export interface KnowledgeItem {
   id: string;
   topic: string;
@@ -14,8 +27,10 @@ export interface KnowledgeItem {
   content: string;
   sources: Source[];
   tags: string[];
-  status: 'active' | 'conflict' | 'archived';
-  impl?: 'implemented' | 'designed' | 'placeholder';
+  status: ItemStatus;
+  impl?: ImplStatus;
+  /** 若被取代：指向取代它的条目 id（版本链留痕）。 */
+  supersededBy?: string;
   created_at: number;
   updated_at: number;
   version: number;

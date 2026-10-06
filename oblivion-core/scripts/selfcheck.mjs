@@ -576,6 +576,94 @@ await check('会话整理（oblivion_digest）：笔记落 04_会话整理/ + �
   return '笔记 ' + result.notePath.replace(/\\/g, '/').split('/').slice(-1)[0] + ' / 条目 ' + result.itemId + ' / 边 ' + result.entities;
 });
 
+await check('盲区修正：同主题旧版自动 superseded + 条目带 impl + 笔记 frontmatter + 00-Index', async () => {
+  const root = join(tmp, 'kb-status');
+  const data = join(tmp, 'data-status');
+  const kit2 = await import(new URL('file://' + join(ROOT, 'lib', 'testkit.js').replace(/\\/g, '/')).href);
+  const ctxLike = { effect: () => () => {}, logger: { warn() {}, info() {} } };
+  const cfg = { ...kit2.DEFAULT_CONFIG, dataRoot: data, mdRoot: root };
+  const knowledge = kit2.registerKnowledge(ctxLike, cfg);
+
+  const mk = (title) => ({
+    title,
+    topic: '同主题桶',
+    content: '身体内容：' + title + '。' + '这里是一段足够长的正文，用来避免被价值层拦下。'.repeat(3),
+    sources: [{ type: 'session', ref: 'selfcheck#1', hash: 'h' }],
+  });
+  const first = await knowledge.saveStructured(mk('第一版'));
+  const second = await knowledge.saveStructured(mk('第二版'));
+
+  assert.equal(first.status, 'active');
+  assert.equal(first.impl, 'implemented', '结构化条目应带 impl 字段');
+  const reread = JSON.parse(readFileSync(join(data, first.id + '.json'), 'utf8'));
+  assert.equal(reread.status, 'superseded', '同主题旧版应被自动降级');
+  assert.equal(reread.supersededBy, second.id, '应写 supersededBy 指向新版本');
+  const rereadNew = JSON.parse(readFileSync(join(data, second.id + '.json'), 'utf8'));
+  assert.equal(rereadNew.status, 'active', '新版本应保持 active');
+
+  // 笔记 frontmatter（走真实 writeMD）
+  const note = await kit2.writeMD(root, { action: 'created', item: second }, cfg.mdClassify);
+  const noteText = readFileSync(note, 'utf8');
+  assert.ok(noteText.startsWith('---\n'), '笔记必须以 YAML frontmatter 开头');
+  assert.ok(/status: "active"/.test(noteText), 'frontmatter 应含 status');
+  assert.ok(/impl: "implemented"/.test(noteText), 'frontmatter 应含 impl');
+  assert.ok(/topic: "同主题桶"/.test(noteText), 'frontmatter 应含 topic');
+
+  // 索引页（只放指针）
+  const indexPath = await kit2.writeIndexNote(root, knowledge.index.all());
+  const indexText = readFileSync(indexPath, 'utf8');
+  assert.ok(indexPath.includes('00-Index'), '索引应落在 00-Index/');
+  assert.ok(indexText.includes('superseded'), '索引应标出 superseded 状态');
+  assert.ok(indexText.includes('| 主题 | 条目 | 标题 | 状态 | 落地 | 更新 |'), '索引应含状态表头');
+  return '旧版→superseded（supersededBy=' + second.id + '）/ 新版 active / frontmatter + 00-Index ✓';
+});
+
+await check('冲突不合并：writeMD 的 conflict 分支写 50-Conflicts/ 新旧并列页', async () => {
+  const root = join(tmp, 'kb-conflict');
+  const kit3 = await import(new URL('file://' + join(ROOT, 'lib', 'testkit.js').replace(/\\/g, '/')).href);
+  const path = await kit3.writeMD(root, {
+    action: 'conflict',
+    conflict: {
+      question: 'dsh 插件组合顺序固定吗',
+      answer: '结论：**不固定**，可以随意调整。',
+      existingId: 'ts-existing-1',
+      existingTitle: 'dsh 插件组合顺序固定吗',
+      reason: 'conflicts with existing item',
+      topic: 'dsh 插件组合顺序',
+    },
+  });
+  assert.ok(path.includes('50-Conflicts'), '冲突页应落在 50-Conflicts/，实际 ' + path);
+  const text = readFileSync(path, 'utf8');
+  assert.ok(text.includes('不合并'), '必须写明不合并政策');
+  assert.ok(text.includes('## 新（未入库）') && text.includes('## 旧（已在库）'), '应并列新旧两版');
+  assert.ok(text.includes('ts-existing-1'), '应记录既有条目 id');
+  // 幂等：同一条冲突重复写不产生第二段
+  const again = await kit3.writeMD(root, {
+    action: 'conflict',
+    conflict: { question: 'q', answer: 'a', existingId: 'ts-existing-1', existingTitle: 't', topic: 'dsh 插件组合顺序' },
+  });
+  const after = readFileSync(again, 'utf8');
+  assert.equal(after.split('## 新（未入库）').length - 1, 1, '同一既有条目重复冲突不应重复追加');
+  return path.replace(/\\/g, '/').split('/').slice(-2).join('/');
+});
+
+await check('图谱双链：findRelatedItems 只连相关项、不连自己、不连已降级项', async () => {
+  const kit2 = await import(new URL('file://' + join(ROOT, 'lib', 'testkit.js').replace(/\\/g, '/')).href);
+  const mk = (id, title, content, status = 'active') => ({
+    id, title, topic: 't', content, sources: [], tags: [], status, created_at: 1, updated_at: 1, version: 1,
+  });
+  const current = mk('a', 'cordis 插件组合', 'cordis 用 yaml patch 组合插件树，并注入 tools 服务');
+  const related = mk('b', 'cordis 注入', 'cordis 通过 yaml patch 组合插件，注入 tools 服务给插件用');
+  const unrelated = mk('c', '今天吃什么', '面条 米饭 饺子');
+  const superseded = mk('d', 'cordis 旧版', 'cordis 用 yaml patch 组合插件', 'superseded');
+  const found = kit2.findRelatedItems(current, [current, related, unrelated, superseded], { limit: 5 });
+  assert.ok(found.some((r) => r.id === 'b'), '相关项应被连上');
+  assert.ok(!found.some((r) => r.id === 'a'), '不能连自己');
+  assert.ok(!found.some((r) => r.id === 'c'), '无关项不应连上');
+  assert.ok(!found.some((r) => r.id === 'd'), 'superseded 条目不应再被连');
+  return '连上 ' + found.map((r) => r.id + '(' + r.score.toFixed(3) + ')').join(', ');
+});
+
 rmSync(tmp, { recursive: true, force: true });
 
 process.stdout.write('\n@oblivion/core selfcheck\n\n');

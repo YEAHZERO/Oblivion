@@ -75,6 +75,11 @@ export interface Config {
   readonly enableEventProbe: boolean;
   /** 探针文件最多保留多少行（超出重写为尾部）。 */
   readonly eventProbeMax: number;
+  /**
+   * **盲区修正**：同一 `topic` 出现新版本时，自动把仍为 `active` 的旧条目降级为 `superseded`
+   * （不删除，写 `supersededBy`），并在笔记 frontmatter 里如实标注。
+   */
+  readonly autoSupersede: boolean;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -158,6 +163,9 @@ export const DEFAULT_CONFIG: Config = {
   // 临时事件探针（链路验证通过后设 false）
   enableEventProbe: true,
   eventProbeMax: 200,
+
+  // 盲区修正：同主题新版本自动降级旧版本（不删，只标 superseded）
+  autoSupersede: true,
 };
 
 /** 部分覆盖：只接受显式给出的键，缺省落回 DEFAULT_CONFIG。 */

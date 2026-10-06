@@ -3,13 +3,23 @@ import { join } from 'node:path';
 import type { KnowledgeItem } from '../types.js';
 import { isoDate } from '../util/time.js';
 
-export type MdAction = 'created' | 'appended' | 'duplicate';
+export type MdAction = 'created' | 'appended' | 'duplicate' | 'conflict';
 
 export interface MdPayload {
   action: MdAction;
-  item: KnowledgeItem;
+  /** `conflict` 分支没有 item（筛选没放行），只有双方内容。 */
+  item?: KnowledgeItem;
   /** 仅 duplicate 分支使用：被补进来的来源。 */
   mergedSource?: { type: string; ref: string };
+  /** 仅 conflict 分支使用：新问题/新答案与既有条目。 */
+  conflict?: {
+    question: string;
+    answer: string;
+    existingId: string;
+    existingTitle: string;
+    reason?: string;
+    topic?: string;
+  };
 }
 
 /** 分类映射：来源类型 → mdRoot 下的子目录（设计书 §25.3）。 */
@@ -87,14 +97,49 @@ function safeName(topic: string): string {
 const ID_MARKER = 'oblivion:';
 
 /**
- * 新条目渲染。`<!-- oblivion:id=… -->` 是幂等连接键：
- * 同一个 id 重复落盘不会生成第二份。
+ * YAML frontmatter（盲区修正的核心）。
+ *
+ * 起因是一次真实的口径漂移：同一主题在文档里有 26 / 28 / 3 三个版本，读的人无法判断哪个是权威。
+ * 解法不是"记得更新"，而是**让每个条目自己带状态**：
+ *   - `status`：`active` / `superseded` / `draft` / `conflict` / `archived`
+ *   - `impl`：`implemented` / `designed` / `placeholder`
+ *   - `supersedes` / `superseded_by`：版本链
+ * Obsidian 与大多数 Markdown 工具都能直接读 frontmatter，因此这一步同时让知识库对**人**和**机器**都可判读。
  */
+export function renderFrontmatter(item: KnowledgeItem, extra: Record<string, string | string[]> = {}): string {
+  const lines: string[] = ['---'];
+  const push = (key: string, value: string | string[] | undefined): void => {
+    if (value === undefined) return;
+    if (Array.isArray(value)) {
+      lines.push(key + ': [' + value.map((v) => JSON.stringify(v)).join(', ') + ']');
+      return;
+    }
+    lines.push(key + ': ' + JSON.stringify(value));
+  };
+
+  push('title', item.title);
+  push('topic', item.topic);
+  push('source', item.sources[0]?.type ?? 'session');
+  push('ref', item.sources[0]?.ref ?? '');
+  push('created_at', isoDate(item.created_at));
+  push('updated_at', isoDate(item.updated_at));
+  push('tags', item.tags);
+  push('status', item.status);
+  push('impl', item.impl ?? 'implemented');
+  if (item.supersededBy) push('superseded_by', item.supersededBy);
+  for (const [key, value] of Object.entries(extra)) push(key, value);
+  lines.push('---');
+  return lines.join('\n');
+}
+
+/** 新条目渲染。`<!-- oblivion:id=… -->` 是幂等连接键：同一个 id 重复落盘不会生成第二份。 */
 function renderNew(item: KnowledgeItem): string {
   const tags = item.tags.map((t) => '#' + t).join(' ');
   const sources = item.sources.map((s) => '- `' + s.type + '`: ' + s.ref).join('\n');
   const note = item.content.replace(/\s+/g, ' ').slice(0, 100);
   return [
+    renderFrontmatter(item, { related_wiki: [] }),
+    '',
     '# ' + item.title,
     '',
     '>Date :  ' + isoDate(item.created_at),
@@ -113,6 +158,82 @@ function renderNew(item: KnowledgeItem): string {
     '<!-- oblivion:id=' + item.id + ' version=' + item.version + ' -->',
     '',
   ].join('\n');
+}
+
+/**
+ * 冲突页渲染（`50-Conflicts/`）。
+ *
+ * 设计铁律：**冲突不合并**。新旧两版都留，页面上并列，让读者自己判断 ——
+ * 静默合并是知识库最不可逆的一种损坏。
+ */
+export function renderConflict(payload: MdPayload, at: number): string {
+  const c = payload.conflict;
+  if (!c) return '';
+  return [
+    '# 冲突：' + (c.topic || c.question.slice(0, 40)),
+    '',
+    '>Detected：' + isoDate(at),
+    '>Source：Oblivion · 冲突记录',
+    '>Policy：**不合并**，两个版本都保留',
+    c.reason ? '>Reason：' + c.reason : '',
+    '',
+    '## 新（未入库）',
+    '',
+    '**Q**：' + c.question,
+    '',
+    c.answer,
+    '',
+    '## 旧（已在库）',
+    '',
+    '- 条目：`' + c.existingId + '`',
+    '- 标题：' + c.existingTitle,
+    '',
+    '<!-- oblivion:conflict with=' + c.existingId + ' at=' + at + ' -->',
+    '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+/**
+ * 索引页（`00-Index/索引.md`）：**只放指针，不放正文**。
+ *
+ * 这是盲区修正的另一半 —— 权威内容只在条目里，索引负责"一眼看清有哪些、什么状态"。
+ */
+export function renderIndex(entries: KnowledgeItem[], at: number): string {
+  const byTopic = new Map<string, KnowledgeItem[]>();
+  for (const item of entries) {
+    const list = byTopic.get(item.topic) ?? [];
+    list.push(item);
+    byTopic.set(item.topic, list);
+  }
+  const lines: string[] = [
+    '---',
+    'title: "Oblivion 知识索引"',
+    'source: "index"',
+    'created_at: ' + JSON.stringify(isoDate(at)),
+    'status: "active"',
+    'impl: "implemented"',
+    '---',
+    '',
+    '# Oblivion 知识索引',
+    '',
+    '> 本页由插件自动重建，**只放指针**；权威内容在各自条目与笔记里。',
+    '> 状态口径：`active` 现行 / `superseded` 已被新版取代 / `draft` 草稿 / `conflict` 有冲突 / `archived` 归档。',
+    '',
+    '| 主题 | 条目 | 标题 | 状态 | 落地 | 更新 |',
+    '| --- | --- | --- | --- | --- | --- |',
+  ];
+  for (const [topic, items] of [...byTopic.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const item of items.sort((a, b) => b.updated_at - a.updated_at)) {
+      lines.push(
+        '| ' + topic + ' | `' + item.id + '` | ' + item.title.replace(/\|/g, '\\|') + ' | ' + item.status + ' | ' + (item.impl ?? 'implemented') + ' | ' + isoDate(item.updated_at) + ' |',
+      );
+    }
+  }
+  if (byTopic.size === 0) lines.push('| — | — | 还没有条目 | — | — | — |');
+  lines.push('');
+  return lines.join('\n');
 }
 
 function appendSection(existing: string, item: KnowledgeItem): string {
@@ -152,10 +273,27 @@ export async function writeMD(
   payload: MdPayload,
   classify?: MdClassifyMap,
 ): Promise<string> {
-  const dir = join(root, classifyDir(payload.item, classify));
+  // ---- 冲突分支：没有 item（筛选没放行），单独写 `50-Conflicts/`，绝不合并 ----
+  if (payload.action === 'conflict') {
+    const dir = join(root, CONFLICTS_DIR);
+    await mkdir(dir, { recursive: true });
+    const c = payload.conflict;
+    const name = safeName(c?.topic || c?.question || 'conflict');
+    const path = join(dir, name + '.md');
+    const existing = await readFile(path, 'utf8').catch(() => '');
+    const block = renderConflict(payload, payload.conflict ? Date.now() : Date.now());
+    if (c && existing.includes('oblivion:conflict with=' + c.existingId)) return path;
+    await writeFile(path, existing ? existing.trimEnd() + '\n\n---\n\n' + block : block, 'utf8');
+    return path;
+  }
+
+  const item = payload.item;
+  if (!item) return ''; // 其余分支都要求有 item；静默返回空路径而不是抛错（调用方只记日志）
+
+  const dir = join(root, classifyDir(item, classify));
   await mkdir(dir, { recursive: true });
 
-  const name = safeName(payload.item.topic);
+  const name = safeName(item.topic);
   let path = join(dir, name + '.md');
   let existing = await readFile(path, 'utf8').catch(() => '');
   if (existing !== '' && !existing.includes(ID_MARKER)) {
@@ -165,16 +303,62 @@ export async function writeMD(
 
   switch (payload.action) {
     case 'created': {
-      if (existing.includes('oblivion:id=' + payload.item.id)) return path;
-      const body = existing ? existing.trimEnd() + '\n\n' + renderNew(payload.item) : renderNew(payload.item);
+      if (existing.includes('oblivion:id=' + item.id)) return path;
+      const body = existing ? existing.trimEnd() + '\n\n' + renderNew(item) : renderNew(item);
       await writeFile(path, body, 'utf8');
       return path;
     }
     case 'appended':
-      await writeFile(path, appendSection(existing, payload.item), 'utf8');
+      await writeFile(path, appendSection(existing, item), 'utf8');
       return path;
     case 'duplicate':
       await writeFile(path, appendSource(existing, payload), 'utf8');
       return path;
+    default:
+      return path;
   }
+}
+
+/** 冲突页目录名（盲区规格里的 `50-Conflicts/`）。 */
+export const CONFLICTS_DIR = '50-Conflicts';
+/** 索引目录名（只放指针）。 */
+export const INDEX_DIR = '00-Index';
+
+/**
+ * 重建索引页 `<mdRoot>/00-Index/索引.md`。
+ *
+ * 只放指针、不放正文 —— 权威内容在条目里。这样"有几个版本、哪个是现行"一眼可判，
+ * 不需要人去翻历史文档（那正是盲区 1「口径漂移」的根因）。
+ */
+export async function writeIndexNote(root: string, entries: KnowledgeItem[], at = Date.now()): Promise<string> {
+  const dir = join(root, INDEX_DIR);
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, '索引.md');
+  await writeFile(path, renderIndex(entries, at), 'utf8');
+  return path;
+}
+
+/**
+ * 给既有笔记追加「关联知识」双链段（图谱生长的"双链写回"）。
+ *
+ * 幂等：同一批链接已存在则不动。**只追加到我们自己写的笔记**（含 `oblivion:` 标记）——
+ * 用户自有笔记一个字都不改（与防误伤同一条原则）。
+ */
+export async function appendRelatedLinks(notePath: string, titles: string[]): Promise<boolean> {
+  const links = titles.map((t) => String(t).trim()).filter((t) => t !== '');
+  if (links.length === 0) return false;
+  const existing = await readFile(notePath, 'utf8').catch(() => '');
+  if (existing === '' || !existing.includes(ID_MARKER)) return false;
+
+  const missing = links.filter((t) => !existing.includes('[[' + t + ']]'));  if (missing.length === 0) return false;
+
+  const block = [
+    '',
+    '## 关联知识（自动）',
+    '',
+    missing.map((t) => '- [[' + t.replace(/^\[\[|\]\]$/g, '') + ']]').join('\n'),
+    '',
+  ].join('\n');
+  await writeFile(notePath, existing.trimEnd() + '\n' + block, 'utf8');
+  return true;
 }

@@ -1,6 +1,6 @@
 import type { AppContext } from '../core-types.js';
 import type { Config } from '../config.js';
-import type { FilterResult, KnowledgeItem, QAPair, Source } from '../types.js';
+import type { FilterResult, ImplStatus, ItemStatus, KnowledgeItem, QAPair, Source } from '../types.js';
 import { normalizeForHash, sha1 } from '../util/hash.js';
 import { expandHome } from '../util/paths.js';
 import { newId, now } from '../util/time.js';
@@ -31,6 +31,10 @@ export interface StructuredInput {
   content: string;
   tags?: string[];
   sources: Source[];
+  /** 落地状态（盲区规格：implemented / designed / placeholder）。 */
+  impl?: ImplStatus;
+  /** 版本状态（默认 active）。 */
+  status?: ItemStatus;
 }
 
 export interface KnowledgeService {
@@ -154,6 +158,7 @@ export function registerKnowledge(ctx: AppContext, config: Config): KnowledgeSer
       sources: mergeSources([], qa, fp),
       tags: deriveTags(qa),
       status: 'active',
+      impl: 'implemented',
       created_at: at,
       updated_at: at,
       version: 1,
@@ -161,7 +166,28 @@ export function registerKnowledge(ctx: AppContext, config: Config): KnowledgeSer
     await store.save(item);
     await loadIndex();
     touched = [item.id];
+    if (config.autoSupersede) await supersedeOlder(item.topic, item.id);
     return { ...result, item };
+  }
+
+  /**
+   * **自动降级同主题旧版本**（盲区规格里的「检测到同一主题多版本 → 给旧版打 `superseded`」）。
+   *
+   * 只降级**同一 topic 且仍为 active** 的旧条目，并把 `supersededBy` 指向新条目 ——
+   * 旧版**不删**（口径漂移的教训：删掉就再也说不清当初为什么改成这样）。
+   */
+  async function supersedeOlder(topic: string, keepId: string): Promise<string[]> {
+    const older = index
+      .all()
+      .filter((item) => item.topic === topic && item.id !== keepId && item.status === 'active');
+    const demoted: string[] = [];
+    for (const item of older) {
+      const next: KnowledgeItem = { ...item, status: 'superseded', supersededBy: keepId, updated_at: now(), version: item.version + 1 };
+      await store.save(next);
+      demoted.push(item.id);
+    }
+    if (demoted.length) await loadIndex();
+    return demoted;
   }
 
   /**
@@ -177,7 +203,8 @@ export function registerKnowledge(ctx: AppContext, config: Config): KnowledgeSer
       content: input.content,
       sources: input.sources,
       tags: input.tags ?? [],
-      status: 'active',
+      status: input.status ?? 'active',
+      impl: input.impl ?? 'implemented',
       created_at: at,
       updated_at: at,
       version: 1,
@@ -185,6 +212,7 @@ export function registerKnowledge(ctx: AppContext, config: Config): KnowledgeSer
     await store.save(item);
     await loadIndex();
     touched = [item.id];
+    if (item.status === 'active' && config.autoSupersede) await supersedeOlder(item.topic, item.id);
     return item;
   }
 

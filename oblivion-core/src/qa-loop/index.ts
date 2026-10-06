@@ -8,7 +8,8 @@ import type { ProfileService } from '../profile/index.js';
 import { expandHome } from '../util/paths.js';
 import type { DecisionRecord } from '../stats/trace.js';
 import { extractQAPair, type TurnEventLike } from './extract.js';
-import { ensureMdDirs, writeMD, type MdAction } from './md-writer.js';
+import { appendRelatedLinks, ensureMdDirs, writeIndexNote, writeMD, type MdAction } from './md-writer.js';
+import { findRelatedItems } from '../graph/backlink.js';
 
 interface SessionLike {
   id: string;
@@ -220,9 +221,29 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
         startedAt,
       });
 
-      if (!result.pass || !result.item) return;
+      if (!result.pass || !result.item) {
+        // 冲突：筛选没放行，但**必须留一份不合并的对照页**（设计铁律：冲突不合并）
+        if (result.action === 'conflict' && result.existing) {
+          await writeMD(
+            mdRoot,
+            {
+              action: 'conflict',
+              conflict: {
+                question: qa.question,
+                answer: qa.answer,
+                existingId: result.existing.id,
+                existingTitle: result.existing.title,
+                reason: result.reason,
+                topic: result.existing.topic,
+              },
+            },
+            config.mdClassify,
+          );
+        }
+        return;
+      }
 
-      await writeMD(
+      const notePath = await writeMD(
         mdRoot,
         {
           action: result.action as MdAction,
@@ -232,6 +253,17 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
       );
       await deps.graph.recordCooccurrence(qa);
       await deps.profile.updateFromQA(qa);
+
+      // 双链写回 + 索引重建：都是"锦上添花"，失败只记日志，不影响捕获本身。
+      try {
+        const related = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
+        if (related.length > 0 && notePath !== '') {
+          await appendRelatedLinks(notePath, related.map((item) => item.title));
+        }
+        await writeIndexNote(mdRoot, deps.knowledge.index.all());
+      } catch (error) {
+        ctx.logger?.warn?.(config.logPrefix + ' 双链/索引写回失败：%o', error);
+      }
 
       deps.onCaptured?.({
         question: qa.question,

@@ -4,11 +4,11 @@ import type { AppContext } from '../core-types.js';
 import type { Config } from '../config.js';
 import type { GraphService } from '../graph/index.js';
 import type { KnowledgeService } from '../knowledge/index.js';
-import type { QAPair, Source } from '../types.js';
+import type { QAPair, ImplStatus, ItemStatus, Source } from '../types.js';
 import { expandHome } from '../util/paths.js';
 import { shortHash } from '../util/hash.js';
 import { isoDate, now } from '../util/time.js';
-import { safeDirName } from '../qa-loop/md-writer.js';
+import { safeDirName, writeIndexNote } from '../qa-loop/md-writer.js';
 
 /**
  * **会话整理**（`oblivion_digest`）。
@@ -47,6 +47,10 @@ export interface DigestInput {
   links?: string[];
   /** 会话标识（模型可传；不传就是本机整理）。 */
   sessionId?: string;
+  /** 落地状态（默认 implemented）。 */
+  impl?: ImplStatus;
+  /** 版本状态（默认 active）。 */
+  status?: ItemStatus;
 }
 
 export interface DigestComposition {
@@ -98,6 +102,20 @@ export function composeDigest(input: DigestInput, at: number = now()): DigestCom
   const sections = Array.isArray(input.sections) ? input.sections : [];
 
   const parts: string[] = [];
+  const status = input.status ?? 'active';
+  const impl = input.impl ?? 'implemented';
+  // YAML frontmatter：让「这份整理是现行还是草稿、落地到什么程度」自带答案（盲区修正）。
+  parts.push('---');
+  parts.push('title: ' + JSON.stringify(title));
+  parts.push('topic: ' + JSON.stringify(topic));
+  parts.push('source: "session_digest"');
+  parts.push('session: ' + JSON.stringify(input.sessionId ?? ''));
+  parts.push('created_at: ' + JSON.stringify(isoDate(at)));
+  parts.push('tags: ["会话整理"' + (input.todos?.length ? ', "待办"' : '') + (input.decisions?.length ? ', "决策"' : '') + ']');
+  parts.push('status: ' + JSON.stringify(status));
+  parts.push('impl: ' + JSON.stringify(impl));
+  parts.push('---');
+  parts.push('');
   parts.push('# ' + title);
   parts.push('');
   parts.push('>Date :  ' + isoDate(at));
@@ -180,6 +198,8 @@ export function registerDigest(
       content: composed.markdown,
       tags: ['会话整理', ...(input.todos?.length ? ['待办'] : []), ...(input.decisions?.length ? ['决策'] : [])],
       sources,
+      impl: input.impl ?? 'implemented',
+      status: input.status ?? 'active',
     });
 
     const markdown = composed.markdown.replace('id=pending', 'id=' + item.id);
@@ -208,6 +228,13 @@ export function registerDigest(
       entities = await deps.graph.recordCooccurrence(qa);
     } catch (error) {
       ctx.logger?.warn?.(config.logPrefix + ' 整理建边失败（不影响落盘）：%o', error);
+    }
+
+    // 索引页同步重建（只放指针，权威内容在条目里）
+    try {
+      await writeIndexNote(mdRoot, deps.knowledge.index.all());
+    } catch (error) {
+      ctx.logger?.warn?.(config.logPrefix + ' 索引重建失败：%o', error);
     }
 
     return {
