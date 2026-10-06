@@ -24,6 +24,7 @@ export {
 } from './qa-loop/md-writer.js';
 export { findRelatedItems } from './graph/backlink.js';
 export { deriveTitle, deriveTopic } from './knowledge/index.js';
+export { tagsFromQA, titleFromQA } from './knowledge/naming.js';
 export { registerKnowledge } from './knowledge/index.js';
 export { registerFeedback } from './feedback/index.js';
 export { defaultProfile, mergeProfile } from './profile/schema.js';

@@ -95,6 +95,21 @@ function safeName(topic: string): string {
   return (topic || 'untitled').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
 }
 
+/**
+ * 笔记文件名取自**标题**（内容名，core 0.2.1 起由 `knowledge/naming.ts` 生成），
+ * 没有标题才退回 `topic`。
+ *
+ * 为什么不用 `topic`：`topic` 的语义是「主题桶」（用来聚合同一主题的多版、给索引分组），
+ * 它是「问句里第一个词串」，于是文件名长成了 `查看这个方案.md`、`我的0.md`
+ * —— 所有者 2026-10-06：「命名上看不出是什么内容，单纯只是我的问题的简写而已」。
+ * 标题才是「这里讲了什么」，`topic` 继续管分组，两件事各归各位。
+ */
+function fileNameOf(item: { title?: string; topic?: string }): string {
+  const title = typeof item.title === 'string' ? item.title.trim() : '';
+  const topic = typeof item.topic === 'string' ? item.topic.trim() : '';
+  return safeName(title !== '' ? title : topic);
+}
+
 const ID_MARKER = 'oblivion:';
 
 /**
@@ -282,7 +297,7 @@ export async function notePathFor(
   classify?: MdClassifyMap,
 ): Promise<string> {
   const dir = join(root, classifyDir(item, classify));
-  const name = safeName(item.topic);
+  const name = fileNameOf(item);
   const primary = join(dir, name + '.md');
   const primaryText = await readFile(primary, 'utf8').catch(() => '');
   if (primaryText.includes(ID_MARKER) || primaryText.includes('oblivion:digest')) return primary;
@@ -317,7 +332,7 @@ export async function writeMD(
   const dir = join(root, classifyDir(item, classify));
   await mkdir(dir, { recursive: true });
 
-  const name = safeName(item.topic);
+  const name = fileNameOf(item);
   let path = join(dir, name + '.md');
   let existing = await readFile(path, 'utf8').catch(() => '');
   if (existing !== '' && !existing.includes(ID_MARKER)) {

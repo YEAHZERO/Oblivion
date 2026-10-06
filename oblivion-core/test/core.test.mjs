@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync as mkdtemp, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -208,5 +208,62 @@ describe('装配（apply）', () => {
     assert.equal(kit.safeFileName('a/b\\c:d*e?f"g<h>i|j'), 'a_b_c_d_e_f_g_h_i_j');
     assert.equal(kit.safeFileName('   '), 'untitled');
     assert.equal(kit.safeFileName('x'.repeat(200)).length, 80);
+  });
+});
+
+/**
+ * 沉淀件的命名与打标签。
+ *
+ * 所有者 2026-10-06：「这些沉淀的文档，命名上看不出是什么内容，单纯只是我的问题的简写而已，
+ * 需要在沉淀整理的时候顺便命名 + 打标签」。
+ */
+describe('命名与打标签（由内容决定，不调模型）', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  it('优先用答案里第一个不像套话的小标题（套话被跳过）', () => {
+    assert.equal(kit.titleFromQA('给出实施的具体方案', '## 结论\n\n应该这样做。\n\n## 怎么装 bundle\n'), '怎么装 bundle');
+    assert.equal(kit.titleFromQA('随便问问', '## 要点\n\n## 摘要\n'), '随便问问');
+  });
+
+  it('问句去水词 + 保留整句（不在第一个标点处截断），而不是整句照抄', () => {
+    assert.equal(
+      kit.titleFromQA('查看opencode的配置，里面有API和密钥', '没有小标题'),
+      'opencode的配置，里面有API和密钥',
+      '「里面有API和密钥」正是这条沉淀的内容，不该被标点截掉',
+    );
+    assert.equal(kit.titleFromQA('这个最近沉淀和笔记有何区别？', ''), '最近沉淀和笔记有何区别');
+    assert.equal(kit.titleFromQA('给出实施的具体方案', ''), '实施的具体方案');
+  });
+
+  it('绝不产出空名，长度有上限', () => {
+    assert.equal(kit.titleFromQA('', ''), 'untitled');
+    assert.equal(kit.titleFromQA('   ', '   '), 'untitled');
+    assert.ok(kit.titleFromQA('x'.repeat(100), '').length <= 32);
+  });
+
+  it('标签：包名 / 技术词 / 中文词表，且扫问句不只扫答案', () => {
+    const tags = kit.tagsFromQA(
+      '怎么把 @oblivion/core 装进 dsh-better-sidebar 的 profile 补丁',
+      '用 npm 装，改 cordis.patch.yml',
+    );
+    assert.ok(tags.includes('@oblivion/core'), '包名要成为标签：' + tags.join(','));
+    assert.ok(tags.includes('dsh-better-sidebar'));
+    assert.ok(tags.includes('npm'));
+    assert.ok(tags.includes('config'), '「补丁」应命中中文词表：' + tags.join(','));
+    assert.ok(tags.length <= 8, '标签上限 8，实际 ' + tags.length);
+    assert.deepEqual(kit.tagsFromQA('', ''), []);
+  });
+
+  it('deriveTitle 走同一条口径（不再是问句前 60 字）', () => {
+    const title = kit.deriveTitle({
+      question: '查看这个方案：# Oblivion C 方案完整设计书',
+      answer: '## 结论\n\n## 分阶段落地\n',
+      sources: [],
+    });
+    assert.equal(title, '分阶段落地');
   });
 });

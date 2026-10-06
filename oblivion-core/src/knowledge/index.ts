@@ -5,6 +5,7 @@ import { normalizeForHash, sha1 } from '../util/hash.js';
 import { expandHome } from '../util/paths.js';
 import { newId, now } from '../util/time.js';
 import { compareByOverlap, fourLayerFilter, type SimilarVerdict } from './filter.js';
+import { tagsFromQA, titleFromQA } from './naming.js';
 import { KnowledgeIndex } from './search.js';
 import { KnowledgeStore } from './store.js';
 
@@ -260,9 +261,15 @@ export function registerKnowledge(ctx: AppContext, config: Config): KnowledgeSer
   };
 }
 
+/**
+ * 沉淀件的名字 —— **由内容决定**，不再是「我问了什么」的简写。
+ *
+ * 所有者 2026-10-06：「命名上看不出是什么内容，单纯只是我的问题的简写而已」。
+ * 具体口径（确定性、不调模型）见 `naming.ts`：答案里第一个不像套话的小标题优先，
+ * 否则把问句去掉水词、截到第一个标点，最后才退回问句原文。
+ */
 export function deriveTitle(qa: QAPair): string {
-  const q = qa.question.split('\n')[0].trim();
-  return q.length > 60 ? q.slice(0, 57) + '…' : q || 'untitled';
+  return titleFromQA(qa.question, qa.answer);
 }
 
 /** 主题桶：显式 hint 优先，否则取问句里第一个实词串。 */
@@ -285,13 +292,7 @@ function mergeSources(existing: KnowledgeItem['sources'], qa: QAPair, fp: string
   return out;
 }
 
-/** 标签来自显式 hint、技术词命中与正文里的 #tag。 */
+/** 标签：技术词 + 包名 + `#tag` + 中文词表（细则见 `naming.ts`，扫的是问句 + 答案）。 */
 function deriveTags(qa: QAPair): string[] {
-  const out = new Set<string>();
-  if (qa.topicHint) out.add(qa.topicHint);
-  const tech =
-    /\b(dsh|dshx|cordis|npm|pnpm|docker|sqlite|fts5|json|yaml|api|mcp|wsl2?|arkts|flutter|esbuild|vitest|node|react)\b/gi;
-  for (const m of qa.answer.matchAll(tech)) out.add(m[0].toLowerCase());
-  for (const m of qa.answer.matchAll(/#([\p{L}\p{N}_-]{2,20})/gu)) out.add(m[1]);
-  return [...out].slice(0, 8);
+  return tagsFromQA(qa.question, qa.answer, qa.topicHint ? [qa.topicHint] : []);
 }

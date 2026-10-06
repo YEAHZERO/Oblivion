@@ -664,6 +664,41 @@ await check('图谱双链：findRelatedItems 只连相关项、不连自己、�
   return '连上 ' + found.map((r) => r.id + '(' + r.score.toFixed(3) + ')').join(', ');
 });
 
+await check('命名与打标签：答案小标题优先、问句去水词、中文词表打标', async () => {
+  const kit = await import(new URL('file://' + join(ROOT, 'lib', 'testkit.js').replace(/\\/g, '/')).href);
+  // 命名：答案里第一个不像套话的小标题 > 去水词后的问句 > 问句原文。
+  assert.equal(kit.titleFromQA('给出实施的具体方案', '## 结论\n\n## 分阶段落地\n'), '分阶段落地');
+  assert.equal(kit.titleFromQA('查看opencode的配置，里面有API和密钥', '没有小标题'), 'opencode的配置，里面有API和密钥');
+  assert.equal(kit.titleFromQA('', ''), 'untitled', '绝不产出空名');
+  assert.ok(kit.titleFromQA('x'.repeat(200), '').length <= 32, '名字有长度上限（文件名要能一眼读完）');
+  // 打标签：包名 + 技术词 + 中文词表，问句也参与。
+  const tags = kit.tagsFromQA('把 @oblivion/core 装进 dsh-better-sidebar 的 profile 补丁', '用 npm，改 cordis.patch.yml');
+  for (const want of ['@oblivion/core', 'dsh-better-sidebar', 'npm', 'config']) {
+    assert.ok(tags.includes(want), '缺少标签 ' + want + '（实际：' + tags.join(',') + '）');
+  }
+  assert.ok(tags.length <= 8, '标签上限 8，实际 ' + tags.length);
+  // 落盘名取自标题（不再是问句简写）——用真实 writeMD 走一遍。
+  const root = join(tmp, 'kb-naming');
+  const item = {
+    id: 'ts-naming-1',
+    topic: '查看这个方案',
+    title: '两套配置的差别',
+    content: '正文',
+    tags: tags,
+    status: 'active',
+    impl: 'implemented',
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    version: 1,
+    sources: [{ type: 'qa_loop', ref: 'session#1', hash: 'h' }],
+  };
+  const notePath = await kit.writeMD(root, { action: 'created', item, question: '查看这个方案', answer: '正文' }, { qa_loop: '01_问答沉淀' });
+  assert.ok(notePath.endsWith(join('01_问答沉淀', '两套配置的差别.md')), '文件名应取自标题，实际 ' + notePath);
+  assert.ok(!notePath.includes('查看这个方案'), '不应再出现问句简写的文件名');
+  assert.match(readFileSync(notePath, 'utf8'), /^---\n/, '笔记要有 frontmatter');
+  return '名字「' + kit.titleFromQA('给出实施的具体方案', '## 结论\n\n## 分阶段落地\n') + '」/ 标签 ' + tags.length + ' 个';
+});
+
 rmSync(tmp, { recursive: true, force: true });
 
 process.stdout.write('\n@oblivion/core selfcheck\n\n');
