@@ -12,7 +12,7 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.13：MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+## [未发布] — `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.14 + v0.0.13：MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写、知识库每篇文档下方显示「相关主题 / 关键词 / 日期」
 
 ### `@oblivion/core` v0.2.8 —— MCP 成为 core 的内部模块 + 进程内通道（修掉桥接插件从未激活的根因）
 
@@ -291,6 +291,36 @@ node scripts/normalize-links.mjs --json          # 结构化报告（含整库�
   （`title`/`topic`）与答案正文，回填用 frontmatter 的 `title` 当问句重算，并同步条目 JSON 与 `00-Index/索引.md`。
 - 测试 **19/19**（新增 5 项命名/标签用例）、自检 **30 项**（新增一项：真实 `writeMD()` 落一篇，
   断言文件名取自标题、不含 `topic` 的问句简写）。
+
+### `@oblivion/panel` v0.0.14 —— 知识库每篇文档下方显示「相关主题 / 关键词 / 日期」
+
+- 所有者 2026-10-06：「知识库，将每个文档下方显示：相关主题和关键词、日期」。
+  合栏之后每行只有两行（标题 + `刚刚 · 当前版本 · 已落地 · 主题 …`），「这篇归到哪个主题下、
+  讲了什么、什么时候的」全靠点开才知道。补的第三行就是这三问：
+  `相关主题：… · 关键词：… · 日期：…`。
+- **`相关主题` 是回链，不是 topic 字段**（关键设计点）：取笔记里的 `> Wiki： [[标题]]`
+  （`oblivion_wiki` 写回的那条），由宿主半边 `src/snapshot.ts` 的 `parseNoteHead()` 把标题
+  **解析成主题页真实路径**，所以它渲染成 `<a>`、点一下直接在侧边栏打开那页 —— 这与「`topic` 字段」
+  是两件事，`topic` 仍留在第二行，两种「相关主题」的解读都看得见。
+  没有回链的写「**未归并**」：这本身就是「该跑一轮 `oblivion_wiki`」的信号（现场 10 篇里 6 篇已归并）。
+- **`关键词`** = 笔记 frontmatter 的 `tags` 并上**同主题条目**的 `tags`（去重保序，最多 5 个，
+  其余折成 `+N`）；**`日期`** = 笔记自己写的 `updated_at`（退化 `created_at`），笔记没写就按 mtime /
+  条目时间折算成**本地**日期；整理件（`04_会话整理/*.md`）没有 frontmatter，日期取自它的 `>Date :` 行。
+- **实现分半**（与合栏、曲线同一套路）：解析在宿主半边（能读文件，`readNoteHead()` 只读每篇
+  **头部 8 KB**、`finally close`，快照多一路 `wikis`），文案在浏览器半边
+  （`src/client/knowledge.ts` 的 `detailParts()` / `detailText()` / `keywordText()` / `wikiText()` /
+  `dateText()` 都是纯函数，`KEYWORD_MAX = 5`、`WIKI_MAX = 2`）。
+- **解析要认两种布局**：`parseNoteHead()` 同时认 frontmatter（`tags/related_wiki/created_at/updated_at`）
+  与正文元信息行（`>Date :`、`>Tags：`、`> Wiki：`），大小写与全半角冒号都容忍；
+  `> Wiki： [[甲]] [[甲]] [[乙]]` 这类重复按序去重。
+- 测试 **34/34**（0.0.13 为 28/28，新增 describe 6 项 + 快照 9 条断言）、自检 **15 项**（0.0.13 为 14 项，
+  新增「笔记头部解析 + 回链解析成路径」一项，状态路由断言 `wikis` 数组）、客户端包 46,133 B（+3,886 B）。
+- **真机只读探针**（真实知识库，不启动 App）：`notes=10 digests=1 wikis=10 items=81 problems=0`、
+  63 行（笔记 10、其中未归并 4；仅入库 52）、可点开主题页 6；
+  样例行 `相关主题：DSH 插件激活与作用域：事件收不到、服务读不到 · 关键词：#restart #dsh #json · 日期：2026-10-06`。
+- **实测暴露的噪声（留作待办，未修）**：关键词里混着 `#js #md #ts #json #api #15044` ——
+  来自 `oblivion-core/src/knowledge/naming.ts` 的 `tagsFromQA` 把文件扩展名/路径片段也当标签，
+  主题页 tags 同样受影响；要治得改 core 并重跑一轮 `oblivion_wiki`。
 
 ### `@oblivion/panel` v0.0.13 —— 删掉「最近判定」整个区域
 

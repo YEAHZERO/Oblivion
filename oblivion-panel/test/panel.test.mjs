@@ -35,6 +35,8 @@ function seed() {
   mkdirSync(dataRoot, { recursive: true });
   mkdirSync(join(mdRoot, '01_问答沉淀'), { recursive: true });
   mkdirSync(join(mdRoot, '04_会话整理'), { recursive: true });
+  // 0.0.14 起还读主题页目录（只当「标题 → 路径」的字典用）
+  mkdirSync(join(mdRoot, '02_Wiki页面'), { recursive: true });
 
   const now = Date.now();
   writeFileSync(
@@ -62,11 +64,52 @@ function seed() {
   );
   writeFileSync(
     join(dataRoot, 'ts-1.json'),
-    JSON.stringify({ id: 'ts-1', topic: '测试主题', title: '一条知识', created_at: 10, status: 'active', version: 1, sources: [{ type: 'session', ref: 's#1', hash: 'h' }] }),
+    JSON.stringify({
+      id: 'ts-1',
+      topic: '测试主题',
+      title: '一条知识',
+      created_at: 10,
+      updated_at: 20,
+      status: 'active',
+      version: 1,
+      tags: ['dsh', 'mcp'],
+      sources: [{ type: 'session', ref: 's#1', hash: 'h' }],
+    }),
     'utf8',
   );
-  writeFileSync(join(mdRoot, '01_问答沉淀', '测试主题.md'), '# 一条知识\n', 'utf8');
-  writeFileSync(join(mdRoot, '04_会话整理', '2026-10-06-整理.md'), '# 整理件\n', 'utf8');
+  // 真笔记的样子：frontmatter（关键词/日期）+ 元信息行（关键词 + 主题页回链）。
+  // 回链刻意写两条（第一条两个标题、第二条与第一条重复），用来断言「按序去重」。
+  writeFileSync(
+    join(mdRoot, '01_问答沉淀', '测试主题.md'),
+    [
+      '---',
+      'title: "一条知识"',
+      'topic: "测试主题"',
+      'created_at: "2026-10-05"',
+      'updated_at: "2026-10-06"',
+      'tags: ["dsh", "panel"]',
+      'related_wiki: []',
+      '---',
+      '',
+      '# 一条知识',
+      '',
+      '>Date :  2026-10-05',
+      '>Tags： #dsh #panel',
+      '> Wiki： [[主题页甲]] · [[主题页乙]]',
+      '> Wiki： [[主题页甲]]',
+      '',
+      '## 内容',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  writeFileSync(join(mdRoot, '02_Wiki页面', '主题页甲.md'), '# 主题页甲\n', 'utf8');
+  // 整理件**没有 frontmatter**，日期只能从 `>Date :` 行取。
+  writeFileSync(
+    join(mdRoot, '04_会话整理', '2026-10-06-整理.md'),
+    ['# 整理件', '', '>Date :  2026-10-04', '>Topic： 整理主题', ''].join('\n'),
+    'utf8',
+  );
   return { dataRoot, mdRoot };
 }
 
@@ -114,8 +157,20 @@ describe('观测快照（Node 半边数据面）', () => {
     assert.equal(snapshot.items.length, 1);
     assert.equal(snapshot.items[0].title, '一条知识');
     assert.equal(snapshot.items[0].sourceTypes[0], 'session', '条目要带上来源类型（用来标「会话整理」）');
+    assert.deepEqual(snapshot.items[0].tags, ['dsh', 'mcp'], '条目关键词取自 JSON 的 tags');
+    assert.equal(snapshot.items[0].updated_at, 20);
     assert.equal(snapshot.notes.length, 1);
+    // 0.0.14：每个文档下方要显示「相关主题 / 关键词 / 日期」，三样都从笔记头部解析
+    const note = snapshot.notes[0];
+    assert.deepEqual(note.tags, ['dsh', 'panel'], '关键词取自 frontmatter 的 tags');
+    assert.equal(note.createdAt, '2026-10-05');
+    assert.equal(note.updatedAt, '2026-10-06');
+    assert.deepEqual(note.wiki, ['主题页甲', '主题页乙'], '`> Wiki：` 回链要按序去重');
+    assert.equal(snapshot.wikis.length, 1, '主题页目录要读出来当字典（标题 → 路径）');
+    assert.equal(snapshot.wikis[0].path, join(mdRoot, '02_Wiki页面', '主题页甲.md'));
     assert.equal(snapshot.digests.length, 1, '04_会话整理 的整理件也要读出来（合栏后能点开）');
+    assert.equal(snapshot.digests[0].createdAt, '2026-10-04', '整理件没有 frontmatter：日期取 `>Date :` 行');
+    assert.deepEqual(snapshot.digests[0].tags, [], '整理件没有关键词就不编造');
     assert.ok(snapshot.problems.some((p) => p.includes('不是合法 JSON')), '坏行应进 problems');
   });
 
@@ -389,6 +444,113 @@ describe('知识库合栏（笔记为骨架 + 条目状态/版本）', () => {
     assert.equal(kit.implLabel('placeholder'), '占位');
     assert.equal(kit.implLabel(undefined), '');
     assert.equal(kit.sourceLabel('note'), '', '问答笔记是默认骨架，不加标注');
+  });
+});
+
+/**
+ * 每个文档下方那一行（所有者 2026-10-06）：「相关主题和关键词、日期」。
+ *
+ * 三段都来自**笔记头部**（frontmatter / `>Date` / `>Tags` / `> Wiki：`），解析在宿主半边
+ * （`parseNoteHead`），渲染文案在 `detailParts()` —— 这里把两边都钉住。
+ */
+describe('文档下方：相关主题 / 关键词 / 日期', () => {
+  const items = [{ id: 'ts-a', topic: '同名主题', title: '同名主题', created_at: 100, status: 'active', tags: ['dsh', 'panel'] }];
+  const wikis = [
+    { name: '主题页甲.md', path: 'X:/kb/02_Wiki页面/主题页甲.md' },
+    { name: '主题页乙.md', path: 'X:/kb/02_Wiki页面/主题页乙.md' },
+    { name: '主题页丙.md', path: 'X:/kb/02_Wiki页面/主题页丙.md' },
+  ];
+  const notes = [
+    {
+      name: '同名主题.md',
+      path: 'X:/kb/01_问答沉淀/同名主题.md',
+      mtimeMs: 500,
+      tags: ['cordis', 'dsh'],
+      createdAt: '2026-10-05',
+      updatedAt: '2026-10-06',
+      wiki: ['主题页甲', '主题页乙', '主题页丙'],
+    },
+  ];
+
+  it('parseNoteHead：frontmatter 与元信息行两种布局都认（整理件没有 frontmatter）', () => {
+    const front = kit.parseNoteHead(
+      [
+        '---',
+        'tags: ["a", "b"]',
+        'created_at: "2026-10-05"',
+        'updated_at: "2026-10-06"',
+        'related_wiki: ["页一"]',
+        '---',
+        '',
+        '>Tags： #c #a',
+        '> Wiki： [[页二]]',
+      ].join('\n'),
+    );
+    assert.deepEqual(front.tags, ['a', 'b', 'c'], 'frontmatter 与 `>Tags` 行合并、去重');
+    assert.deepEqual(front.wiki, ['页一', '页二']);
+    assert.equal(front.createdAt, '2026-10-05');
+    assert.equal(front.updatedAt, '2026-10-06');
+
+    const digest = kit.parseNoteHead(['# 整理件', '', '>Date :  2026-10-04', '>Topic： 整理主题', ''].join('\n'));
+    assert.equal(digest.createdAt, '2026-10-04', '没有 frontmatter 时日期取 `>Date :` 行');
+    assert.equal(digest.updatedAt, '2026-10-04');
+    assert.deepEqual(digest.tags, [], '没有关键词就是空数组，不编造');
+
+    assert.deepEqual(kit.parseNoteHead(''), { tags: [], createdAt: '', updatedAt: '', wiki: [] });
+    assert.deepEqual(kit.parseNoteHead('---\ntags: [a, b]\n---\n').tags, ['a', 'b'], '手写的数组也认（不整份丢）');
+  });
+
+  it('关键词 = 笔记 tags ∪ 同主题条目 tags（去重保序），多于 5 个折成 +N', () => {
+    const rows = kit.mergeKnowledge({ notes, wikis, items });
+    assert.deepEqual(rows[0].tags, ['cordis', 'dsh', 'panel'], '笔记在前、条目补后、重复的不再加');
+    assert.equal(kit.keywordText(rows[0]), '#cordis #dsh #panel');
+    assert.equal(kit.keywordText({ ...rows[0], tags: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }), '#a #b #c #d #e +2');
+    assert.equal(kit.keywordText({ ...rows[0], tags: ['#x'] }), '#x', '已经带 # 的不重复加');
+    assert.equal(kit.keywordText({ ...rows[0], tags: [] }), '', '没有关键词是空串（渲染时不显示这一段）');
+  });
+
+  it('相关主题：把回链标题解析成可点开的路径；解析不到只留标题', () => {
+    const rows = kit.mergeKnowledge({ notes, wikis, items });
+    assert.equal(rows[0].wiki.length, 3);
+    assert.equal(rows[0].wiki[0].path, 'X:/kb/02_Wiki页面/主题页甲.md');
+    const parts = kit.detailParts(rows[0]);
+    assert.equal(parts[0].label, '相关主题');
+    assert.equal(parts[0].text, '主题页甲、主题页乙 +1', '多于 2 个折成 +N');
+    assert.deepEqual(parts[0].wiki.map((page) => page.title), ['主题页甲', '主题页乙'], '可点开的与文本一致（前两个）');
+
+    const unknown = { ...rows[0], wiki: [{ title: '没有文件的主题页' }] };
+    assert.equal(kit.wikiText(unknown), '没有文件的主题页');
+    assert.equal(
+      kit.detailText(unknown),
+      '相关主题：没有文件的主题页 · 关键词：#cordis #dsh #panel · 日期：2026-10-06',
+      '三段拼成一行（顺序固定）',
+    );
+  });
+
+  it('日期：优先笔记写的，没有就把时间戳折算成本地日期；都没有就不显示这一段', () => {
+    const rows = kit.mergeKnowledge({ notes, wikis, items });
+    assert.equal(rows[0].date, '2026-10-06', '笔记写了两天，取 updated_at');
+    assert.equal(kit.dateText(rows[0]), '2026-10-06');
+    const bare = { key: 'k', title: 't', at: new Date(2026, 9, 6, 12, 0, 0).getTime(), source: 'item', tags: [], wiki: [], date: '' };
+    assert.equal(kit.dateText(bare), '2026-10-06', '没有笔记日期时按 at 折算（本地时区）');
+    assert.equal(kit.dateText({ ...bare, at: 0 }), '', '没有时间就不给日期');
+    assert.equal(kit.detailText({ ...bare, at: 0 }), '相关主题：未归并', '没有主题页就说「未归并」（这是要跑一轮 wiki 的信号）');
+  });
+
+  it('只有笔记、没有条目时也有全部三段（不依赖条目）', () => {
+    const rows = kit.mergeKnowledge({ notes, wikis });
+    assert.equal(kit.detailText(rows[0]), '相关主题：主题页甲、主题页乙 +1 · 关键词：#cordis #dsh · 日期：2026-10-06');
+  });
+
+  it('仅入库的行也有关键词与日期（条目里的 tags / updated_at）', () => {
+    const rows = kit.mergeKnowledge({
+      items: [
+        { id: 'ts-z', topic: '孤条目', title: '孤条目', created_at: new Date(2026, 9, 6, 12, 0, 0).getTime(), status: 'active', tags: ['mcp', 'bridge'] },
+      ],
+    });
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].wiki, [], '没有笔记文件就没有回链');
+    assert.equal(kit.detailText(rows[0]), '相关主题：未归并 · 关键词：#mcp #bridge · 日期：2026-10-06');
   });
 });
 

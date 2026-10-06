@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
@@ -27,6 +27,15 @@ const SERIES_MAX = 240;
 /** 知识库里的两个笔记目录（与 `@oblivion/core` 的 md-writer 约定一致）。 */
 export const QA_NOTE_DIR = '01_问答沉淀';
 export const DIGEST_NOTE_DIR = '04_会话整理';
+/** `oblivion_wiki` 落的主题页目录（与 core 的 `mdClassify.wiki` 一致）。 */
+export const WIKI_NOTE_DIR = '02_Wiki页面';
+/**
+ * 每篇笔记只读头部这么多字节来取「关键词 / 日期 / 相关主题」。
+ *
+ * 三样东西都在**文件开头**（frontmatter + `>Date/>Tags/> Wiki：` 元信息块，整理件没有 frontmatter
+ * 但元信息行更靠前），而正文可以很长 —— 整读几十篇笔记是白花 IO。8 KB 对元信息块是压倒性余量。
+ */
+const NOTE_HEAD_BYTES = 8192;
 
 export interface CoreStatusShape {
   version?: string;
@@ -166,9 +175,32 @@ export interface ItemRow {
   sources: number;
   /** 来源类型（`session` / `digest` / …），用来判断是不是会话整理件。 */
   sourceTypes: string[];
+  /** 关键词（条目 JSON 的 `tags`）。 */
+  tags: string[];
+  /** 最后一次更新时间（epoch ms）—— 显示日期时优先用它。 */
+  updated_at: number;
 }
 
-export interface NoteRow {
+/**
+ * 一篇笔记的**元信息**（面板 0.0.14 起：文档下方要显示「相关主题 / 关键词 / 日期」）。
+ *
+ * 问答笔记与整理件的来源不同，所以解析要两边都认：
+ *   - 问答笔记（`01_问答沉淀/*.md`）：frontmatter 里有 `tags` / `created_at` / `updated_at`，
+ *     正文元信息块里还有 `>Tags：` 与主题页回链 `> Wiki： [[标题]]`；
+ *   - 整理件（`04_会话整理/*.md`）：**没有 frontmatter**，只有 `>Date :` 那几行。
+ */
+export interface NoteHead {
+  /** 关键词（frontmatter 的 `tags`，退化时取 `>Tags： #a #b`）。 */
+  tags: string[];
+  /** `YYYY-MM-DD`（frontmatter 的 `created_at`，退化时取 `>Date :` 行）；取不到是空串。 */
+  createdAt: string;
+  /** `YYYY-MM-DD`（frontmatter 的 `updated_at` / `>Date :`）；取不到是空串。 */
+  updatedAt: string;
+  /** 归并到的主题页标题（`> Wiki： [[标题]]`，以及 frontmatter 的 `related_wiki`）。 */
+  wiki: string[];
+}
+
+export interface NoteRow extends NoteHead {
   name: string;
   path: string;
   mtimeMs: number;
@@ -201,6 +233,13 @@ export interface PanelSnapshot {
   notes: NoteRow[];
   /** `04_会话整理/*.md`：`oblivion_digest` 的整理件 —— 原来只在条目栏看得到，合栏后要能点开。 */
   digests: NoteRow[];
+  /**
+   * `02_Wiki页面/*.md`：`oblivion_wiki` 落的主题页。
+   *
+   * 只作**标题 → 路径**的字典用：笔记里写的是 `> Wiki： [[标题]]`（core 只记标题），
+   * 面板要让它可点开就得知道那个标题对应哪个文件；顺带也告诉用户现在有几个主题页。
+   */
+  wikis: NoteRow[];
   /** 读到了但有问题的地方（缺文件不算问题，缺文件是「还没跑」）。 */
   problems: string[];
 }
@@ -292,6 +331,7 @@ async function readItems(dataRoot: string, limit: number, problems: string[]): P
     if (!parsed || typeof parsed !== 'object') continue;
     const item = parsed as Record<string, unknown>;
     const sources = Array.isArray(item.sources) ? item.sources : [];
+    const tags = Array.isArray(item.tags) ? item.tags : [];
     rows.push({
       id: String(item.id ?? name.replace(/\.json$/, '')),
       topic: String(item.topic ?? ''),
@@ -304,9 +344,123 @@ async function readItems(dataRoot: string, limit: number, problems: string[]): P
       sourceTypes: sources
         .map((source) => String((source as { type?: unknown })?.type ?? ''))
         .filter((type) => type !== ''),
+      tags: tags.map((tag) => String(tag)).filter((tag) => tag.trim() !== ''),
+      updated_at: Number(item.updated_at ?? item.created_at ?? 0),
     });
   }
   return rows.sort((a, b) => b.created_at - a.created_at).slice(0, limit);
+}
+
+/** 去掉 frontmatter 里的引号。 */
+function unquote(value: string): string {
+  return value
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim();
+}
+
+/** 取 `YYYY-MM-DD` 前缀（core 写的就是这个形状；带时间也认得）。 */
+function dateOf(value: string): string {
+  const matched = /^\d{4}-\d{2}-\d{2}/.exec(unquote(value));
+  return matched ? matched[0] : '';
+}
+
+/** frontmatter 的行内数组：`["a", "b"]`（正常）或 `a, b`（手写）。 */
+function arrayOf(value: string): string[] {
+  const body = value.trim();
+  const items: string[] = [];
+  if (body.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (Array.isArray(parsed)) for (const item of parsed) items.push(String(item));
+    } catch {
+      // 半截/手写的数组退回分隔符切分：宁可多给几个词，也不要整份丢。
+      for (const part of body.replace(/^\[|\]$/g, '').split(',')) items.push(part);
+    }
+  } else {
+    for (const part of body.split(/[,\s]+/)) items.push(part);
+  }
+  return items.map((item) => unquote(item)).filter((item) => item !== '');
+}
+
+function addUnique(list: string[], value: string): void {
+  const item = value.trim();
+  if (item === '' || list.includes(item)) return;
+  list.push(item);
+}
+
+/**
+ * 解析笔记头部（**纯函数**，测试与自检直接断言它）。
+ *
+ * 一份解析要认两种布局，因为知识库里两种笔记的来源不同：
+ *   - 问答笔记：frontmatter 的 `tags` / `created_at` / `updated_at`（core 用 YAML 行内数组写）；
+ *   - 整理件：**没有 frontmatter**，只有 `>Date :  2026-10-06` 这类元信息行。
+ * 字段名大小写、全/半角冒号、`> Wiki：` 前的空格都容忍（core 写的是 `> Wiki： [[标题]]`）。
+ */
+export function parseNoteHead(head: string): NoteHead {
+  const lines = head.split(/\r?\n/);
+  const result: NoteHead = { tags: [], createdAt: '', updatedAt: '', wiki: [] };
+  let inFrontmatter = false;
+  /** 文件不是以 `---` 开头（整理件）时，一开始就当 frontmatter 已结束。 */
+  let frontmatterClosed = !(lines.length > 0 && lines[0].trim() === '---');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!frontmatterClosed) {
+      if (index === 0) {
+        inFrontmatter = true;
+        continue;
+      }
+      if (line.trim() === '---') {
+        inFrontmatter = false;
+        frontmatterClosed = true;
+        continue;
+      }
+      if (!inFrontmatter) {
+        frontmatterClosed = true;
+        continue;
+      }
+      const field = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
+      if (field === null) continue;
+      const key = field[1];
+      const value = field[2];
+      if (key === 'tags') for (const tag of arrayOf(value)) addUnique(result.tags, tag);
+      else if (key === 'related_wiki') for (const title of arrayOf(value)) addUnique(result.wiki, title);
+      else if (key === 'created_at') result.createdAt = result.createdAt || dateOf(value);
+      else if (key === 'updated_at') result.updatedAt = result.updatedAt || dateOf(value);
+      continue;
+    }
+    const meta = /^>\s*([^:：]*)[:：]\s*(.*)$/.exec(line);
+    if (meta === null) continue;
+    const key = meta[1].trim().toLowerCase();
+    const value = meta[2];
+    if (key === 'date') {
+      const date = dateOf(value);
+      if (date !== '') {
+        result.createdAt = result.createdAt || date;
+        result.updatedAt = result.updatedAt || date;
+      }
+    } else if (key === 'tags') {
+      for (const matched of value.matchAll(/#([^\s#]+)/g)) addUnique(result.tags, matched[1]);
+    } else if (key === 'wiki') {
+      for (const matched of value.matchAll(/\[\[([^\]]+)\]\]/g)) addUnique(result.wiki, matched[1]);
+    }
+  }
+  return result;
+}
+
+/** 读笔记头部（**有界**）：正文可以很长，而关键词/日期/相关主题都在开头。 */
+async function readNoteHead(path: string, size: number): Promise<string> {
+  const handle = await open(path, 'r');
+  try {
+    const length = Math.max(0, Math.min(size, NOTE_HEAD_BYTES));
+    if (length === 0) return '';
+    const buffer = Buffer.alloc(length);
+    const read = await handle.read(buffer, 0, length, 0);
+    return buffer.subarray(0, read.bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
 }
 
 /** 知识库某个笔记目录里的 markdown（按 mtime 倒序）。 */
@@ -326,7 +480,8 @@ async function readNoteDir(mdRoot: string, subdir: string, limit: number, proble
     const path = join(dir, name);
     try {
       const info = await stat(path);
-      rows.push({ name, path, mtimeMs: info.mtimeMs, bytes: info.size });
+      const head = await readNoteHead(path, info.size);
+      rows.push({ name, path, mtimeMs: info.mtimeMs, bytes: info.size, ...parseNoteHead(head) });
     } catch (error) {
       problems.push(`${path}: ${String(error)}`);
     }
@@ -363,13 +518,15 @@ export async function buildSnapshot(options: SnapshotOptions): Promise<PanelSnap
   const maxEntries = positiveInt(config.statsMaxEntries, FALLBACK_MAX_ENTRIES);
   const tracePath = join(options.dataRoot, 'decisions.jsonl');
 
-  const [decisions, items, notes, digests] = await Promise.all([
+  const [decisions, items, notes, digests, wikis] = await Promise.all([
     readDecisions(tracePath, { retentionDays, maxEntries, now: now() }, problems),
     // 条目按**宽窗口**读：客户端要把「同主题的多版」聚成一行（被降级的旧版也在其中），
     // 只读 limit 条会把版本历史截断，于是「共 N 版」永远显示不出来。
     readItems(options.dataRoot, Math.max(limit * 8, 100), problems),
     readNoteDir(mdRoot, QA_NOTE_DIR, limit, problems),
     readNoteDir(mdRoot, DIGEST_NOTE_DIR, limit, problems),
+    // 主题页只当字典用（标题 → 路径），所以按同一个窗口读就够。
+    readNoteDir(mdRoot, WIKI_NOTE_DIR, limit, problems),
   ]);
 
   return {
@@ -387,6 +544,7 @@ export async function buildSnapshot(options: SnapshotOptions): Promise<PanelSnap
     items,
     notes,
     digests,
+    wikis,
     problems,
   };
 }

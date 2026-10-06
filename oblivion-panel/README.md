@@ -13,7 +13,7 @@
 在 side bar 的 `+` 菜单里多一个 **Oblivion** 页（`order: 70`，单例）：
 
 ```
-core v0.1.6 · 面板 v0.0.13 · 刷新于 刚刚            [刷新]
+core v0.1.6 · 面板 v0.0.14 · 刷新于 刚刚            [刷新]
 ─────
 捕获率   判定轮数   已评估   已沉淀
  3.3%      12        9        1
@@ -26,10 +26,13 @@ core v0.1.6 · 面板 v0.0.13 · 刷新于 刚刚            [刷新]
   │ 0.0 ──────╱──╲────╱──╲────────────── │ ← 点 = 一次判定，红点 = 被拦下
   最近 24 条判定 · 有效分值 22 个 · 无分值 2 条 · 阈值 0.30 · 区间 0.21–0.80
 知识库（3）
-  问答笔记 2 · 会话整理 1 · 条目 3（同主题的多版并作一行，共 3 行）
+  问答笔记 2 · 会话整理 1 · 主题页 2 · 条目 3（同主题的多版并作一行，共 3 行）
   测试主题            2 分钟前 · 当前版本 · 已落地 · 共 2 版
+    相关主题：主题页甲、主题页乙 · 关键词：#dsh #panel #cordis · 日期：2026-10-06
   2026-10-06-整理     4 分钟前 · 当前版本 · 会话整理
+    相关主题：未归并 · 日期：2026-10-04
   孤条目              6 分钟前 · 仅入库
+    相关主题：未归并 · 关键词：#mcp #bridge · 日期：2026-10-06
   [展开全部 47 行（另有 36 行仅入库）]
 ```
 
@@ -44,6 +47,17 @@ core v0.1.6 · 面板 v0.0.13 · 刷新于 刚刚            [刷新]
   把同主题条目的**状态与版本**挂在它后面；没有笔记的条目补成一行并标「仅入库」/「会话整理」。
   此前并列的「最近沉淀 + 知识库笔记」两栏已合并 —— 同一批标题列两遍，看起来就是冗余。
   「仅入库」（实测 47 行里占 36 行）默认只列最近 5 行，其余按需展开（`knowledgeView()`）。
+- **每个文档下方就是「相关主题 / 关键词 / 日期」三段**（2026-10-06 所有者：「知识库，将每个文档下方
+  显示：相关主题和关键词、日期」）。文案只有一份（`client/knowledge.ts` 的 `detailParts()`，纯函数）：
+  - `相关主题` = 笔记里的 `> Wiki： [[标题]]` 回链（`oblivion_wiki` 写回的那条）。宿主半边
+    （`snapshot.ts` 的 `parseNoteHead()`）把标题**解析成主题页路径**，所以点它直接在侧边栏打开那页；
+    没有回链的写「未归并」—— 那正是「该跑一轮 `oblivion_wiki`」的信号（现场 10 篇里 6 篇已归并）。
+    多于 2 个折成 `+N`。
+  - `关键词` = 笔记 frontmatter 的 `tags` 并上**同主题条目**的 `tags`（去重保序，最多显示 5 个，
+    其余折成 `+N`）。
+  - `日期` = 笔记自己写的 `updated_at`（退化 `created_at`）；笔记没写就按 mtime / 条目时间折算成
+    **本地**日期。整理件没有 frontmatter，日期取自它的 `>Date :` 行。
+  - 三段都缺的极端情况不显示这一段（不拿「暂无」凑数）。解析只读每篇笔记**头部 8 KB**，不整读正文。
 - **空态会解释原因**（没装载 core / 有判定但没沉淀 / 数据目录找不到），不是一句「暂无数据」；
 - **只读**：唯一的动作是「刷新」和「点笔记 → 交给 side bar 打开」；
 - 点笔记用 side bar 自己的 `onOpenFile`，所以走的还是它的编辑器与预览。
@@ -53,6 +67,8 @@ core v0.1.6 · 面板 v0.0.13 · 刷新于 刚刚            [刷新]
 ```
 @oblivion/core  ──写──▶  ~/.oblivion/data/{status.json, decisions.jsonl, ts-*.json}
                           C:\Library\那些渐渐被遗忘\01_问答沉淀\*.md
+                          C:\Library\那些渐渐被遗忘\04_会话整理\*.md
+                          C:\Library\那些渐渐被遗忘\02_Wiki页面\*.md（主题页，0.0.14 起当字典读）
                                    │
                     ┌──────────────┴───────────────┐
                     │  @oblivion/panel · Node 半边  │  GET /oblivion-panel/status（只读 JSON）
@@ -81,7 +97,7 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 $panel = 'C:\Projects\Oblivion\oblivion-panel'
 
 & $node $pnpm -C $panel run build        # lib/index.js + lib/testkit.js + lib/client.js
-& $node $pnpm -C $panel run selfcheck    # 8 项：路由真跑 + 注册三态 + 无残留
+& $node $pnpm -C $panel run selfcheck    # 15 项：路由真跑 + 注册三态 + 三段落盘 + 无残留
 
 # 装链接（正斜杠！）
 & 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd' plugin --profile desktop add "link:$($panel -replace '\\','/')"
@@ -122,10 +138,10 @@ Invoke-WebRequest 'http://127.0.0.1:19387/oblivion-panel/status' -UseBasicParsin
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` + `lib/testkit.js` + `lib/client.js`（42.9 KB） |
+| `pnpm run build` | ✅ `lib/index.js` + `lib/testkit.js` + `lib/client.js`（46.1 KB） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **25/25**（快照装配 / 坏行容忍 / 空态回退 / 注册三态 / 展示层纯函数 / 知识库合栏 / 判定曲线） |
-| `pnpm run selfcheck` | ✅ **14/14**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放、合栏、曲线） |
+| `pnpm run test` | ✅ **34/34**（快照装配 / 坏行容忍 / 空态回退 / 注册三态 / 展示层纯函数 / 知识库合栏 / **文档下方三段** / 判定曲线） |
+| `pnpm run selfcheck` | ✅ **15/15**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放、合栏、**三段**、曲线） |
 | `dshx check` | ✅ manifest / export / boot-marker / client-platform（**无 default export**） |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **6/6**（host / `webServer` / `npmPkg dsh-better-sidebar` / `__ModuleLoader__` / `sidebar.footer.action` / mount dependencies） |
 | Node 半边真实装载 | ✅ **已验证**：路由 `HTTP 200` + `%TEMP%\oblivion-panel\host-mount.json` |

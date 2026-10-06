@@ -6,8 +6,15 @@
  */
 export {
   buildSnapshot,
+  parseNoteHead,
   summarizeDecisions,
+  DIGEST_NOTE_DIR,
+  QA_NOTE_DIR,
+  WIKI_NOTE_DIR,
   type DecisionStats,
+  type ItemRow,
+  type NoteHead,
+  type NoteRow,
   type PanelSnapshot,
   type SnapshotOptions,
 } from './snapshot.js';
@@ -35,12 +42,22 @@ export {
   itemStatusLabel,
   implLabel,
   sourceLabel,
+  detailParts,
+  detailText,
+  keywordText,
+  wikiText,
+  dateText,
+  KEYWORD_MAX,
+  WIKI_MAX,
   KNOWLEDGE_ITEM_LIMIT,
+  type DetailPart,
   type KnowledgeItemLike,
+  type KnowledgePage,
   type KnowledgeRow,
   type KnowledgeSource,
   type KnowledgeView,
   type NoteLike,
+  type WikiPageLike,
 } from './client/knowledge.js';
 export {
   buildScoreCurve,

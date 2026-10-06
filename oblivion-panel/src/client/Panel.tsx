@@ -36,12 +36,14 @@ import {
   type HintLike,
 } from './format.js';
 import {
+  detailParts,
   implLabel,
   itemStatusLabel,
   KNOWLEDGE_ITEM_LIMIT,
   knowledgeView,
   mergeKnowledge,
   sourceLabel,
+  type DetailPart,
   type KnowledgeRow,
 } from './knowledge.js';
 
@@ -75,11 +77,29 @@ interface PanelData {
     impl?: string;
     version?: number;
     sourceTypes?: string[];
+    /** 关键词（0.0.14 起）：宿主从条目 JSON 的 `tags` 取。 */
+    tags?: string[];
+    updated_at?: number;
   }>;
-  notes?: Array<{ name?: string; path?: string; mtimeMs?: number; bytes?: number }>;
+  /** 笔记（0.0.14 起带上解析好的关键词/日期/主题页回链，见宿主 `parseNoteHead`）。 */
+  notes?: NoteLikeRow[];
   /** `04_会话整理/*.md`（0.0.9 起）：整理件的笔记，合栏后与问答笔记同列。 */
-  digests?: Array<{ name?: string; path?: string; mtimeMs?: number; bytes?: number }>;
+  digests?: NoteLikeRow[];
+  /** `02_Wiki页面/*.md`（0.0.14 起）：只用来把「相关主题」的标题解析成可点开的路径。 */
+  wikis?: NoteLikeRow[];
   problems?: string[];
+}
+
+/** 宿主发过来的一篇笔记（宽松形状：老 host 只有前四个字段）。 */
+interface NoteLikeRow {
+  name?: string;
+  path?: string;
+  mtimeMs?: number;
+  bytes?: number;
+  tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+  wiki?: string[];
 }
 
 /** tab 组件 props：只声明我们真正用到的那几个（其余由 side bar 传入，忽略即可）。 */
@@ -161,8 +181,48 @@ function rowMeta(row: KnowledgeRow): string {
   return parts.length > 0 ? parts.join(' · ') : '—';
 }
 
-/** 空态：把「为什么没有数据」说清楚。 */
-function emptyReason(data: PanelData): string {
+/**
+ * 一行的第三行：**相关主题 / 关键词 / 日期**（所有者 2026-10-06：显示在每个文档下方）。
+ *
+ * 文案只有一份（`detailParts()`，纯函数、可测），这里只负责把「相关主题」那一段变成链接：
+ * 宿主已把笔记里的 `> Wiki： [[标题]]` 回链解析成主题页路径（见 `snapshot.ts` 的 `parseNoteHead`）。
+ */
+function detailLine(row: KnowledgeRow, onOpenFile?: (path: string) => void): JSX.Element {
+  return (
+    <div style={{ ...S.dim, ...S.mono }}>
+      {detailParts(row).map((part: DetailPart, index: number) => (
+        <span key={part.label}>
+          {index > 0 ? ' · ' : ''}
+          {part.label}：
+          {part.wiki !== undefined && part.wiki.length > 0
+            ? part.wiki.map((page, pageIndex) =>
+                page.path === undefined ? (
+                  <span key={page.title}>{pageIndex > 0 ? '、' : ''}{page.title}</span>
+                ) : (
+                  <span key={page.title}>
+                    {pageIndex > 0 ? '、' : ''}
+                    <a
+                      href="#"
+                      style={{ color: 'inherit' }}
+                      title={'在侧边栏打开主题页 ' + page.path}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onOpenFile?.(page.path as string);
+                      }}
+                    >
+                      {page.title}
+                    </a>
+                  </span>
+                ),
+              )
+            : part.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** 空态：把「为什么没有数据」说清楚。 */function emptyReason(data: PanelData): string {
   if (!data.core) {
     return '读不到 @oblivion/core 的 status.json —— 检查 core 是否装载（它的只读快照在每次装载时刷新）。';
   }
@@ -227,8 +287,10 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
     const items = data.items ?? [];
     const notes = data.notes ?? [];
     const digests = data.digests ?? [];
+    // 主题页只当字典用（把笔记里的 `> Wiki： [[标题]]` 回链解析成路径），0.0.14 起。
+    const wikis = data.wikis ?? [];
     // 方案 A（所有者 2026-10-06 裁定）：笔记为骨架 + 条目状态/版本，**一栏**呈现。
-    const knowledge = mergeKnowledge({ notes, digests, items });
+    const knowledge = mergeKnowledge({ notes, digests, wikis, items });
     // 一栏里还能再收一层：「仅入库」（没有笔记文件的条目）默认只显示最近几条，
     // 免得 30+ 行纯条目把能点开的笔记挤下去（所有者对「最近判定」说的是同一句话）。
     const knowledgeListView = knowledgeView(knowledge, { showAll: showAllKnowledge });
@@ -308,7 +370,7 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
 
         <div style={S.h}>知识库（{knowledge.length}）</div>
         <div style={{ ...S.dim, marginBottom: 4 }}>
-          问答笔记 {notes.length} · 会话整理 {digests.length} · 条目 {items.length}
+          问答笔记 {notes.length} · 会话整理 {digests.length} · 主题页 {wikis.length} · 条目 {items.length}
           {knowledge.length !== notes.length + digests.length + items.length
             ? '（同主题的多版并作一行，共 ' + knowledge.length + ' 行）'
             : ''}
@@ -337,6 +399,7 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
                   )}
                 </div>
                 <div style={{ ...S.dim, ...S.mono }}>{rowMeta(row)}</div>
+                {detailLine(row, props.onOpenFile)}
               </li>
             ))}
           </ul>

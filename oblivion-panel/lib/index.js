@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join as join2, resolve } from "node:path";
 
 // src/snapshot.ts
-import { readFile, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 var MAX_JSON_BYTES = 256 * 1024;
 var MAX_JSONL_BYTES = 2 * 1024 * 1024;
@@ -14,6 +14,8 @@ var MS_PER_DAY = 864e5;
 var SERIES_MAX = 240;
 var QA_NOTE_DIR = "01_\u95EE\u7B54\u6C89\u6DC0";
 var DIGEST_NOTE_DIR = "04_\u4F1A\u8BDD\u6574\u7406";
+var WIKI_NOTE_DIR = "02_Wiki\u9875\u9762";
+var NOTE_HEAD_BYTES = 8192;
 function ratio(part, whole) {
   return whole <= 0 ? 0 : Math.round(part / whole * 1e3) / 1e3;
 }
@@ -130,6 +132,7 @@ async function readItems(dataRoot, limit, problems) {
     if (!parsed || typeof parsed !== "object") continue;
     const item = parsed;
     const sources = Array.isArray(item.sources) ? item.sources : [];
+    const tags = Array.isArray(item.tags) ? item.tags : [];
     rows.push({
       id: String(item.id ?? name2.replace(/\.json$/, "")),
       topic: String(item.topic ?? ""),
@@ -139,10 +142,100 @@ async function readItems(dataRoot, limit, problems) {
       impl: String(item.impl ?? ""),
       version: Number(item.version ?? 1),
       sources: sources.length,
-      sourceTypes: sources.map((source) => String(source?.type ?? "")).filter((type) => type !== "")
+      sourceTypes: sources.map((source) => String(source?.type ?? "")).filter((type) => type !== ""),
+      tags: tags.map((tag) => String(tag)).filter((tag) => tag.trim() !== ""),
+      updated_at: Number(item.updated_at ?? item.created_at ?? 0)
     });
   }
   return rows.sort((a, b) => b.created_at - a.created_at).slice(0, limit);
+}
+function unquote(value) {
+  return value.trim().replace(/^["']|["']$/g, "").trim();
+}
+function dateOf(value) {
+  const matched = /^\d{4}-\d{2}-\d{2}/.exec(unquote(value));
+  return matched ? matched[0] : "";
+}
+function arrayOf(value) {
+  const body = value.trim();
+  const items = [];
+  if (body.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(body);
+      if (Array.isArray(parsed)) for (const item of parsed) items.push(String(item));
+    } catch {
+      for (const part of body.replace(/^\[|\]$/g, "").split(",")) items.push(part);
+    }
+  } else {
+    for (const part of body.split(/[,\s]+/)) items.push(part);
+  }
+  return items.map((item) => unquote(item)).filter((item) => item !== "");
+}
+function addUnique(list, value) {
+  const item = value.trim();
+  if (item === "" || list.includes(item)) return;
+  list.push(item);
+}
+function parseNoteHead(head) {
+  const lines = head.split(/\r?\n/);
+  const result = { tags: [], createdAt: "", updatedAt: "", wiki: [] };
+  let inFrontmatter = false;
+  let frontmatterClosed = !(lines.length > 0 && lines[0].trim() === "---");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!frontmatterClosed) {
+      if (index === 0) {
+        inFrontmatter = true;
+        continue;
+      }
+      if (line.trim() === "---") {
+        inFrontmatter = false;
+        frontmatterClosed = true;
+        continue;
+      }
+      if (!inFrontmatter) {
+        frontmatterClosed = true;
+        continue;
+      }
+      const field = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
+      if (field === null) continue;
+      const key2 = field[1];
+      const value2 = field[2];
+      if (key2 === "tags") for (const tag of arrayOf(value2)) addUnique(result.tags, tag);
+      else if (key2 === "related_wiki") for (const title of arrayOf(value2)) addUnique(result.wiki, title);
+      else if (key2 === "created_at") result.createdAt = result.createdAt || dateOf(value2);
+      else if (key2 === "updated_at") result.updatedAt = result.updatedAt || dateOf(value2);
+      continue;
+    }
+    const meta = /^>\s*([^:：]*)[:：]\s*(.*)$/.exec(line);
+    if (meta === null) continue;
+    const key = meta[1].trim().toLowerCase();
+    const value = meta[2];
+    if (key === "date") {
+      const date = dateOf(value);
+      if (date !== "") {
+        result.createdAt = result.createdAt || date;
+        result.updatedAt = result.updatedAt || date;
+      }
+    } else if (key === "tags") {
+      for (const matched of value.matchAll(/#([^\s#]+)/g)) addUnique(result.tags, matched[1]);
+    } else if (key === "wiki") {
+      for (const matched of value.matchAll(/\[\[([^\]]+)\]\]/g)) addUnique(result.wiki, matched[1]);
+    }
+  }
+  return result;
+}
+async function readNoteHead(path, size) {
+  const handle = await open(path, "r");
+  try {
+    const length = Math.max(0, Math.min(size, NOTE_HEAD_BYTES));
+    if (length === 0) return "";
+    const buffer = Buffer.alloc(length);
+    const read = await handle.read(buffer, 0, length, 0);
+    return buffer.subarray(0, read.bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 async function readNoteDir(mdRoot, subdir, limit, problems) {
   const dir = join(mdRoot, subdir);
@@ -159,7 +252,8 @@ async function readNoteDir(mdRoot, subdir, limit, problems) {
     const path = join(dir, name2);
     try {
       const info = await stat(path);
-      rows.push({ name: name2, path, mtimeMs: info.mtimeMs, bytes: info.size });
+      const head = await readNoteHead(path, info.size);
+      rows.push({ name: name2, path, mtimeMs: info.mtimeMs, bytes: info.size, ...parseNoteHead(head) });
     } catch (error) {
       problems.push(`${path}: ${String(error)}`);
     }
@@ -179,13 +273,15 @@ async function buildSnapshot(options) {
   const retentionDays = positiveInt(config.statsRetentionDays, FALLBACK_RETENTION_DAYS);
   const maxEntries = positiveInt(config.statsMaxEntries, FALLBACK_MAX_ENTRIES);
   const tracePath = join(options.dataRoot, "decisions.jsonl");
-  const [decisions, items, notes, digests] = await Promise.all([
+  const [decisions, items, notes, digests, wikis] = await Promise.all([
     readDecisions(tracePath, { retentionDays, maxEntries, now: now() }, problems),
     // 条目按**宽窗口**读：客户端要把「同主题的多版」聚成一行（被降级的旧版也在其中），
     // 只读 limit 条会把版本历史截断，于是「共 N 版」永远显示不出来。
     readItems(options.dataRoot, Math.max(limit * 8, 100), problems),
     readNoteDir(mdRoot, QA_NOTE_DIR, limit, problems),
-    readNoteDir(mdRoot, DIGEST_NOTE_DIR, limit, problems)
+    readNoteDir(mdRoot, DIGEST_NOTE_DIR, limit, problems),
+    // 主题页只当字典用（标题 → 路径），所以按同一个窗口读就够。
+    readNoteDir(mdRoot, WIKI_NOTE_DIR, limit, problems)
   ]);
   return {
     ok: true,
@@ -202,6 +298,7 @@ async function buildSnapshot(options) {
     items,
     notes,
     digests,
+    wikis,
     problems
   };
 }

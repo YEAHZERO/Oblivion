@@ -414,10 +414,27 @@ function lower(value) {
 function latest(values) {
   return values.length === 0 ? 0 : Math.max(...values);
 }
+var KEYWORD_MAX = 5;
+var WIKI_MAX = 2;
+function textList(value) {
+  if (!Array.isArray(value)) return [];
+  const items = [];
+  for (const entry of value) {
+    const item = text(entry);
+    if (item !== "" && !items.includes(item)) items.push(item);
+  }
+  return items;
+}
 function mergeKnowledge(input) {
   const items = input.items ?? [];
   const consumed = /* @__PURE__ */ new Set();
   const rows = [];
+  const pages = /* @__PURE__ */ new Map();
+  for (const page of input.wikis ?? []) {
+    const name = lower(baseName(page.name));
+    const path = text(page.path);
+    if (name !== "" && path !== "" && !pages.has(name)) pages.set(name, path);
+  }
   const collect = (note, source) => {
     const base = lower(baseName(note.name));
     if (base === "") return;
@@ -435,6 +452,10 @@ function mergeKnowledge(input) {
       ...matched.map((item) => num(item.updated_at))
     ]);
     const primary = pickPrimary(matched);
+    const tags = textList(note.tags);
+    for (const item of matched) {
+      for (const tag of textList(item.tags)) if (!tags.includes(tag)) tags.push(tag);
+    }
     rows.push({
       key: text(note.path) !== "" ? text(note.path) : base,
       title: baseName(note.name),
@@ -446,7 +467,13 @@ function mergeKnowledge(input) {
       versions: matched.length,
       itemId: text(primary?.id),
       sources: num(primary?.sources),
-      topic: text(primary?.topic)
+      topic: text(primary?.topic),
+      tags,
+      wiki: textList(note.wiki).map((title) => {
+        const path = pages.get(lower(title));
+        return path === void 0 ? { title } : { title, path };
+      }),
+      date: text(note.updatedAt) !== "" ? text(note.updatedAt) : text(note.createdAt)
     });
   };
   for (const note of input.notes ?? []) collect(note, "note");
@@ -464,6 +491,10 @@ function mergeKnowledge(input) {
   });
   for (const { key, items: members } of groups.values()) {
     const primary = pickPrimary(members);
+    const tags = [];
+    for (const item of members) {
+      for (const tag of textList(item.tags)) if (!tags.includes(tag)) tags.push(tag);
+    }
     rows.push({
       key: "item:" + key,
       title: text(primary?.title) !== "" ? text(primary?.title) : key,
@@ -474,7 +505,11 @@ function mergeKnowledge(input) {
       versions: members.length,
       itemId: text(primary?.id),
       sources: num(primary?.sources),
-      topic: text(primary?.topic)
+      topic: text(primary?.topic),
+      tags,
+      // 没有笔记文件就没有回链可解析；日期留空，渲染时按 `at` 折算。
+      wiki: [],
+      date: ""
     });
   }
   return rows.sort((left, right) => right.at - left.at || left.title.localeCompare(right.title));
@@ -487,6 +522,38 @@ function pickPrimary(items) {
 }
 function isDigest(item) {
   return (item?.sourceTypes ?? []).some((type) => lower(type) === "digest");
+}
+function keywordText(row) {
+  const tags = textList(row.tags);
+  if (tags.length === 0) return "";
+  const shown = tags.slice(0, KEYWORD_MAX).map((tag) => "#" + tag.replace(/^#+/, ""));
+  const rest = tags.length - shown.length;
+  return shown.join(" ") + (rest > 0 ? " +" + rest : "");
+}
+function wikiText(row) {
+  const pages = (row.wiki ?? []).filter((page) => text(page.title) !== "");
+  if (pages.length === 0) return "";
+  const shown = pages.slice(0, WIKI_MAX).map((page) => text(page.title));
+  const rest = pages.length - shown.length;
+  return shown.join("\u3001") + (rest > 0 ? " +" + rest : "");
+}
+function dateText(row) {
+  const written = text(row.date);
+  if (written !== "") return written;
+  if (!Number.isFinite(row.at) || row.at <= 0) return "";
+  const at = new Date(row.at);
+  const pad = (value) => String(value).padStart(2, "0");
+  return at.getFullYear() + "-" + pad(at.getMonth() + 1) + "-" + pad(at.getDate());
+}
+function detailParts(row) {
+  const parts = [];
+  const wiki = wikiText(row);
+  parts.push({ label: "\u76F8\u5173\u4E3B\u9898", text: wiki !== "" ? wiki : "\u672A\u5F52\u5E76", wiki: (row.wiki ?? []).slice(0, WIKI_MAX) });
+  const tags = keywordText(row);
+  if (tags !== "") parts.push({ label: "\u5173\u952E\u8BCD", text: tags });
+  const date = dateText(row);
+  if (date !== "") parts.push({ label: "\u65E5\u671F", text: date });
+  return parts;
 }
 var KNOWLEDGE_ITEM_LIMIT = 5;
 function hasNote(row) {
@@ -563,6 +630,34 @@ function rowMeta(row) {
   if (row.topic !== "" && row.topic !== row.title) parts.push("\u4E3B\u9898 " + row.topic);
   return parts.length > 0 ? parts.join(" \xB7 ") : "\u2014";
 }
+function detailLine(row, onOpenFile) {
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono }, children: detailParts(row).map((part, index) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { children: [
+    index > 0 ? " \xB7 " : "",
+    part.label,
+    "\uFF1A",
+    part.wiki !== void 0 && part.wiki.length > 0 ? part.wiki.map(
+      (page, pageIndex) => page.path === void 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { children: [
+        pageIndex > 0 ? "\u3001" : "",
+        page.title
+      ] }, page.title) : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { children: [
+        pageIndex > 0 ? "\u3001" : "",
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          "a",
+          {
+            href: "#",
+            style: { color: "inherit" },
+            title: "\u5728\u4FA7\u8FB9\u680F\u6253\u5F00\u4E3B\u9898\u9875 " + page.path,
+            onClick: (event) => {
+              event.preventDefault();
+              onOpenFile?.(page.path);
+            },
+            children: page.title
+          }
+        )
+      ] }, page.title)
+    ) : part.text
+  ] }, part.label)) });
+}
 function emptyReason(data) {
   if (!data.core) {
     return "\u8BFB\u4E0D\u5230 @oblivion/core \u7684 status.json \u2014\u2014 \u68C0\u67E5 core \u662F\u5426\u88C5\u8F7D\uFF08\u5B83\u7684\u53EA\u8BFB\u5FEB\u7167\u5728\u6BCF\u6B21\u88C5\u8F7D\u65F6\u5237\u65B0\uFF09\u3002";
@@ -619,7 +714,8 @@ function OblivionPanel(props) {
     const items = data.items ?? [];
     const notes = data.notes ?? [];
     const digests = data.digests ?? [];
-    const knowledge = mergeKnowledge({ notes, digests, items });
+    const wikis = data.wikis ?? [];
+    const knowledge = mergeKnowledge({ notes, digests, wikis, items });
     const knowledgeListView = knowledgeView(knowledge, { showAll: showAllKnowledge });
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.row, children: [
@@ -672,6 +768,8 @@ function OblivionPanel(props) {
         notes.length,
         " \xB7 \u4F1A\u8BDD\u6574\u7406 ",
         digests.length,
+        " \xB7 \u4E3B\u9898\u9875 ",
+        wikis.length,
         " \xB7 \u6761\u76EE ",
         items.length,
         knowledge.length !== notes.length + digests.length + items.length ? "\uFF08\u540C\u4E3B\u9898\u7684\u591A\u7248\u5E76\u4F5C\u4E00\u884C\uFF0C\u5171 " + knowledge.length + " \u884C\uFF09" : ""
@@ -694,7 +792,8 @@ function OblivionPanel(props) {
             children: row.title
           }
         ) : row.title }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono }, children: rowMeta(row) })
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono }, children: rowMeta(row) }),
+        detailLine(row, props.onOpenFile)
       ] }, row.key)) }),
       knowledgeListView.itemOnly.length > KNOWLEDGE_ITEM_LIMIT || showAllKnowledge ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
         "button",

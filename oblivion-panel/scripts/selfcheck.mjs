@@ -119,8 +119,9 @@ await check('路由真跑：GET 返回快照 JSON（含 stats / recent / items /
   assert.equal(json.items.length, 1);
   assert.equal(json.notes.length, 1);
   assert.ok(Array.isArray(json.digests), '快照要带 digests（04_会话整理 的整理件，合栏后要能点开）');
+  assert.ok(Array.isArray(json.wikis), '快照要带 wikis（02_Wiki页面 的主题页字典，0.0.14 起）');
   assert.ok(Array.isArray(json.trace.series), '快照要带 trace.series（判定曲线的宽窗口，0.0.10 起）');
-  return 'core v' + json.core.version + ' / 判定 ' + json.trace.recent.length + ' / 条目 ' + json.items.length + ' / 笔记 ' + json.notes.length + ' / 整理件 ' + json.digests.length;
+  return 'core v' + json.core.version + ' / 判定 ' + json.trace.recent.length + ' / 条目 ' + json.items.length + ' / 笔记 ' + json.notes.length + ' / 整理件 ' + json.digests.length + ' / 主题页 ' + json.wikis.length;
 });
 
 await check('留痕现算统计与 core 同口径（no-qa 不计入已评估 / captured 不算拦截）', async () => {
@@ -351,6 +352,49 @@ await check('知识库合栏：笔记为骨架 + 条目状态/版本，无笔记
   assert.equal(view.hidden, 2);
   assert.equal(kit.knowledgeView(mixed, { showAll: true }).visible.length, 8, '展开后全部回来');
   return '单栏 ' + rows.length + ' 行（笔记骨架 / 版本聚合 / 仅入库补行 / 默认折叠 ' + view.hidden + ' 行）';
+});
+
+await check('文档下方：相关主题 / 关键词 / 日期（笔记头部解析 + 回链解析成路径）', async () => {
+  const kit = await import(pathToFileURL(kitPath).href);
+  const head = kit.parseNoteHead(
+    [
+      '---',
+      'tags: ["dsh", "panel"]',
+      'created_at: "2026-10-05"',
+      'updated_at: "2026-10-06"',
+      '---',
+      '',
+      '# 一条知识',
+      '',
+      '>Tags： #dsh #cordis',
+      '> Wiki： [[主题页甲]] · [[主题页乙]]',
+      '',
+    ].join('\n'),
+  );
+  assert.deepEqual(head.tags, ['dsh', 'panel', 'cordis'], 'frontmatter 与 `>Tags` 行合并去重');
+  assert.equal(head.updatedAt, '2026-10-06');
+  assert.deepEqual(head.wiki, ['主题页甲', '主题页乙']);
+  const digest = kit.parseNoteHead('# 整理件\n\n>Date :  2026-10-04\n');
+  assert.equal(digest.createdAt, '2026-10-04', '整理件没有 frontmatter，日期取 `>Date :` 行');
+
+  const rows = kit.mergeKnowledge({
+    notes: [
+      { name: '乙.md', path: 'K:/01_问答沉淀/乙.md', mtimeMs: 1, tags: ['cordis'], updatedAt: '2026-10-06', wiki: ['主题页甲'] },
+    ],
+    wikis: [{ name: '主题页甲.md', path: 'K:/02_Wiki页面/主题页甲.md' }],
+    items: [{ id: 'ts-x', topic: '乙', title: '乙', created_at: 2, status: 'active', tags: ['dsh'] }],
+  });
+  assert.deepEqual(rows[0].tags, ['cordis', 'dsh'], '关键词 = 笔记 tags ∪ 同主题条目 tags');
+  assert.equal(rows[0].wiki[0].path, 'K:/02_Wiki页面/主题页甲.md', '回链标题要解析成路径（这样才点得开）');
+  assert.equal(
+    kit.detailText(rows[0]),
+    '相关主题：主题页甲 · 关键词：#cordis #dsh · 日期：2026-10-06',
+    '三段拼成文档下方那一行',
+  );
+  assert.equal(kit.keywordText({ ...rows[0], tags: ['a', 'b', 'c', 'd', 'e', 'f'] }), '#a #b #c #d #e +1', '多于 5 个折成 +N');
+  const bare = { key: 'k', title: 't', at: 0, source: 'item', tags: [], wiki: [] };
+  assert.equal(kit.detailText(bare), '相关主题：未归并', '没有主题页就说「未归并」（要跑一轮 wiki 的信号）');
+  return '三段：' + kit.detailText(rows[0]);
 });
 
 await check('判定曲线：纵轴 0..1 + 阈值线 + 趋势线，no-qa 不落点', async () => {

@@ -1,5 +1,5 @@
 // src/snapshot.ts
-import { readFile, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 var MAX_JSON_BYTES = 256 * 1024;
 var MAX_JSONL_BYTES = 2 * 1024 * 1024;
@@ -9,6 +9,8 @@ var MS_PER_DAY = 864e5;
 var SERIES_MAX = 240;
 var QA_NOTE_DIR = "01_\u95EE\u7B54\u6C89\u6DC0";
 var DIGEST_NOTE_DIR = "04_\u4F1A\u8BDD\u6574\u7406";
+var WIKI_NOTE_DIR = "02_Wiki\u9875\u9762";
+var NOTE_HEAD_BYTES = 8192;
 function ratio(part, whole) {
   return whole <= 0 ? 0 : Math.round(part / whole * 1e3) / 1e3;
 }
@@ -125,6 +127,7 @@ async function readItems(dataRoot, limit, problems) {
     if (!parsed || typeof parsed !== "object") continue;
     const item = parsed;
     const sources = Array.isArray(item.sources) ? item.sources : [];
+    const tags = Array.isArray(item.tags) ? item.tags : [];
     rows.push({
       id: String(item.id ?? name.replace(/\.json$/, "")),
       topic: String(item.topic ?? ""),
@@ -134,10 +137,100 @@ async function readItems(dataRoot, limit, problems) {
       impl: String(item.impl ?? ""),
       version: Number(item.version ?? 1),
       sources: sources.length,
-      sourceTypes: sources.map((source) => String(source?.type ?? "")).filter((type) => type !== "")
+      sourceTypes: sources.map((source) => String(source?.type ?? "")).filter((type) => type !== ""),
+      tags: tags.map((tag) => String(tag)).filter((tag) => tag.trim() !== ""),
+      updated_at: Number(item.updated_at ?? item.created_at ?? 0)
     });
   }
   return rows.sort((a, b) => b.created_at - a.created_at).slice(0, limit);
+}
+function unquote(value) {
+  return value.trim().replace(/^["']|["']$/g, "").trim();
+}
+function dateOf(value) {
+  const matched = /^\d{4}-\d{2}-\d{2}/.exec(unquote(value));
+  return matched ? matched[0] : "";
+}
+function arrayOf(value) {
+  const body = value.trim();
+  const items = [];
+  if (body.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(body);
+      if (Array.isArray(parsed)) for (const item of parsed) items.push(String(item));
+    } catch {
+      for (const part of body.replace(/^\[|\]$/g, "").split(",")) items.push(part);
+    }
+  } else {
+    for (const part of body.split(/[,\s]+/)) items.push(part);
+  }
+  return items.map((item) => unquote(item)).filter((item) => item !== "");
+}
+function addUnique(list, value) {
+  const item = value.trim();
+  if (item === "" || list.includes(item)) return;
+  list.push(item);
+}
+function parseNoteHead(head) {
+  const lines = head.split(/\r?\n/);
+  const result = { tags: [], createdAt: "", updatedAt: "", wiki: [] };
+  let inFrontmatter = false;
+  let frontmatterClosed = !(lines.length > 0 && lines[0].trim() === "---");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!frontmatterClosed) {
+      if (index === 0) {
+        inFrontmatter = true;
+        continue;
+      }
+      if (line.trim() === "---") {
+        inFrontmatter = false;
+        frontmatterClosed = true;
+        continue;
+      }
+      if (!inFrontmatter) {
+        frontmatterClosed = true;
+        continue;
+      }
+      const field = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
+      if (field === null) continue;
+      const key2 = field[1];
+      const value2 = field[2];
+      if (key2 === "tags") for (const tag of arrayOf(value2)) addUnique(result.tags, tag);
+      else if (key2 === "related_wiki") for (const title of arrayOf(value2)) addUnique(result.wiki, title);
+      else if (key2 === "created_at") result.createdAt = result.createdAt || dateOf(value2);
+      else if (key2 === "updated_at") result.updatedAt = result.updatedAt || dateOf(value2);
+      continue;
+    }
+    const meta = /^>\s*([^:：]*)[:：]\s*(.*)$/.exec(line);
+    if (meta === null) continue;
+    const key = meta[1].trim().toLowerCase();
+    const value = meta[2];
+    if (key === "date") {
+      const date = dateOf(value);
+      if (date !== "") {
+        result.createdAt = result.createdAt || date;
+        result.updatedAt = result.updatedAt || date;
+      }
+    } else if (key === "tags") {
+      for (const matched of value.matchAll(/#([^\s#]+)/g)) addUnique(result.tags, matched[1]);
+    } else if (key === "wiki") {
+      for (const matched of value.matchAll(/\[\[([^\]]+)\]\]/g)) addUnique(result.wiki, matched[1]);
+    }
+  }
+  return result;
+}
+async function readNoteHead(path, size) {
+  const handle = await open(path, "r");
+  try {
+    const length = Math.max(0, Math.min(size, NOTE_HEAD_BYTES));
+    if (length === 0) return "";
+    const buffer = Buffer.alloc(length);
+    const read = await handle.read(buffer, 0, length, 0);
+    return buffer.subarray(0, read.bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 async function readNoteDir(mdRoot, subdir, limit, problems) {
   const dir = join(mdRoot, subdir);
@@ -154,7 +247,8 @@ async function readNoteDir(mdRoot, subdir, limit, problems) {
     const path = join(dir, name);
     try {
       const info = await stat(path);
-      rows.push({ name, path, mtimeMs: info.mtimeMs, bytes: info.size });
+      const head = await readNoteHead(path, info.size);
+      rows.push({ name, path, mtimeMs: info.mtimeMs, bytes: info.size, ...parseNoteHead(head) });
     } catch (error) {
       problems.push(`${path}: ${String(error)}`);
     }
@@ -174,13 +268,15 @@ async function buildSnapshot(options) {
   const retentionDays = positiveInt(config.statsRetentionDays, FALLBACK_RETENTION_DAYS);
   const maxEntries = positiveInt(config.statsMaxEntries, FALLBACK_MAX_ENTRIES);
   const tracePath = join(options.dataRoot, "decisions.jsonl");
-  const [decisions, items, notes, digests] = await Promise.all([
+  const [decisions, items, notes, digests, wikis] = await Promise.all([
     readDecisions(tracePath, { retentionDays, maxEntries, now: now() }, problems),
     // 条目按**宽窗口**读：客户端要把「同主题的多版」聚成一行（被降级的旧版也在其中），
     // 只读 limit 条会把版本历史截断，于是「共 N 版」永远显示不出来。
     readItems(options.dataRoot, Math.max(limit * 8, 100), problems),
     readNoteDir(mdRoot, QA_NOTE_DIR, limit, problems),
-    readNoteDir(mdRoot, DIGEST_NOTE_DIR, limit, problems)
+    readNoteDir(mdRoot, DIGEST_NOTE_DIR, limit, problems),
+    // 主题页只当字典用（标题 → 路径），所以按同一个窗口读就够。
+    readNoteDir(mdRoot, WIKI_NOTE_DIR, limit, problems)
   ]);
   return {
     ok: true,
@@ -197,6 +293,7 @@ async function buildSnapshot(options) {
     items,
     notes,
     digests,
+    wikis,
     problems
   };
 }
@@ -389,10 +486,27 @@ function lower(value) {
 function latest(values) {
   return values.length === 0 ? 0 : Math.max(...values);
 }
+var KEYWORD_MAX = 5;
+var WIKI_MAX = 2;
+function textList(value) {
+  if (!Array.isArray(value)) return [];
+  const items = [];
+  for (const entry of value) {
+    const item = text(entry);
+    if (item !== "" && !items.includes(item)) items.push(item);
+  }
+  return items;
+}
 function mergeKnowledge(input) {
   const items = input.items ?? [];
   const consumed = /* @__PURE__ */ new Set();
   const rows = [];
+  const pages = /* @__PURE__ */ new Map();
+  for (const page of input.wikis ?? []) {
+    const name = lower(baseName(page.name));
+    const path = text(page.path);
+    if (name !== "" && path !== "" && !pages.has(name)) pages.set(name, path);
+  }
   const collect = (note, source) => {
     const base = lower(baseName(note.name));
     if (base === "") return;
@@ -410,6 +524,10 @@ function mergeKnowledge(input) {
       ...matched.map((item) => num(item.updated_at))
     ]);
     const primary = pickPrimary(matched);
+    const tags = textList(note.tags);
+    for (const item of matched) {
+      for (const tag of textList(item.tags)) if (!tags.includes(tag)) tags.push(tag);
+    }
     rows.push({
       key: text(note.path) !== "" ? text(note.path) : base,
       title: baseName(note.name),
@@ -421,7 +539,13 @@ function mergeKnowledge(input) {
       versions: matched.length,
       itemId: text(primary?.id),
       sources: num(primary?.sources),
-      topic: text(primary?.topic)
+      topic: text(primary?.topic),
+      tags,
+      wiki: textList(note.wiki).map((title) => {
+        const path = pages.get(lower(title));
+        return path === void 0 ? { title } : { title, path };
+      }),
+      date: text(note.updatedAt) !== "" ? text(note.updatedAt) : text(note.createdAt)
     });
   };
   for (const note of input.notes ?? []) collect(note, "note");
@@ -439,6 +563,10 @@ function mergeKnowledge(input) {
   });
   for (const { key, items: members } of groups.values()) {
     const primary = pickPrimary(members);
+    const tags = [];
+    for (const item of members) {
+      for (const tag of textList(item.tags)) if (!tags.includes(tag)) tags.push(tag);
+    }
     rows.push({
       key: "item:" + key,
       title: text(primary?.title) !== "" ? text(primary?.title) : key,
@@ -449,7 +577,11 @@ function mergeKnowledge(input) {
       versions: members.length,
       itemId: text(primary?.id),
       sources: num(primary?.sources),
-      topic: text(primary?.topic)
+      topic: text(primary?.topic),
+      tags,
+      // 没有笔记文件就没有回链可解析；日期留空，渲染时按 `at` 折算。
+      wiki: [],
+      date: ""
     });
   }
   return rows.sort((left, right) => right.at - left.at || left.title.localeCompare(right.title));
@@ -462,6 +594,41 @@ function pickPrimary(items) {
 }
 function isDigest(item) {
   return (item?.sourceTypes ?? []).some((type) => lower(type) === "digest");
+}
+function keywordText(row) {
+  const tags = textList(row.tags);
+  if (tags.length === 0) return "";
+  const shown = tags.slice(0, KEYWORD_MAX).map((tag) => "#" + tag.replace(/^#+/, ""));
+  const rest = tags.length - shown.length;
+  return shown.join(" ") + (rest > 0 ? " +" + rest : "");
+}
+function wikiText(row) {
+  const pages = (row.wiki ?? []).filter((page) => text(page.title) !== "");
+  if (pages.length === 0) return "";
+  const shown = pages.slice(0, WIKI_MAX).map((page) => text(page.title));
+  const rest = pages.length - shown.length;
+  return shown.join("\u3001") + (rest > 0 ? " +" + rest : "");
+}
+function dateText(row) {
+  const written = text(row.date);
+  if (written !== "") return written;
+  if (!Number.isFinite(row.at) || row.at <= 0) return "";
+  const at = new Date(row.at);
+  const pad = (value) => String(value).padStart(2, "0");
+  return at.getFullYear() + "-" + pad(at.getMonth() + 1) + "-" + pad(at.getDate());
+}
+function detailParts(row) {
+  const parts = [];
+  const wiki = wikiText(row);
+  parts.push({ label: "\u76F8\u5173\u4E3B\u9898", text: wiki !== "" ? wiki : "\u672A\u5F52\u5E76", wiki: (row.wiki ?? []).slice(0, WIKI_MAX) });
+  const tags = keywordText(row);
+  if (tags !== "") parts.push({ label: "\u5173\u952E\u8BCD", text: tags });
+  const date = dateText(row);
+  if (date !== "") parts.push({ label: "\u65E5\u671F", text: date });
+  return parts;
+}
+function detailText(row) {
+  return detailParts(row).map((part) => part.label + "\uFF1A" + part.text).join(" \xB7 ");
 }
 var KNOWLEDGE_ITEM_LIMIT = 5;
 function hasNote(row) {
@@ -627,20 +794,30 @@ function registerPanelTab(ctx, component, warn, icon) {
   return result;
 }
 export {
+  DIGEST_NOTE_DIR,
+  KEYWORD_MAX,
   KNOWLEDGE_ITEM_LIMIT,
   PANEL_TAB_ID,
+  QA_NOTE_DIR,
+  WIKI_MAX,
+  WIKI_NOTE_DIR,
   actionLabel,
   buildScoreCurve,
   buildSnapshot,
   curveCaption,
+  dateText,
+  detailParts,
+  detailText,
   formatValue,
   hintLine,
   implLabel,
   itemStatusLabel,
+  keywordText,
   knowledgeView,
   mergeKnowledge,
   openNoteInSidebar,
   panelDescriptor,
+  parseNoteHead,
   percent,
   reasonLabel,
   registerPanelTab,
@@ -650,5 +827,6 @@ export {
   statNumber,
   summarizeDecisions,
   thresholdOf,
-  topBlocker
+  topBlocker,
+  wikiText
 };
