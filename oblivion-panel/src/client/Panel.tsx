@@ -11,10 +11,13 @@
  *   - 「打开笔记」由宿主半边包一层注入 `onOpenFile`（见 `index.ts` 的 `openNoteInSidebar`），
  *     点笔记名都会走同一条路，结果写进 `panel-client-diag.json` 供排查；
  *   - 知识库只有**一栏**（所有者 2026-10-06 裁定的方案 A，见 `knowledge.ts`）：
- *     以笔记为骨架，把同主题条目的状态与版本挂上去；没有笔记的条目补成一行并标「仅入库」/「会话整理」；
- *   - 「最近判定」只列最近几条（所有者看过一次列 10 行的版本，说「不需要这么多」），
- *     趋势改用**判定曲线**（`chart.ts` + `ScoreChart.tsx`）：分值点位 + 阈值虚线 + 均值趋势线，
- *     剩下的判定按需展开 —— 列表回答「刚才发生了什么」，曲线回答「在往哪走」。
+ *     以笔记为骨架，把同主题条目的状态与版本挂上去；没有笔记的条目补成一行并标「仅入库」/「会话整理」，
+ *     其中「仅入库」默认只列最近几条（`knowledgeView()`）；
+ *   - **没有「最近判定」列表**（所有者 2026-10-06：「删掉『最近判定』这个区域」）：
+ *     逐条判定改由**判定曲线**（`chart.ts` + `ScoreChart.tsx`）承载 —— 分值点位 + 阈值虚线 +
+ *     均值趋势线；每一点鼠标停上去显示「时间 · 动作 · 分值」。要逐条读原因就看曲线上的点，
+ *     要看「为什么没沉淀」就看上面的「主要拦截原因」。快照里的 `trace.recent` 仍然收着
+ *     （宿主字段保留，便于日后想恢复列表时不改契约），只是面板不再渲染它。
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -24,12 +27,10 @@ import { ScoreChart } from './ScoreChart.js';
 import { buildScoreCurve, curveCaption, thresholdOf } from './chart.js';
 import type { DecisionStats } from '../snapshot.js';
 import {
-  actionLabel,
   hintLine,
   percent,
   reasonLabel,
   relativeTime,
-  scoreText,
   statNumber,
   topBlocker,
   type HintLike,
@@ -47,9 +48,6 @@ import {
 /** 与 Node 半边 config.routePath 的默认值一致。 */
 const STATUS_ROUTE = '/oblivion-panel/status';
 
-/** 「最近判定」默认列几条（其余按需展开）：列表是「刚才发生了什么」，不是台账。 */
-const RECENT_LIST_LIMIT = 6;
-
 /** 面板用到的 data 形状（Node 半边 `PanelSnapshot` 的浏览器侧视图）。 */
 interface PanelData {
   panelVersion?: string;
@@ -66,7 +64,7 @@ interface PanelData {
   } | null;
   /** Node 半边由留痕现算的统计（0.0.8 起）；老 host 不发时回落 `core.stats`。 */
   live?: DecisionStats;
-  /** `recent` = 列表窗口，`series` = 曲线窗口（更宽，0.0.10 起）。 */
+  /** `series` = 曲线窗口（宽，0.0.10 起）；`recent` = 宿主仍在发的窄窗口，面板已不渲染（见文件头）。 */
   trace?: { path?: string; recent?: Array<Record<string, unknown>>; series?: Array<Record<string, unknown>> };
   items?: Array<{
     id?: string;
@@ -178,8 +176,6 @@ function emptyReason(data: PanelData): string {
 
 export function OblivionPanel(props: PanelTabProps): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
-  /** 「最近判定」是否展开（默认只看最近几条）。 */
-  const [expanded, setExpanded] = useState(false);
   /** 知识库一栏是否连「仅入库」也全列（默认只列最近几条）。 */
   const [showAllKnowledge, setShowAllKnowledge] = useState(false);
 
@@ -225,12 +221,9 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
     const captureRate = live ? live.captureRate : (core?.stats ?? {}).captureRate;
     // 有现算统计就用它；没有（老 host）才回落 core 装载快照里的 byReason。
     const blocker = topBlocker(live ? live.byReason : (core?.stats ?? {}).byReason);
-    const recent = data.trace?.recent ?? [];
-    // 曲线用**更宽的窗口**（同一次读盘取尾部），列表只显示最近几条 —— 趋势与「刚才」是两件事。
-    const series = data.trace?.series ?? recent;
+    // 曲线用宽窗口（`trace.series`，同一次读盘取尾部）；老 host 没有 series 时回落 recent。
+    const series = data.trace?.series ?? data.trace?.recent ?? [];
     const curve = buildScoreCurve(series, { threshold: thresholdOf(core?.config) });
-    const newest = recent.slice().reverse();
-    const shown = expanded ? newest : newest.slice(0, RECENT_LIST_LIMIT);
     const items = data.items ?? [];
     const notes = data.notes ?? [];
     const digests = data.digests ?? [];
@@ -313,29 +306,6 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
           </div>
         )}
 
-        <div style={S.h}>最近判定</div>
-        {recent.length === 0 ? (
-          <div style={S.dim}>还没有判定记录（{data.trace?.path ?? 'decisions.jsonl'}）</div>
-        ) : (
-          <>
-            <ul style={S.list}>
-              {shown.map((row, index) => (
-                <li key={index} style={S.li}>
-                  <span style={S.dim}>{relativeTime(row.at)}</span>　
-                  <span>{actionLabel(row.action)}</span>
-                  {row.score !== undefined ? <span style={S.dim}> · 分值 {scoreText(row.score)}</span> : null}
-                  <div style={{ ...S.dim, ...S.mono }}>{reasonLabel(row.reason)}</div>
-                </li>
-              ))}
-            </ul>
-            {newest.length > RECENT_LIST_LIMIT ? (
-              <button type="button" style={{ ...S.btn, marginTop: 4 }} onClick={() => setExpanded((prev) => !prev)}>
-                {expanded ? '只看最近 ' + RECENT_LIST_LIMIT + ' 条' : '展开全部 ' + newest.length + ' 条'}
-              </button>
-            ) : null}
-          </>
-        )}
-
         <div style={S.h}>知识库（{knowledge.length}）</div>
         <div style={{ ...S.dim, marginBottom: 4 }}>
           问答笔记 {notes.length} · 会话整理 {digests.length} · 条目 {items.length}
@@ -397,7 +367,7 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
         ) : null}
       </>
     );
-  }, [state, load, props.onOpenFile, expanded, showAllKnowledge]);
+  }, [state, load, props.onOpenFile, showAllKnowledge]);
 
   return <div style={S.root}>{body}</div>;
 }

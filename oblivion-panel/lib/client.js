@@ -508,7 +508,6 @@ function knowledgeView(rows, options = {}) {
 // src/client/Panel.tsx
 var import_jsx_runtime3 = require("react/jsx-runtime");
 var STATUS_ROUTE = "/oblivion-panel/status";
-var RECENT_LIST_LIMIT = 6;
 var S = {
   root: {
     padding: "10px 12px 24px",
@@ -576,7 +575,6 @@ function emptyReason(data) {
 }
 function OblivionPanel(props) {
   const [state, setState] = (0, import_react2.useState)({ status: "loading" });
-  const [expanded, setExpanded] = (0, import_react2.useState)(false);
   const [showAllKnowledge, setShowAllKnowledge] = (0, import_react2.useState)(false);
   const load = (0, import_react2.useCallback)(async () => {
     setState((prev) => prev.status === "ready" ? prev : { status: "loading" });
@@ -616,11 +614,8 @@ function OblivionPanel(props) {
     const captured = live ? live.captured : statNumber(core, "captured");
     const captureRate = live ? live.captureRate : (core?.stats ?? {}).captureRate;
     const blocker = topBlocker(live ? live.byReason : (core?.stats ?? {}).byReason);
-    const recent = data.trace?.recent ?? [];
-    const series = data.trace?.series ?? recent;
+    const series = data.trace?.series ?? data.trace?.recent ?? [];
     const curve = buildScoreCurve(series, { threshold: thresholdOf(core?.config) });
-    const newest = recent.slice().reverse();
-    const shown = expanded ? newest : newest.slice(0, RECENT_LIST_LIMIT);
     const items = data.items ?? [];
     const notes = data.notes ?? [];
     const digests = data.digests ?? [];
@@ -666,23 +661,6 @@ function OblivionPanel(props) {
       ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { ...S.card, padding: "6px 8px" }, children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(ScoreChart, { curve }),
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono, marginTop: 2 }, children: curveCaption(series, curve) })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.h, children: "\u6700\u8FD1\u5224\u5B9A" }),
-      recent.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.dim, children: [
-        "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55\uFF08",
-        data.trace?.path ?? "decisions.jsonl",
-        "\uFF09"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: S.list, children: shown.map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("li", { style: S.li, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: S.dim, children: relativeTime(row.at) }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: actionLabel(row.action) }),
-          row.score !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: S.dim, children: [
-            " \xB7 \u5206\u503C ",
-            scoreText(row.score)
-          ] }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono }, children: reasonLabel(row.reason) })
-        ] }, index)) }),
-        newest.length > RECENT_LIST_LIMIT ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", style: { ...S.btn, marginTop: 4 }, onClick: () => setExpanded((prev) => !prev), children: expanded ? "\u53EA\u770B\u6700\u8FD1 " + RECENT_LIST_LIMIT + " \u6761" : "\u5C55\u5F00\u5168\u90E8 " + newest.length + " \u6761" }) : null
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.h, children: [
         "\u77E5\u8BC6\u5E93\uFF08",
@@ -736,7 +714,7 @@ function OblivionPanel(props) {
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: S.list, children: (data.problems ?? []).map((problem, index) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("li", { style: { ...S.li, ...S.mono, ...S.dim }, children: problem }, index)) })
       ] }) : null
     ] });
-  }, [state, load, props.onOpenFile, expanded, showAllKnowledge]);
+  }, [state, load, props.onOpenFile, showAllKnowledge]);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.root, children: body });
 }
 
