@@ -12,7 +12,28 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/core` v0.1.20 + `@oblivion/panel` v0.0.8：顶部统计改现算、写盘一律原子、版本号只留一处
+## [未发布] — `@oblivion/brand` v0.1.2 + `@oblivion/core` v0.1.20 + `@oblivion/panel` v0.0.8：已装插件清单、顶部统计改现算、写盘一律原子、版本号只留一处
+
+### `@oblivion/brand` v0.1.2 —— 「个人已安装插件」清单 + 一键复制重装命令
+
+- **意图**：重建环境时不必回忆「装过什么、装的是哪个规格」。面板里列出本 profile 的
+  `dependencies`，每条给出可复制的重装命令；**不写清单文件、不导出 `.ps1`**（所有者 2026-10-06 裁定）。
+- **数据源就是 profile 目录本身**：`package.json` 的 `dependencies` 与 `dsh.profile.bundles`、
+  外加 `cordis.patch.yml` 文本。宿主新路由 `GET /obl-brand/plugins`（只读、只回本机调用方：
+  `isTrustedCaller` 不过即 403，非 GET 即 405）返回 JSON，浏览器半边只渲染与复制。
+- **「已启用」判据 = `bundled || patched`**：实测本机 `dsh-creator-mode-plus`、`dsh-whale-widget`
+  在 `dependencies` 里但既不在 `bundles` 也没有补丁行 ⇒ 宿主**不会**加载它们，面板显示
+  「已装未启用」；`@oblivion/core` / `@oblivion/panel` 靠 `@oblivion/bundle` 的 `insert:` 挂载，
+  判定为已启用。
+- **恢复命令的引号规则**：`link:C:/Projects/Oblivion/oblivion-core` 含冒号必须加引号（`'…'`，
+  PowerShell 规则）；`^1.2.3` 这类 semver **不**加引号 —— `^` 在 PowerShell 里不是元字符，
+  而 cmd.exe 里单引号不是引号，多此一举的引号反而更糟（规则与理由写在 `src/plugin-list.ts`）。
+- **顺手收口两处重复**：配色与卡片样式抽到 `src/client/theme.ts`（原来只有 `BrandSettingsPanel.tsx`
+  一份，新区要与它长得一样）；路径常量抽到 `src/paths.ts`（原来宿主与浏览器半边各写一遍
+  `RESTART_PATH`）。清单校验与恢复命令放在**中立层** `src/plugin-list.ts`（不引 `node:`），
+  两侧共用同一份实现、不是副本。
+- 自检 **11 项**（新增：临时 profile 上读规格/启用态/版本、清单路由真跑 200/405/403、
+  profile 定位四条路径）；断言直接打在宿主产物导出的纯函数上（`scripts/selfcheck.mjs` import `lib/index.js`）。
 
 ### `@oblivion/panel` v0.0.8 —— 顶部统计不再「冻结在重启那一刻」
 

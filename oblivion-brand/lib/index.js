@@ -1,11 +1,185 @@
 // src/index.ts
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join as join2 } from "node:path";
+
+// src/paths.ts
 var RESTART_PATH = "/obl-brand/restart";
-var SCRIPT_PATH = join(tmpdir(), "obl-brand-restart.ps1");
-var LOG_PATH = join(tmpdir(), "obl-brand-restart.log");
+var PLUGINS_PATH = "/obl-brand/plugins";
+
+// src/profile-plugins.ts
+import { existsSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
+
+// src/plugin-list.ts
+var SAFE_ARG = /^[A-Za-z0-9@._/+^~-]+$/;
+function quoteArg(value) {
+  if (value !== "" && SAFE_ARG.test(value)) return value;
+  return "'" + value.replace(/'/g, "''") + "'";
+}
+function restoreCommand(profile, spec) {
+  return `dsh plugin --profile ${quoteArg(profile)} add ${quoteArg(spec)}`;
+}
+function statusLabel(entry) {
+  return entry.active ? "\u5DF2\u542F\u7528" : "\u5DF2\u88C5\u672A\u542F\u7528";
+}
+function totalRestoreScript(payload) {
+  return payload.entries.map((entry) => entry.restore).join("\n");
+}
+function asString(value) {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+function asEntry(raw) {
+  if (raw === null || typeof raw !== "object") return null;
+  const record = raw;
+  const name = asString(record["name"]);
+  const spec = asString(record["spec"]);
+  const restore = asString(record["restore"]);
+  if (name === null || spec === null || restore === null) return null;
+  const bundled = record["bundled"] === true;
+  const patched = record["patched"] === true;
+  const kind = record["kind"] === "link" ? "link" : "npm";
+  const version = asString(record["version"]);
+  return {
+    name,
+    spec,
+    kind,
+    version,
+    bundled,
+    patched,
+    active: record["active"] === true || bundled || patched,
+    restore
+  };
+}
+function normalizePluginList(raw) {
+  if (raw === null || typeof raw !== "object") return null;
+  const record = raw;
+  const profile = asString(record["profile"]);
+  if (profile === null) return null;
+  const entries = Array.isArray(record["entries"]) ? record["entries"].map(asEntry).filter((entry) => entry !== null) : [];
+  const problems = Array.isArray(record["problems"]) ? record["problems"].filter((item) => typeof item === "string") : [];
+  return {
+    profile,
+    profileDir: asString(record["profileDir"]) ?? "",
+    generatedAt: typeof record["generatedAt"] === "number" ? record["generatedAt"] : 0,
+    entries,
+    problems
+  };
+}
+
+// src/profile-plugins.ts
+function text(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function describe(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function resolveProfile(env, homeDir) {
+  const explicitDir = text(env["DSH_PROFILE_DIR"]);
+  const explicitProfile = text(env["DSH_PROFILE"]);
+  if (explicitDir !== "") {
+    return { profile: explicitProfile !== "" ? explicitProfile : basename(explicitDir), dir: explicitDir };
+  }
+  const home = text(env["DSH_HOME"]);
+  const base = home !== "" ? home : homeDir !== "" ? join(homeDir, ".dsh") : "";
+  if (base === "") return null;
+  const profile = explicitProfile !== "" ? explicitProfile : "desktop";
+  return { profile, dir: join(base, "profiles", profile) };
+}
+function readJson(file) {
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+function findDependencies(parsed) {
+  if (parsed === null || typeof parsed !== "object") return [];
+  const dependencies = parsed["dependencies"];
+  if (dependencies === null || typeof dependencies !== "object") return [];
+  const pairs = [];
+  for (const [name, spec] of Object.entries(dependencies)) {
+    if (typeof spec === "string") pairs.push([name, spec]);
+  }
+  return pairs;
+}
+function findBundles(parsed) {
+  if (parsed === null || typeof parsed !== "object") return [];
+  const dsh = parsed["dsh"];
+  if (dsh === null || typeof dsh !== "object") return [];
+  const profile = dsh["profile"];
+  if (profile === null || typeof profile !== "object") return [];
+  const bundles = profile["bundles"];
+  if (!Array.isArray(bundles)) return [];
+  return bundles.filter((item) => typeof item === "string");
+}
+function isBundled(bundles, name) {
+  return bundles.some((item) => item === name || item.startsWith(`${name}@`));
+}
+function installedVersion(dir, name) {
+  const file = join(dir, "node_modules", name, "package.json");
+  if (!existsSync(file)) return null;
+  try {
+    const parsed = readJson(file);
+    if (parsed !== null && typeof parsed === "object") {
+      const version = parsed["version"];
+      if (typeof version === "string" && version !== "") return version;
+    }
+  } catch {
+  }
+  return null;
+}
+function kindOf(spec) {
+  return /^(link|file|workspace):/.test(spec) ? "link" : "npm";
+}
+function readInstalledPlugins(location, at = Date.now()) {
+  const problems = [];
+  const profileFile = join(location.dir, "package.json");
+  let dependencies = [];
+  let bundles = [];
+  if (!existsSync(profileFile)) {
+    problems.push(`profile \u76EE\u5F55\u91CC\u6CA1\u6709 package.json\uFF1A${profileFile}`);
+  } else {
+    try {
+      const parsed = readJson(profileFile);
+      dependencies = findDependencies(parsed);
+      bundles = findBundles(parsed);
+    } catch (error) {
+      problems.push(`package.json \u89E3\u6790\u5931\u8D25\uFF1A${describe(error)}`);
+    }
+  }
+  const patchFile = join(location.dir, "cordis.patch.yml");
+  let patchText = "";
+  if (existsSync(patchFile)) {
+    try {
+      patchText = readFileSync(patchFile, "utf8");
+    } catch (error) {
+      problems.push(`cordis.patch.yml \u8BFB\u4E0D\u5230\uFF1A${describe(error)}`);
+    }
+  }
+  const entries = dependencies.map(([name, spec]) => {
+    const bundled = isBundled(bundles, name);
+    const patched = patchText.includes(name);
+    return {
+      name,
+      spec,
+      kind: kindOf(spec),
+      version: installedVersion(location.dir, name),
+      bundled,
+      patched,
+      active: bundled || patched,
+      restore: restoreCommand(location.profile, spec)
+    };
+  }).sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    profile: location.profile,
+    profileDir: location.dir,
+    generatedAt: at,
+    entries,
+    problems
+  };
+}
+
+// src/index.ts
+var SCRIPT_PATH = join2(tmpdir(), "obl-brand-restart.ps1");
+var LOG_PATH = join2(tmpdir(), "obl-brand-restart.log");
 var MARKET_REGISTRY_ENV = "DSHM_NPM_MIRROR";
 var MARKET_REGISTRY_MIRROR = "https://registry.npmmirror.com";
 var RESTART_SCRIPT = String.raw`
@@ -175,8 +349,8 @@ function isTrustedCaller(request) {
 }
 function pluginVersion() {
   try {
-    const text = readFileSync(new URL("../package.json", import.meta.url), "utf8");
-    const parsed = JSON.parse(text);
+    const text2 = readFileSync2(new URL("../package.json", import.meta.url), "utf8");
+    const parsed = JSON.parse(text2);
     return typeof parsed.version === "string" ? parsed.version : "unknown";
   } catch {
     return "unknown";
@@ -192,8 +366,8 @@ function appendLog(line) {
 function resolvePowerShell() {
   if (process.platform !== "win32") return null;
   const root = process.env["SystemRoot"] ?? process.env["windir"] ?? "C:\\Windows";
-  const absolute = join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  return existsSync(absolute) ? absolute : "powershell.exe";
+  const absolute = join2(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return existsSync2(absolute) ? absolute : "powershell.exe";
 }
 function spawnRestartHelper() {
   try {
@@ -289,6 +463,45 @@ function installRestartRoute(ctx, warn) {
     ctx.logger?.("@oblivion/brand").info(`\u91CD\u542F\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${RESTART_PATH}`);
   });
 }
+function installPluginsRoute(ctx, warn) {
+  ctx.inject?.(["webServer"], (scope) => {
+    const server = scope.webServer;
+    if (server === void 0 || typeof server.register !== "function") {
+      warn("webServer \u4E0D\u53EF\u7528\uFF0C\u5DF2\u5B89\u88C5\u63D2\u4EF6\u6E05\u5355\u672A\u6302\u8F7D");
+      return;
+    }
+    const dispose = server.register({
+      kind: "exact",
+      path: PLUGINS_PATH,
+      handler: (request, response) => {
+        const json = (status, body, extra) => {
+          response.writeHead(status, { "content-type": "application/json", ...extra });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== "GET") {
+          json(405, { ok: false, error: "method not allowed" }, { allow: "GET" });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: "untrusted origin" });
+          return;
+        }
+        const location = resolveProfile(process.env, homedir());
+        if (location === null) {
+          json(500, { ok: false, error: "DSH_PROFILE_DIR \u4E0E DSH_HOME \u90FD\u6CA1\u6709\uFF0C\u8BFB\u4E0D\u5230 profile \u76EE\u5F55" });
+          return;
+        }
+        try {
+          json(200, { ok: true, ...readInstalledPlugins(location) });
+        } catch (error) {
+          json(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    });
+    ctx.effect?.(() => dispose, "oblivion-brand: plugins route");
+    ctx.logger?.("@oblivion/brand").info(`\u5DF2\u5B89\u88C5\u63D2\u4EF6\u6E05\u5355\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1AGET ${PLUGINS_PATH}`);
+  });
+}
 function installMarketRegistryOverride(ctx) {
   const logger = ctx.logger?.("@oblivion/brand");
   const current = process.env[MARKET_REGISTRY_ENV];
@@ -308,11 +521,20 @@ function apply(ctx) {
   };
   installMarketRegistryOverride(ctx);
   installRestartRoute(ctx, warn);
+  installPluginsRoute(ctx, warn);
 }
 export {
   MARKET_REGISTRY_ENV,
   MARKET_REGISTRY_MIRROR,
+  PLUGINS_PATH,
   RESTART_PATH,
   apply,
-  installMarketRegistryOverride
+  installMarketRegistryOverride,
+  normalizePluginList,
+  quoteArg,
+  readInstalledPlugins,
+  resolveProfile,
+  restoreCommand,
+  statusLabel,
+  totalRestoreScript
 };

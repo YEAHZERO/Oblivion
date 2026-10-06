@@ -23,43 +23,19 @@ import {
 } from './settings.js';
 import { providerLabel, type EmbeddableProvider } from './panels.js';
 import { PLUGIN_VERSION } from './version.js';
-
-const LABEL = 'var(--dsw-alias-label-primary, currentColor)';
-const MUTED = 'var(--dsw-alias-label-tertiary, #8b93a1)';
-const BORDER = 'var(--dsw-alias-border-l2, #e5e7eb)';
-const ACCENT = 'var(--dsw-alias-brand-primary, #4f6ef7)';
-const DANGER = 'var(--dsw-alias-label-error, #d93025)';
-
-const buttonStyle = {
-  font: 'inherit',
-  fontSize: '13px',
-  padding: '5px 12px',
-  borderRadius: '6px',
-  border: `1px solid ${BORDER}`,
-  background: 'transparent',
-  color: LABEL,
-  cursor: 'pointer',
-} as const;
-
-const cardStyle = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '10px',
-  padding: '14px',
-  border: `1px solid ${BORDER}`,
-  borderRadius: '8px',
-} as const;
-
-/**
- * 宿主半边注册的重启路由。
- *
- * 两侧各自打包（Node / 浏览器），不能互相 import，因此路径常量在此独立声明；
- * 改动时需与 `src/index.ts` 的 `RESTART_PATH` 保持一致。
- */
-const RESTART_PATH = '/obl-brand/restart';
-
-const headingStyle = { margin: 0, fontSize: '13px', fontWeight: 600, color: LABEL } as const;
-const hintStyle = { margin: 0, fontSize: '12px', lineHeight: '18px', color: MUTED } as const;
+import { RESTART_PATH } from '../paths.js';
+import { InstalledPluginsSection } from './installed-plugins.js';
+import {
+  ACCENT,
+  BORDER,
+  DANGER,
+  LABEL,
+  MUTED,
+  buttonStyle,
+  cardStyle,
+  headingStyle,
+  hintStyle,
+} from './theme.js';
 
 /** data URL 的近似字节数（base64 膨胀 4/3）。 */
 function dataUrlBytes(dataUrl: string): number {
@@ -393,6 +369,9 @@ export function createBrandSettingsPanel(
             </div>
           )}
         </section>
+
+        {/* ---- 个人已安装插件 ---- */}
+        <InstalledPluginsSection />
 
         {/* ---- 重启应用 ---- */}
         <section style={cardStyle}>

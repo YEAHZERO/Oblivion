@@ -30,13 +30,24 @@
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PLUGINS_PATH, RESTART_PATH } from './paths.js';
+import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
 
 /** Cordis 插件入口（空 apply 的占位语义保留在下方 `apply`）。 */
 
-/** 重启路由路径。 */
-export const RESTART_PATH = '/obl-brand/restart';
+/**
+ * 路由路径与「恢复命令」纯逻辑在此再导出。
+ *
+ * 目的：`scripts/selfcheck.mjs` 直接 `import` 产物 `lib/index.js`，这样就能在 Node 里
+ * 断言「重装命令怎么拼」「清单怎么校验」，而不必去跑客户端产物（浏览器 bundle 不是
+ * ESM，Node 里 import 不了）。宿主半边与浏览器半边共用 `paths.ts` / `plugin-list.ts`，
+ * 所以这里导出的是同一份实现，不是副本。
+ */
+export { PLUGINS_PATH, RESTART_PATH };
+export { normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
+export { readInstalledPlugins, resolveProfile };
 
 /** helper 脚本与日志落在临时目录。 */
 const SCRIPT_PATH = join(tmpdir(), 'obl-brand-restart.ps1');
@@ -451,6 +462,60 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
 }
 
 /**
+ * 注册「个人已安装插件」清单路由（GET，只读）。
+ *
+ * 为什么放在宿主半边：浏览器半边拿不到文件系统，而清单的事实来源就是 profile 目录里的
+ * `package.json` + `cordis.patch.yml`（见 `profile-plugins.ts`）。这里只负责「定位 profile →
+ * 读 → 原样返回 JSON」，不做任何缓存：面板每次打开都重新读，装完插件刷新一下就能看到。
+ *
+ * 只读、且只回本机调用方（`isTrustedCaller`）：清单含本机绝对路径，不该被任意网页读走。
+ */
+function installPluginsRoute(ctx: HostCtx, warn: (message: string) => void): void {
+  ctx.inject?.(['webServer'], (scope) => {
+    const server = scope.webServer;
+    if (server === undefined || typeof server.register !== 'function') {
+      warn('webServer 不可用，已安装插件清单未挂载');
+      return;
+    }
+
+    const dispose = server.register({
+      kind: 'exact',
+      path: PLUGINS_PATH,
+      handler: (request, response) => {
+        const json = (status: number, body: unknown, extra?: Record<string, string>): void => {
+          response.writeHead(status, { 'content-type': 'application/json', ...extra });
+          response.end(JSON.stringify(body));
+        };
+
+        if (request.method !== 'GET') {
+          json(405, { ok: false, error: 'method not allowed' }, { allow: 'GET' });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: 'untrusted origin' });
+          return;
+        }
+
+        const location = resolveProfile(process.env, homedir());
+        if (location === null) {
+          json(500, { ok: false, error: 'DSH_PROFILE_DIR 与 DSH_HOME 都没有，读不到 profile 目录' });
+          return;
+        }
+
+        try {
+          json(200, { ok: true, ...readInstalledPlugins(location) });
+        } catch (error) {
+          json(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    });
+
+    ctx.effect?.(() => dispose, 'oblivion-brand: plugins route');
+    ctx.logger?.('@oblivion/brand').info(`已安装插件清单路由已挂载：GET ${PLUGINS_PATH}`);
+  });
+}
+
+/**
  * 把插件市场（`dshmarket`）的 npm registry 指到 npmmirror。
  *
  * ## 为什么需要这一手
@@ -507,4 +572,5 @@ export function apply(ctx: HostCtx): void {
   // 先于重启路由：只写一个环境变量，越早越好（市场第一次发请求前生效）。
   installMarketRegistryOverride(ctx);
   installRestartRoute(ctx, warn);
+  installPluginsRoute(ctx, warn);
 }

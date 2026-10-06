@@ -16,6 +16,23 @@ Oblivion 品牌插件：把 DSH 侧栏与会话 Hero 的品牌换成**北极星*
 | **面板显示** | 内容是否居中限宽。同一面板会出现在两个宽度差异极大的容器里（设置弹窗很窄、挂到左侧栏后是整窗宽），居中时限宽 620px 并水平居中，关闭则贴左。**只作用于本面板**，不影响其它插件的面板 |
 | **左侧栏面板** | **多选**：勾选的插件面板以独立条目出现在左侧栏「插件」下方 |
 
+## 个人已安装插件
+
+设置面板里的「个人已安装插件」列出本 profile 装过的第三方插件，每条旁边一个「复制」，得到重装命令：
+
+```powershell
+dsh plugin --profile desktop add 'link:C:/Projects/Oblivion/oblivion-core'
+dsh plugin --profile desktop add ^0.24.1
+```
+
+- 数据来源是 profile 目录**本身**（`package.json` 的 `dependencies` 与 `dsh.profile.bundles`、
+  `cordis.patch.yml`），由宿主路由 `GET /obl-brand/plugins` 读出来。**不生成清单文件、不导出脚本** ——
+  要让 DSH 装回来，把命令粘回终端即可（所有者 2026-10-06 裁定的形式）。
+- 「已启用」= 在 `dsh.profile.bundles` 里**或**在 `cordis.patch.yml` 里有补丁行；只装了依赖的包
+  显示「已装未启用」—— 宿主确实不会加载它（本机实测样本：`dsh-creator-mode-plus`、`dsh-whale-widget`）。
+- 本地链接显示为「本地链接」并带上 `link:` 规格；npm 包显示磁盘上**实际装到**的版本。
+- 路由只回本机调用方（`isTrustedCaller`），因为清单里含本机绝对路径；非 GET 一律 405。
+
 ## 直接重启应用
 
 设置面板底部有「应用重启 → 重启 DSH」（两步确认）。服务端（Node 半边）的改动需要重启才加载，而本机热重载在 Windows 上不可用，所以这个入口是刚需。
