@@ -19,6 +19,11 @@ const MAX_JSONL_BYTES = 2 * 1024 * 1024;
 const FALLBACK_RETENTION_DAYS = 90;
 const FALLBACK_MAX_ENTRIES = 5000;
 const MS_PER_DAY = 86_400_000;
+/**
+ * 判定曲线的点数上限（比列表宽得多，但仍有界）：曲线要的是趋势，
+ * 240 个点在一条 320px 宽的曲线里已经远超可辨认度；列表另有自己的窗口（`recentLimit`）。
+ */
+const SERIES_MAX = 240;
 /** 知识库里的两个笔记目录（与 `@oblivion/core` 的 md-writer 约定一致）。 */
 export const QA_NOTE_DIR = '01_问答沉淀';
 export const DIGEST_NOTE_DIR = '04_会话整理';
@@ -182,7 +187,11 @@ export interface PanelSnapshot {
    * 刻意不用 `core.stats`：那是 core 装载那一刻的快照，会停在重启时（见 `summarizeDecisions` 注释）。
    */
   live: DecisionStats;
-  trace: { path: string; recent: DecisionRow[] };
+  /**
+   * 留痕：`recent` 是「最近判定」列表用的窗口（跟着 `recentLimit`），
+   * `series` 是**判定曲线**用的宽窗口（`SERIES_MAX`）—— 曲线看趋势，列表看最近几条，两者同源一次读盘。
+   */
+  trace: { path: string; recent: DecisionRow[]; series: DecisionRow[] };
   /**
    * 知识条目（`<dataRoot>/ts-*.json`）—— 这是**扫描窗口**（比显示条数宽），
    * 因为客户端要按主题把同一主题的多个版本聚成一行（方案 A，见 `client/knowledge.ts`）。
@@ -374,7 +383,7 @@ export async function buildSnapshot(options: SnapshotOptions): Promise<PanelSnap
       dropped: decisions.dropped,
       windowDays: retentionDays,
     }),
-    trace: { path: tracePath, recent: decisions.rows.slice(-limit) },
+    trace: { path: tracePath, recent: decisions.rows.slice(-limit), series: decisions.rows.slice(-SERIES_MAX) },
     items,
     notes,
     digests,

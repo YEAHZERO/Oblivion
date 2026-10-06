@@ -98,6 +98,7 @@ describe('观测快照（Node 半边数据面）', () => {
     assert.equal(snapshot.core.version, '0.1.5');
     assert.equal(snapshot.mdRoot, mdRoot, 'mdRoot 应取自 core 的 status.json');
     assert.equal(snapshot.trace.recent.length, 2, '坏行应被跳过');
+    assert.equal(snapshot.trace.series.length, 2, '曲线序列与列表同源（0.0.10 起：窗口更宽，见 trace.series）');
 
     // 顶部统计是**现算**的（live），不再用 core 装载时的 status.json（那份 stats 写的是 3 轮）
     assert.equal(snapshot.live.turns, 2, 'live 统计应来自 decisions.jsonl');
@@ -235,6 +236,76 @@ describe('展示层纯函数', () => {
     assert.equal(live.captureRate, 1);
     assert.equal(live.score.max, 0.8);
     assert.equal(live.firstAt, at);
+  });
+});
+
+/**
+ * 判定曲线（所有者 2026-10-06：「最近判定也不需要这么多，可以给个图表曲线看看」）：
+ * 列表缩到最近几条 + 可展开，趋势交给曲线 —— 纵轴恒为 0..1、阈值虚线、滑动均值趋势线，`no-qa` 不落点。
+ */
+describe('判定曲线（分值趋势）', () => {
+  const rows = [
+    { at: 1_000, action: 'ignored', pass: false, reason: 'below value threshold', score: 0.2 },
+    { at: 2_000, action: 'no-qa', pass: false, reason: '本轮没有问答轮' },
+    { at: 3_000, action: 'created', pass: true, reason: 'captured', score: 0.8 },
+    { at: 4_000, action: 'created', pass: true, reason: 'captured', score: 0.6 },
+  ];
+
+  it('纵轴恒为 0..1：分值越高画得越靠上，阈值线与刻度都在几何里', () => {
+    const curve = kit.buildScoreCurve(rows, { threshold: 0.3 });
+    assert.equal(curve.points, 3, 'no-qa 没有分值，不落点');
+    assert.equal(curve.skipped, 1);
+    assert.equal(curve.threshold, 0.3);
+    assert.ok(curve.thresholdY !== null && curve.thresholdY > 0 && curve.thresholdY < curve.height);
+    assert.ok(curve.dots[0].y > curve.dots[1].y, '0.2 应画在 0.8 下面');
+    assert.deepEqual(
+      curve.ticks.map((tick) => tick.label),
+      ['1.0', '0.5', '0.0'],
+    );
+    assert.equal(curve.min, 0.2);
+    assert.equal(curve.max, 0.8);
+    assert.match(curve.line, /^M[\d.]+ [\d.]+ L[\d.]+ [\d.]+ L[\d.]+ [\d.]+$/);
+    assert.ok(curve.area.endsWith('Z'), '折线下要有填充（填到 0 分基线）');
+    assert.equal(curve.dots[0].pass, false);
+    assert.equal(curve.thin, false);
+  });
+
+  it('阈值不在 0..1 内 / 没给 → 不画那条线（宁可不画，也不画一条假的）', () => {
+    assert.equal(kit.buildScoreCurve(rows, { threshold: 1.5 }).thresholdY, null);
+    assert.equal(kit.buildScoreCurve(rows).thresholdY, null);
+    assert.equal(kit.thresholdOf({ valueThreshold: 0.3 }), 0.3);
+    assert.equal(kit.thresholdOf({ valueThreshold: '0.3' }), null);
+    assert.equal(kit.thresholdOf(null), null);
+  });
+
+  it('趋势线要至少 3 个点（两个点的「趋势」是假的），每个点一段', () => {
+    const two = kit.buildScoreCurve([rows[0], rows[2]]);
+    assert.equal(two.trend, '', '两个点不出趋势线');
+    const three = kit.buildScoreCurve(rows, { trendWindow: 2 });
+    assert.match(three.trend, /^M/);
+    assert.equal(three.trend.split(' L').length, 3, '3 个点 → 3 段');
+  });
+
+  it('空输入 / 坏行都不抛错：非数字不算点，越界分值夹到 0..1', () => {
+    assert.equal(kit.buildScoreCurve([]).points, 0);
+    assert.equal(kit.buildScoreCurve(undefined).line, '');
+    assert.equal(kit.buildScoreCurve([]).thin, true);
+    const messy = kit.buildScoreCurve([null, { score: Number.NaN }, { score: '0.5' }, { score: -3 }, { score: 9 }]);
+    assert.equal(messy.points, 2);
+    assert.deepEqual(
+      messy.dots.map((dot) => dot.score),
+      [0, 1],
+    );
+  });
+
+  it('curveCaption 的数字全部来自几何（不另算一遍）', () => {
+    const curve = kit.buildScoreCurve(rows, { threshold: 0.3 });
+    const caption = kit.curveCaption(rows, curve);
+    assert.match(caption, /最近 4 条判定/);
+    assert.match(caption, /有效分值 3 个/);
+    assert.match(caption, /阈值 0\.30/);
+    assert.match(caption, /区间 0\.20–0\.80/);
+    assert.match(kit.curveCaption([], kit.buildScoreCurve([])), /还没有带分值的判断/);
   });
 });
 

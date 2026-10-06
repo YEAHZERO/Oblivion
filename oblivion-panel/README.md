@@ -1,6 +1,6 @@
 # @oblivion/panel
 
-**Oblivion 认知面板** —— 把 [`@oblivion/core`](../oblivion-core/README.md) 的观测数据（捕获率、拦截原因、调参建议、知识库）
+**Oblivion 认知面板** —— 把 [`@oblivion/core`](../oblivion-core/README.md) 的观测数据（捕获率、拦截原因、判定曲线、调参建议、知识库）
 做成一个 **tab 嵌进 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar) 的那一列**。
 
 > 设计判断：**不自己造文件树**。文件夹树 / 编辑器 / 侧边对话由 `dsh-better-sidebar` 提供，
@@ -13,24 +13,33 @@
 在 side bar 的 `+` 菜单里多一个 **Oblivion** 页（`order: 70`，单例）：
 
 ```
-core v0.1.6 · 面板 v0.0.1 · 刷新于 刚刚            [刷新]
+core v0.1.6 · 面板 v0.0.10 · 刷新于 刚刚            [刷新]
 ─────
 捕获率   判定轮数   已评估   已沉淀
  3.3%      12        9        1
 主要拦截原因：answer-too-short（5 次）
 
 调参建议（暂无：样本不足时 core 刻意不开口）
-最近判定
+判定曲线
+  │ 1.0 ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ │ ← 红色虚线 = core 的 valueThreshold（0.30）
+  │ 0.5        ╱╲      ╱╲                │
+  │ 0.0 ──────╱──╲────╱──╲────────────── │ ← 点 = 一次判定，红点 = 被拦下
+  最近 24 条判定 · 有效分值 22 个 · 无分值 2 条 · 阈值 0.30 · 区间 0.21–0.80
+最近判定（窗口 10 条，显示最近 6 条）
   5 分钟前  被拦下 · 分值 0.21
   below value threshold
-最近沉淀（1）
-  一条知识 / 主题 测试主题 / ts-1
+  [展开全部 10 条]
 知识库（3）
   问答笔记 2 · 会话整理 1 · 条目 3（同主题的多版并作一行，共 3 行）
   测试主题            2 分钟前 · 当前版本 · 已落地 · 共 2 版
   2026-10-06-整理     4 分钟前 · 当前版本 · 会话整理
   孤条目              6 分钟前 · 仅入库
 ```
+
+- **判定曲线**（2026-10-06 所有者：「最近判定也不需要这么多，可以给个图表曲线看看」）：
+  「最近判定」只列最近 6 条（其余按需展开），趋势交给曲线 —— 纵轴**恒为 0..1**（不按数据自适应，
+  这样两次刷新、两条曲线之间能直接比），红色虚线是 core 的 `valueThreshold`，浅色折线是滑动均值；
+  没有分值的行（`no-qa`）**不落点**，只计入「无分值 N 条」。
 
 - **知识库只有一栏**（2026-10-06 裁定的方案 A）：以笔记为骨架（能点开、名字是人写的），
   把同主题条目的**状态与版本**挂在它后面；没有笔记的条目补成一行并标「仅入库」/「会话整理」。
@@ -106,21 +115,21 @@ Invoke-WebRequest 'http://127.0.0.1:19387/oblivion-panel/status' -UseBasicParsin
 | --- | --- | --- |
 | `dataRoot` | `~/.oblivion/data` | 读 core 落盘数据的位置 |
 | `fallbackMdRoot` | `C:/Library/那些渐渐被遗忘` | core 的 `status.json` 缺失时的知识库兜底位置 |
-| `recentLimit` | `10` | 每类最多显示多少条（1..50） |
+| `recentLimit` | `10` | 「最近判定」列表的**窗口**条数（1..50）；默认只显示最近 6 条，其余按需展开（判定曲线另有上限 240 点，不可配） |
 | `routePath` | `/oblivion-panel/status` | 只读路由路径 |
 
 ## 五、验收状态
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` + `lib/testkit.js` + `lib/client.js`（16.6 KB） |
+| `pnpm run build` | ✅ `lib/index.js` + `lib/testkit.js` + `lib/client.js`（42.9 KB） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **13/13**（快照装配 / 坏行容忍 / 空态回退 / 注册三态 / 展示层纯函数） |
-| `pnpm run selfcheck` | ✅ **8/8**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放） |
+| `pnpm run test` | ✅ **25/25**（快照装配 / 坏行容忍 / 空态回退 / 注册三态 / 展示层纯函数 / 知识库合栏 / 判定曲线） |
+| `pnpm run selfcheck` | ✅ **14/14**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放、合栏、曲线） |
 | `dshx check` | ✅ manifest / export / boot-marker / client-platform（**无 default export**） |
-| `pnpm run verify:dsh`（根） | ✅ 契约 **5/5**（host / `webServer` / `npmPkg dsh-better-sidebar` / `__ModuleLoader__` / mount dependencies） |
+| `pnpm run verify:dsh`（根） | ✅ 契约 **6/6**（host / `webServer` / `npmPkg dsh-better-sidebar` / `__ModuleLoader__` / `sidebar.footer.action` / mount dependencies） |
 | Node 半边真实装载 | ✅ **已验证**：路由 `HTTP 200` + `%TEMP%\oblivion-panel\host-mount.json` |
-| 浏览器半边渲染 | ⏳ **待目视确认**（硬刷新后看 `+` 菜单里有没有 Oblivion 页） |
+| 浏览器半边渲染 | ✅ **已验证**（左栏入口 → 右侧 Oblivion 页；合栏与判定曲线由所有者目视复核） |
 
 ## 六、已知边界
 

@@ -11,6 +11,7 @@ var MAX_JSONL_BYTES = 2 * 1024 * 1024;
 var FALLBACK_RETENTION_DAYS = 90;
 var FALLBACK_MAX_ENTRIES = 5e3;
 var MS_PER_DAY = 864e5;
+var SERIES_MAX = 240;
 var QA_NOTE_DIR = "01_\u95EE\u7B54\u6C89\u6DC0";
 var DIGEST_NOTE_DIR = "04_\u4F1A\u8BDD\u6574\u7406";
 function ratio(part, whole) {
@@ -197,7 +198,7 @@ async function buildSnapshot(options) {
       dropped: decisions.dropped,
       windowDays: retentionDays
     }),
-    trace: { path: tracePath, recent: decisions.rows.slice(-limit) },
+    trace: { path: tracePath, recent: decisions.rows.slice(-limit), series: decisions.rows.slice(-SERIES_MAX) },
     items,
     notes,
     digests,

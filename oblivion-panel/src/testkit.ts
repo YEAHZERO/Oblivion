@@ -40,6 +40,15 @@ export {
   type NoteLike,
 } from './client/knowledge.js';
 export {
+  buildScoreCurve,
+  curveCaption,
+  thresholdOf,
+  type CurveDot,
+  type CurveGeometry,
+  type CurveOptions,
+  type CurveRow,
+} from './client/chart.js';
+export {
   PANEL_TAB_ID,
   panelDescriptor,
   registerPanelTab,

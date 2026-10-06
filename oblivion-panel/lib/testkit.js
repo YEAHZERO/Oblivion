@@ -6,6 +6,7 @@ var MAX_JSONL_BYTES = 2 * 1024 * 1024;
 var FALLBACK_RETENTION_DAYS = 90;
 var FALLBACK_MAX_ENTRIES = 5e3;
 var MS_PER_DAY = 864e5;
+var SERIES_MAX = 240;
 var QA_NOTE_DIR = "01_\u95EE\u7B54\u6C89\u6DC0";
 var DIGEST_NOTE_DIR = "04_\u4F1A\u8BDD\u6574\u7406";
 function ratio(part, whole) {
@@ -192,7 +193,7 @@ async function buildSnapshot(options) {
       dropped: decisions.dropped,
       windowDays: retentionDays
     }),
-    trace: { path: tracePath, recent: decisions.rows.slice(-limit) },
+    trace: { path: tracePath, recent: decisions.rows.slice(-limit), series: decisions.rows.slice(-SERIES_MAX) },
     items,
     notes,
     digests,
@@ -463,6 +464,105 @@ function isDigest(item) {
   return (item?.sourceTypes ?? []).some((type) => lower(type) === "digest");
 }
 
+// src/client/chart.ts
+var DEFAULT_WIDTH = 320;
+var DEFAULT_HEIGHT = 76;
+var DEFAULT_PAD_X = 6;
+var DEFAULT_PAD_Y = 8;
+var DEFAULT_TREND_WINDOW = 5;
+function clamp01(value) {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+function round(value) {
+  return Math.round(value * 100) / 100;
+}
+function ratioIn01(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+}
+function thresholdOf(config) {
+  const record = config;
+  return ratioIn01(record?.valueThreshold);
+}
+function buildScoreCurve(rows, options = {}) {
+  const width = options.width ?? DEFAULT_WIDTH;
+  const height = options.height ?? DEFAULT_HEIGHT;
+  const padX = DEFAULT_PAD_X;
+  const padY = DEFAULT_PAD_Y;
+  const innerW = Math.max(1, width - padX * 2);
+  const innerH = Math.max(1, height - padY * 2);
+  const trendWindow = Math.max(2, Math.floor(options.trendWindow ?? DEFAULT_TREND_WINDOW));
+  const threshold = ratioIn01(options.threshold);
+  const input = Array.isArray(rows) ? rows : [];
+  const scored = [];
+  let skipped = 0;
+  for (const row of input) {
+    if (row === null || typeof row !== "object" || typeof row.score !== "number" || !Number.isFinite(row.score)) {
+      skipped += 1;
+      continue;
+    }
+    scored.push({
+      at: typeof row.at === "number" ? row.at : 0,
+      score: clamp01(row.score),
+      pass: row.pass === true,
+      action: typeof row.action === "string" ? row.action : ""
+    });
+  }
+  const xAt = (index) => scored.length <= 1 ? padX + innerW / 2 : padX + index / (scored.length - 1) * innerW;
+  const yAt = (score) => padY + (1 - score) * innerH;
+  const dots = scored.map((point, index) => ({
+    ...point,
+    x: round(xAt(index)),
+    y: round(yAt(point.score))
+  }));
+  const line = dots.map((dot, index) => (index === 0 ? "M" : "L") + dot.x + " " + dot.y).join(" ");
+  const baseline = round(padY + innerH);
+  const area = dots.length >= 2 ? line + " L" + dots[dots.length - 1].x + " " + baseline + " L" + dots[0].x + " " + baseline + " Z" : "";
+  let trend = "";
+  if (dots.length >= 3) {
+    trend = dots.map((dot, index) => {
+      const from = Math.max(0, index - trendWindow + 1);
+      let sum = 0;
+      for (let cursor = from; cursor <= index; cursor += 1) sum += scored[cursor].score;
+      const mean = sum / (index - from + 1);
+      return (index === 0 ? "M" : "L") + dot.x + " " + round(yAt(mean));
+    }).join(" ");
+  }
+  const scores = scored.map((point) => point.score);
+  const ticks = [1, 0.5, 0].map((value) => ({ y: round(yAt(value)), label: value.toFixed(1) }));
+  return {
+    width,
+    height,
+    padX,
+    padY,
+    points: dots.length,
+    skipped,
+    min: scores.length > 0 ? Math.min(...scores) : null,
+    max: scores.length > 0 ? Math.max(...scores) : null,
+    line,
+    area,
+    trend,
+    dots,
+    threshold,
+    thresholdY: threshold === null ? null : round(yAt(threshold)),
+    ticks,
+    thin: dots.length < 2
+  };
+}
+function curveCaption(rows, curve) {
+  const total = Array.isArray(rows) ? rows.length : 0;
+  const parts = ["\u6700\u8FD1 " + total + " \u6761\u5224\u5B9A", "\u6709\u6548\u5206\u503C " + curve.points + " \u4E2A"];
+  if (curve.skipped > 0) parts.push("\u65E0\u5206\u503C " + curve.skipped + " \u6761");
+  if (curve.threshold !== null) parts.push("\u9608\u503C " + curve.threshold.toFixed(2));
+  if (curve.min !== null && curve.max !== null) {
+    parts.push("\u533A\u95F4 " + curve.min.toFixed(2) + "\u2013" + curve.max.toFixed(2));
+  }
+  if (curve.points === 0) parts.push("\u8FD8\u6CA1\u6709\u5E26\u5206\u503C\u7684\u5224\u65AD");
+  else if (curve.thin) parts.push("\u70B9\u592A\u5C11\uFF08" + curve.points + " \u4E2A\uFF09\uFF0C\u8FD8\u770B\u4E0D\u51FA\u8D8B\u52BF");
+  return parts.join(" \xB7 ");
+}
+
 // src/client/register.ts
 var PANEL_TAB_ID = "oblivion:panel";
 function panelDescriptor(component, icon) {
@@ -513,7 +613,9 @@ function registerPanelTab(ctx, component, warn, icon) {
 export {
   PANEL_TAB_ID,
   actionLabel,
+  buildScoreCurve,
   buildSnapshot,
+  curveCaption,
   formatValue,
   hintLine,
   implLabel,
@@ -529,5 +631,6 @@ export {
   sourceLabel,
   statNumber,
   summarizeDecisions,
+  thresholdOf,
   topBlocker
 };

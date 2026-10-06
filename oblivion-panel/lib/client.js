@@ -193,6 +193,169 @@ function topBlocker(byReason) {
   return { reason: entries[0][0], count: Number(entries[0][1]) };
 }
 
+// src/client/polaris.ts
+var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
+var POLARIS_ICON_COLOR = "#4176e6";
+var POLARIS_ICON_PATH = "M512 132L579 350.3L780.7 243.3L673.7 445L892 512L673.7 579L780.7 780.7L579 673.7L512 892L445 673.7L243.3 780.7L350.3 579L132 512L350.3 445L243.3 243.3L445 350.3Z";
+
+// src/client/ScoreChart.tsx
+var import_jsx_runtime2 = require("react/jsx-runtime");
+var REJECT_COLOR = "#d9534f";
+function ScoreChart(props) {
+  const { curve } = props;
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+    "svg",
+    {
+      viewBox: "0 0 " + curve.width + " " + curve.height,
+      style: { width: "100%", height: "auto", display: "block" },
+      role: "img",
+      "aria-label": "\u5224\u5B9A\u4EF7\u5206\u66F2\u7EBF\uFF1A" + curve.points + " \u4E2A\u70B9\uFF0C\u533A\u95F4 " + (curve.min ?? 0).toFixed(2) + "\u2013" + (curve.max ?? 0).toFixed(2) + (curve.threshold === null ? "" : "\uFF0C\u9608\u503C " + curve.threshold.toFixed(2)),
+      children: [
+        curve.ticks.map((tick) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("g", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "line",
+            {
+              x1: curve.padX,
+              x2: curve.width - curve.padX,
+              y1: tick.y,
+              y2: tick.y,
+              stroke: "rgba(127,127,127,0.18)",
+              strokeWidth: 1
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("text", { x: curve.width - 1, y: tick.y - 2, fontSize: 8, textAnchor: "end", fill: "currentColor", opacity: 0.45, children: tick.label })
+        ] }, tick.label)),
+        curve.thresholdY === null ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          "line",
+          {
+            x1: curve.padX,
+            x2: curve.width - curve.padX,
+            y1: curve.thresholdY,
+            y2: curve.thresholdY,
+            stroke: REJECT_COLOR,
+            strokeWidth: 1,
+            strokeDasharray: "3 3",
+            opacity: 0.75
+          }
+        ),
+        curve.area === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: curve.area, fill: POLARIS_ICON_COLOR, opacity: 0.12, stroke: "none" }),
+        curve.trend === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: curve.trend, fill: "none", stroke: POLARIS_ICON_COLOR, strokeWidth: 1.4, opacity: 0.5 }),
+        curve.line === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: curve.line, fill: "none", stroke: POLARIS_ICON_COLOR, strokeWidth: 1.6, strokeLinejoin: "round" }),
+        curve.dots.map((dot, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          "circle",
+          {
+            cx: dot.x,
+            cy: dot.y,
+            r: dot.pass ? 2.2 : 2.6,
+            fill: dot.pass ? POLARIS_ICON_COLOR : REJECT_COLOR,
+            children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("title", { children: relativeTime(dot.at) + " \xB7 " + actionLabel(dot.action) + " \xB7 \u5206\u503C " + scoreText(dot.score) })
+          },
+          index
+        ))
+      ]
+    }
+  );
+}
+
+// src/client/chart.ts
+var DEFAULT_WIDTH = 320;
+var DEFAULT_HEIGHT = 76;
+var DEFAULT_PAD_X = 6;
+var DEFAULT_PAD_Y = 8;
+var DEFAULT_TREND_WINDOW = 5;
+function clamp01(value) {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+function round(value) {
+  return Math.round(value * 100) / 100;
+}
+function ratioIn01(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+}
+function thresholdOf(config) {
+  const record = config;
+  return ratioIn01(record?.valueThreshold);
+}
+function buildScoreCurve(rows, options = {}) {
+  const width = options.width ?? DEFAULT_WIDTH;
+  const height = options.height ?? DEFAULT_HEIGHT;
+  const padX = DEFAULT_PAD_X;
+  const padY = DEFAULT_PAD_Y;
+  const innerW = Math.max(1, width - padX * 2);
+  const innerH = Math.max(1, height - padY * 2);
+  const trendWindow = Math.max(2, Math.floor(options.trendWindow ?? DEFAULT_TREND_WINDOW));
+  const threshold = ratioIn01(options.threshold);
+  const input = Array.isArray(rows) ? rows : [];
+  const scored = [];
+  let skipped = 0;
+  for (const row of input) {
+    if (row === null || typeof row !== "object" || typeof row.score !== "number" || !Number.isFinite(row.score)) {
+      skipped += 1;
+      continue;
+    }
+    scored.push({
+      at: typeof row.at === "number" ? row.at : 0,
+      score: clamp01(row.score),
+      pass: row.pass === true,
+      action: typeof row.action === "string" ? row.action : ""
+    });
+  }
+  const xAt = (index) => scored.length <= 1 ? padX + innerW / 2 : padX + index / (scored.length - 1) * innerW;
+  const yAt = (score) => padY + (1 - score) * innerH;
+  const dots = scored.map((point, index) => ({
+    ...point,
+    x: round(xAt(index)),
+    y: round(yAt(point.score))
+  }));
+  const line = dots.map((dot, index) => (index === 0 ? "M" : "L") + dot.x + " " + dot.y).join(" ");
+  const baseline = round(padY + innerH);
+  const area = dots.length >= 2 ? line + " L" + dots[dots.length - 1].x + " " + baseline + " L" + dots[0].x + " " + baseline + " Z" : "";
+  let trend = "";
+  if (dots.length >= 3) {
+    trend = dots.map((dot, index) => {
+      const from = Math.max(0, index - trendWindow + 1);
+      let sum = 0;
+      for (let cursor = from; cursor <= index; cursor += 1) sum += scored[cursor].score;
+      const mean = sum / (index - from + 1);
+      return (index === 0 ? "M" : "L") + dot.x + " " + round(yAt(mean));
+    }).join(" ");
+  }
+  const scores = scored.map((point) => point.score);
+  const ticks = [1, 0.5, 0].map((value) => ({ y: round(yAt(value)), label: value.toFixed(1) }));
+  return {
+    width,
+    height,
+    padX,
+    padY,
+    points: dots.length,
+    skipped,
+    min: scores.length > 0 ? Math.min(...scores) : null,
+    max: scores.length > 0 ? Math.max(...scores) : null,
+    line,
+    area,
+    trend,
+    dots,
+    threshold,
+    thresholdY: threshold === null ? null : round(yAt(threshold)),
+    ticks,
+    thin: dots.length < 2
+  };
+}
+function curveCaption(rows, curve) {
+  const total = Array.isArray(rows) ? rows.length : 0;
+  const parts = ["\u6700\u8FD1 " + total + " \u6761\u5224\u5B9A", "\u6709\u6548\u5206\u503C " + curve.points + " \u4E2A"];
+  if (curve.skipped > 0) parts.push("\u65E0\u5206\u503C " + curve.skipped + " \u6761");
+  if (curve.threshold !== null) parts.push("\u9608\u503C " + curve.threshold.toFixed(2));
+  if (curve.min !== null && curve.max !== null) {
+    parts.push("\u533A\u95F4 " + curve.min.toFixed(2) + "\u2013" + curve.max.toFixed(2));
+  }
+  if (curve.points === 0) parts.push("\u8FD8\u6CA1\u6709\u5E26\u5206\u503C\u7684\u5224\u65AD");
+  else if (curve.thin) parts.push("\u70B9\u592A\u5C11\uFF08" + curve.points + " \u4E2A\uFF09\uFF0C\u8FD8\u770B\u4E0D\u51FA\u8D8B\u52BF");
+  return parts.join(" \xB7 ");
+}
+
 // src/client/knowledge.ts
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -327,8 +490,9 @@ function isDigest(item) {
 }
 
 // src/client/Panel.tsx
-var import_jsx_runtime2 = require("react/jsx-runtime");
+var import_jsx_runtime3 = require("react/jsx-runtime");
 var STATUS_ROUTE = "/oblivion-panel/status";
+var RECENT_LIST_LIMIT = 6;
 var S = {
   root: {
     padding: "10px 12px 24px",
@@ -366,9 +530,9 @@ var S = {
   li: { padding: "3px 0", borderTop: "1px solid rgba(127,127,127,0.16)" }
 };
 function kpi(label, value) {
-  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.kpiCell, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.kpiLabel, children: label }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.kpiValue, children: value })
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.kpiCell, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.kpiLabel, children: label }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.kpiValue, children: value })
   ] });
 }
 function rowMeta(row) {
@@ -396,6 +560,7 @@ function emptyReason(data) {
 }
 function OblivionPanel(props) {
   const [state, setState] = (0, import_react2.useState)({ status: "loading" });
+  const [expanded, setExpanded] = (0, import_react2.useState)(false);
   const load = (0, import_react2.useCallback)(async () => {
     setState((prev) => prev.status === "ready" ? prev : { status: "loading" });
     try {
@@ -412,14 +577,14 @@ function OblivionPanel(props) {
     void load();
   }, [load, props.visible]);
   const body = (0, import_react2.useMemo)(() => {
-    if (state.status === "loading") return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.dim, children: "\u8BFB\u53D6\u4E2D\u2026" });
+    if (state.status === "loading") return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.dim, children: "\u8BFB\u53D6\u4E2D\u2026" });
     if (state.status === "error") {
-      return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.card, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+      return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.card, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { children: [
           "\u8BFB\u4E0D\u5230\u89C2\u6D4B\u6570\u636E\uFF1A",
           state.error
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.dim, children: [
           "\u82E5\u521A\u88C5\u8F7D\u672C\u63D2\u4EF6\uFF0C\u9700\u8981**\u91CD\u542F\u4E00\u6B21 App**\uFF08Node \u534A\u8FB9\u6539\u52A8\u4E0D\u4F1A\u70ED\u52A0\u8F7D\uFF09\u3002\u8DEF\u7531\uFF1A",
           STATUS_ROUTE
         ] })
@@ -435,13 +600,17 @@ function OblivionPanel(props) {
     const captureRate = live ? live.captureRate : (core?.stats ?? {}).captureRate;
     const blocker = topBlocker(live ? live.byReason : (core?.stats ?? {}).byReason);
     const recent = data.trace?.recent ?? [];
+    const series = data.trace?.series ?? recent;
+    const curve = buildScoreCurve(series, { threshold: thresholdOf(core?.config) });
+    const newest = recent.slice().reverse();
+    const shown = expanded ? newest : newest.slice(0, RECENT_LIST_LIMIT);
     const items = data.items ?? [];
     const notes = data.notes ?? [];
     const digests = data.digests ?? [];
     const knowledge = mergeKnowledge({ notes, digests, items });
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.row, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.row, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.dim, children: [
           "core ",
           core ? "v" + String(core.version ?? "?") : "\u672A\u88C5\u8F7D",
           " \xB7 \u9762\u677F v",
@@ -449,48 +618,70 @@ function OblivionPanel(props) {
           " \xB7 \u5237\u65B0\u4E8E ",
           relativeTime(data.generatedAt)
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", style: S.btn, onClick: () => void load(), children: "\u5237\u65B0" })
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", style: S.btn, onClick: () => void load(), children: "\u5237\u65B0" })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.row, marginTop: 6 }, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RestartControl, {}) }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.kpi, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.row, marginTop: 6 }, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(RestartControl, {}) }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.kpi, children: [
         kpi("\u6355\u83B7\u7387", percent(captureRate)),
         kpi("\u5224\u5B9A\u8F6E\u6570", String(turns ?? "\u2014")),
         kpi("\u5DF2\u8BC4\u4F30", String(evaluated ?? "\u2014")),
         kpi("\u5DF2\u6C89\u6DC0", String(captured ?? "\u2014"))
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, marginTop: 2 }, children: live ? "\u7EDF\u8BA1\u5B9E\u65F6\u8BFB\u81EA " + live.parsed + " \u884C\u7559\u75D5\uFF08\u4FDD\u7559\u671F " + live.windowDays + " \u5929" + (live.dropped > 0 ? "\uFF0C\u6309\u4FDD\u7559\u671F/\u4E0A\u9650\u4E22\u5F03 " + live.dropped + " \u884C" : "") + "\uFF09" : "\u7EDF\u8BA1\u6765\u81EA core \u88C5\u8F7D\u65F6\u7684 status.json \u5FEB\u7167\uFF08\u9700\u8981\u9762\u677F host \u2265 0.0.8 \u624D\u662F\u5B9E\u65F6\u7684\uFF09" }),
-      !core || !turns ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.card, marginTop: 10 }, children: emptyReason(data) }) : null,
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, marginTop: 4 }, children: blocker ? "\u4E3B\u8981\u62E6\u622A\u539F\u56E0\uFF1A" + reasonLabel(blocker.reason) + "\uFF08" + blocker.count + " \u6B21\uFF09" : (turns ?? 0) > 0 ? "\u5168\u90E8\u901A\u8FC7\uFF0C\u65E0\u62E6\u622A" : "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55" }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, marginTop: 2 }, children: live ? "\u7EDF\u8BA1\u5B9E\u65F6\u8BFB\u81EA " + live.parsed + " \u884C\u7559\u75D5\uFF08\u4FDD\u7559\u671F " + live.windowDays + " \u5929" + (live.dropped > 0 ? "\uFF0C\u6309\u4FDD\u7559\u671F/\u4E0A\u9650\u4E22\u5F03 " + live.dropped + " \u884C" : "") + "\uFF09" : "\u7EDF\u8BA1\u6765\u81EA core \u88C5\u8F7D\u65F6\u7684 status.json \u5FEB\u7167\uFF08\u9700\u8981\u9762\u677F host \u2265 0.0.8 \u624D\u662F\u5B9E\u65F6\u7684\uFF09" }),
+      !core || !turns ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.card, marginTop: 10 }, children: emptyReason(data) }) : null,
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, marginTop: 4 }, children: blocker ? "\u4E3B\u8981\u62E6\u622A\u539F\u56E0\uFF1A" + reasonLabel(blocker.reason) + "\uFF08" + blocker.count + " \u6B21\uFF09" : (turns ?? 0) > 0 ? "\u5168\u90E8\u901A\u8FC7\uFF0C\u65E0\u62E6\u622A" : "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55" }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.h, children: [
         "\u8C03\u53C2\u5EFA\u8BAE",
         " ",
-        hints.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: S.dim, children: [
+        hints.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: S.dim, children: [
           "\uFF08\u6682\u65E0\uFF1Acore \u5728\u88C5\u8F7D\u65F6\u6309\u5DF2\u8BC4\u4F30 ",
           evaluated ?? 0,
           " \u8F6E\u7B97\uFF0C\u6837\u672C\u4E0D\u8DB3 20 \u8F6E\u523B\u610F\u4E0D\u5F00\u53E3\uFF09"
-        ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: S.dim, children: "\uFF08core \u5728\u88C5\u8F7D\u65F6\u7B97\uFF0C\u4E0D\u662F\u5B9E\u65F6\u7684\uFF09" })
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: S.dim, children: "\uFF08core \u5728\u88C5\u8F7D\u65F6\u7B97\uFF0C\u4E0D\u662F\u5B9E\u65F6\u7684\uFF09" })
       ] }),
-      hints.map((hint, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.card, children: hintLine(hint) }, String(hint.key ?? index))),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.h, children: "\u6700\u8FD1\u5224\u5B9A" }),
-      recent.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
+      hints.map((hint, index) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.card, children: hintLine(hint) }, String(hint.key ?? index))),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.h, children: "\u5224\u5B9A\u66F2\u7EBF" }),
+      curve.points === 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.dim, children: [
+        "\u8FD8\u6CA1\u6709\u5E26\u5206\u503C\u7684\u5224\u5B9A \u2014\u2014 \u66F2\u7EBF\u4ECE\u7B2C\u4E00\u6761\u8D70\u5B8C\u7B5B\u9009\u7684\u7559\u75D5\u5F00\u59CB\uFF08",
+        data.trace?.path ?? "decisions.jsonl",
+        "\uFF09\u3002"
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { ...S.card, padding: "6px 8px" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(ScoreChart, { curve }),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono, marginTop: 2 }, children: curveCaption(series, curve) })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.h, children: [
+        "\u6700\u8FD1\u5224\u5B9A",
+        " ",
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: S.dim, children: [
+          "\uFF08\u7A97\u53E3 ",
+          newest.length,
+          " \u6761",
+          newest.length > shown.length ? "\uFF0C\u663E\u793A\u6700\u8FD1 " + shown.length + " \u6761" : "",
+          "\uFF09"
+        ] })
+      ] }),
+      recent.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.dim, children: [
         "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55\uFF08",
         data.trace?.path ?? "decisions.jsonl",
         "\uFF09"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: recent.slice().reverse().map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: S.dim, children: relativeTime(row.at) }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: actionLabel(row.action) }),
-        row.score !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: S.dim, children: [
-          " \xB7 \u5206\u503C ",
-          scoreText(row.score)
-        ] }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, ...S.mono }, children: reasonLabel(row.reason) })
-      ] }, index)) }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: S.list, children: shown.map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("li", { style: S.li, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: S.dim, children: relativeTime(row.at) }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: actionLabel(row.action) }),
+          row.score !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: S.dim, children: [
+            " \xB7 \u5206\u503C ",
+            scoreText(row.score)
+          ] }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono }, children: reasonLabel(row.reason) })
+        ] }, index)) }),
+        newest.length > RECENT_LIST_LIMIT ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", style: { ...S.btn, marginTop: 4 }, onClick: () => setExpanded((prev) => !prev), children: expanded ? "\u53EA\u770B\u6700\u8FD1 " + RECENT_LIST_LIMIT + " \u6761" : "\u5C55\u5F00\u5168\u90E8 " + newest.length + " \u6761" }) : null
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.h, children: [
         "\u77E5\u8BC6\u5E93\uFF08",
         knowledge.length,
         "\uFF09"
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { ...S.dim, marginBottom: 4 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { ...S.dim, marginBottom: 4 }, children: [
         "\u95EE\u7B54\u7B14\u8BB0 ",
         notes.length,
         " \xB7 \u4F1A\u8BDD\u6574\u7406 ",
@@ -499,12 +690,12 @@ function OblivionPanel(props) {
         items.length,
         knowledge.length !== notes.length + digests.length + items.length ? "\uFF08\u540C\u4E3B\u9898\u7684\u591A\u7248\u5E76\u4F5C\u4E00\u884C\uFF0C\u5171 " + knowledge.length + " \u884C\uFF09" : ""
       ] }),
-      knowledge.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
+      knowledge.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.dim, children: [
         "\u8FD8\u6CA1\u6709\u6761\u76EE\uFF0C\u4E5F\u6CA1\u6709\u7B14\u8BB0\uFF08",
         data.mdRoot ?? "\u2014",
         "\uFF09"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: knowledge.map((row) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: row.notePath !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: S.list, children: knowledge.map((row) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("li", { style: S.li, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { children: row.notePath !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
           "a",
           {
             href: "#",
@@ -517,30 +708,25 @@ function OblivionPanel(props) {
             children: row.title
           }
         ) : row.title }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, ...S.mono }, children: rowMeta(row) })
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono }, children: rowMeta(row) })
       ] }, row.key)) }),
-      (data.problems ?? []).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
+      (data.problems ?? []).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.h, children: [
           "\u8BFB\u53D6\u544A\u8B66\uFF08",
           data.problems?.length,
           "\uFF09"
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: (data.problems ?? []).map((problem, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { style: { ...S.li, ...S.mono, ...S.dim }, children: problem }, index)) })
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: S.list, children: (data.problems ?? []).map((problem, index) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("li", { style: { ...S.li, ...S.mono, ...S.dim }, children: problem }, index)) })
       ] }) : null
     ] });
-  }, [state, load, props.onOpenFile]);
-  return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.root, children: body });
+  }, [state, load, props.onOpenFile, expanded]);
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.root, children: body });
 }
 
-// src/client/polaris.ts
-var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
-var POLARIS_ICON_COLOR = "#4176e6";
-var POLARIS_ICON_PATH = "M512 132L579 350.3L780.7 243.3L673.7 445L892 512L673.7 579L780.7 780.7L579 673.7L512 892L445 673.7L243.3 780.7L350.3 579L132 512L350.3 445L243.3 243.3L445 350.3Z";
-
 // src/client/leftbar.tsx
-var import_jsx_runtime3 = require("react/jsx-runtime");
+var import_jsx_runtime4 = require("react/jsx-runtime");
 function PolarisGlyph({ size = 16 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
     "svg",
     {
       width: size,
@@ -549,7 +735,7 @@ function PolarisGlyph({ size = 16 }) {
       fill: POLARIS_ICON_COLOR,
       "aria-hidden": true,
       style: { display: "block", flex: "0 0 auto" },
-      children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: POLARIS_ICON_PATH })
+      children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("path", { d: POLARIS_ICON_PATH })
     }
   );
 }
@@ -566,7 +752,7 @@ function openOblivionTab(service, tabType) {
 function createLeftbarAction(onActivate) {
   return function OblivionLeftbarAction(props) {
     const wide = props?.wide !== false;
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
       "button",
       {
         type: "button",
@@ -586,8 +772,8 @@ function createLeftbarAction(onActivate) {
           fontSize: 12
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(PolarisGlyph, { size: 16 }),
-          wide ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: "Oblivion" }) : null
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PolarisGlyph, { size: 16 }),
+          wide ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Oblivion" }) : null
         ]
       }
     );

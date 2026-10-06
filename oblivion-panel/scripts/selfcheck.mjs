@@ -119,6 +119,7 @@ await check('路由真跑：GET 返回快照 JSON（含 stats / recent / items /
   assert.equal(json.items.length, 1);
   assert.equal(json.notes.length, 1);
   assert.ok(Array.isArray(json.digests), '快照要带 digests（04_会话整理 的整理件，合栏后要能点开）');
+  assert.ok(Array.isArray(json.trace.series), '快照要带 trace.series（判定曲线的宽窗口，0.0.10 起）');
   return 'core v' + json.core.version + ' / 判定 ' + json.trace.recent.length + ' / 条目 ' + json.items.length + ' / 笔记 ' + json.notes.length + ' / 整理件 ' + json.digests.length;
 });
 
@@ -331,6 +332,30 @@ await check('知识库合栏：笔记为骨架 + 条目状态/版本，无笔记
   assert.equal(rows[2].notePath, undefined, '没有笔记就不给路径');
   assert.equal(kit.sourceLabel(rows[2].source), '仅入库');
   return '单栏 ' + rows.length + ' 行（笔记骨架 / 版本聚合 / 仅入库补行）';
+});
+
+await check('判定曲线：纵轴 0..1 + 阈值线 + 趋势线，no-qa 不落点', async () => {
+  const kit = await import(pathToFileURL(kitPath).href);
+  const now = Date.now();
+  const rows = [
+    { at: now - 3000, action: 'ignored', pass: false, reason: 'below value threshold', score: 0.2 },
+    { at: now - 2000, action: 'no-qa', pass: false, reason: '本轮没有问答轮' },
+    { at: now - 1000, action: 'created', pass: true, reason: 'captured', score: 0.8 },
+  ];
+  const curve = kit.buildScoreCurve(rows, { threshold: kit.thresholdOf({ valueThreshold: 0.3 }) });
+  assert.equal(curve.points, 2, '没有分值的行不落点（不编造 0 分）');
+  assert.equal(curve.skipped, 1);
+  assert.equal(curve.threshold, 0.3, '阈值取自 core 写进 status.json 的 valueThreshold');
+  assert.ok(curve.thresholdY !== null, '阈值线要真的画出来（0..1 内）');
+  assert.ok(curve.dots[0].y > curve.dots[1].y, '0.2 应画在 0.8 下面');
+  assert.equal(curve.trend, '', '两个点不出趋势线');
+  const four = kit.buildScoreCurve([{ score: 0.2 }, { score: 0.3 }, { score: 0.5 }, { score: 0.9 }], {
+    threshold: 0.3,
+    trendWindow: 2,
+  });
+  assert.match(four.trend, /^M/, '≥3 个点才有趋势线');
+  assert.match(kit.curveCaption(rows, curve), /阈值 0\.30/);
+  return '点 ' + curve.points + ' / 跳过 ' + curve.skipped + ' / 趋势段 ' + four.trend.split(' L').length;
 });
 
 rmSync(tmp, { recursive: true, force: true });
