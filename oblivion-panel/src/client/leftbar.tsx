@@ -10,20 +10,25 @@
  */
 
 import type { JSX } from 'react';
-import { POLARIS_CENTER_DOT_RADIUS, POLARIS_GRADIENT_FROM, POLARIS_GRADIENT_TO, POLARIS_PATH, POLARIS_VIEWBOX } from './polaris.js';
+import { POLARIS_ICON_PATH, POLARIS_VIEWBOX } from './polaris.js';
 
-/** 小号北极星（左栏动作图标，尺寸跟外壳走）。 */
+/**
+ * 北极星图标（**图标字重** + `currentColor`）。
+ *
+ * 与宿主图标集同风格的三条：① 粗实心（内/外半径比 0.46）② 单色 ③ **跟随 `currentColor`** ——
+ * 于是它在左栏与 tab 卡片里和橙文件夹/绿定位/蓝终端是"一套"，而不是一颗发虚的渐变星。
+ */
 export function PolarisGlyph({ size = 16 }: { size?: number }): JSX.Element {
   return (
-    <svg width={size} height={size} viewBox={'0 0 ' + POLARIS_VIEWBOX.width + ' ' + POLARIS_VIEWBOX.height} aria-hidden>
-      <defs>
-        <linearGradient id="oblivion-leftbar-polaris" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={POLARIS_GRADIENT_FROM} />
-          <stop offset="100%" stopColor={POLARIS_GRADIENT_TO} />
-        </linearGradient>
-      </defs>
-      <path d={POLARIS_PATH} fill="url(#oblivion-leftbar-polaris)" />
-      <circle cx="512" cy="512" r={POLARIS_CENTER_DOT_RADIUS} fill="#ffffff" fillOpacity="0.92" />
+    <svg
+      width={size}
+      height={size}
+      viewBox={'0 0 ' + POLARIS_VIEWBOX.width + ' ' + POLARIS_VIEWBOX.height}
+      fill="currentColor"
+      aria-hidden
+      style={{ display: 'block', flex: '0 0 auto' }}
+    >
+      <path d={POLARIS_ICON_PATH} />
     </svg>
   );
 }

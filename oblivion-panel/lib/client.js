@@ -373,22 +373,23 @@ function OblivionPanel(props) {
 
 // src/client/polaris.ts
 var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
-var POLARIS_PATH = "M512.0000 132.0960L558.6323 399.4197L780.6327 243.3673L624.5803 465.3677L891.9040 512.0000L624.5803 558.6323L780.6327 780.6327L558.6323 624.5803L512.0000 891.9040L465.3677 624.5803L243.3673 780.6327L399.4197 558.6323L132.0960 512.0000L399.4197 465.3677L243.3673 243.3673L465.3677 399.4197Z";
-var POLARIS_CENTER_DOT_RADIUS = 33.792;
-var POLARIS_GRADIENT_FROM = "#E8D5A3";
-var POLARIS_GRADIENT_TO = "#7EC8E3";
+var POLARIS_ICON_PATH = "M512 132L579 350.3L780.7 243.3L673.7 445L892 512L673.7 579L780.7 780.7L579 673.7L512 892L445 673.7L243.3 780.7L350.3 579L132 512L350.3 445L243.3 243.3L445 350.3Z";
 
 // src/client/leftbar.tsx
 var import_jsx_runtime3 = require("react/jsx-runtime");
 function PolarisGlyph({ size = 16 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("svg", { width: size, height: size, viewBox: "0 0 " + POLARIS_VIEWBOX.width + " " + POLARIS_VIEWBOX.height, "aria-hidden": true, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("defs", { children: /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("linearGradient", { id: "oblivion-leftbar-polaris", x1: "0", y1: "0", x2: "0", y2: "1", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("stop", { offset: "0%", stopColor: POLARIS_GRADIENT_FROM }),
-      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("stop", { offset: "100%", stopColor: POLARIS_GRADIENT_TO })
-    ] }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: POLARIS_PATH, fill: "url(#oblivion-leftbar-polaris)" }),
-    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("circle", { cx: "512", cy: "512", r: POLARIS_CENTER_DOT_RADIUS, fill: "#ffffff", fillOpacity: "0.92" })
-  ] });
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 " + POLARIS_VIEWBOX.width + " " + POLARIS_VIEWBOX.height,
+      fill: "currentColor",
+      "aria-hidden": true,
+      style: { display: "block", flex: "0 0 auto" },
+      children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: POLARIS_ICON_PATH })
+    }
+  );
 }
 function openOblivionTab(service, tabType) {
   if (!service || typeof service.openTab !== "function") return "no-service";
