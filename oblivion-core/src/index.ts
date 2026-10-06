@@ -92,7 +92,27 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
     'oblivion-core: system prompt section',
   );
 
-  registerTools(ctx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
+  /**
+   * **工具执行入口（第二张网）**：工具调用必然发生在某个 agent 会话内，`exec` 里带 caller agent。
+   *
+   * 为什么必须挂它：实测 `systemPrompt.section` 的回调在**已存在的会话**里没有被调用
+   * （`lifecycleSeen` 为空）—— 提示词段看起来是**会话建立时**构建的。所以链路不能只依赖那一个入口：
+   * 新会话走 section，老会话走工具调用，两条路各自补挂、各自留痕。
+   *
+   * 实现用**原型代理**包住 `tools.register`，把 `exec` 交给补挂逻辑 —— 7 个工具一行都不用改。
+   */
+  const toolsCtx = Object.create(ctx) as typeof ctx;
+  const wrappedRegister = ((definition: { execute?: unknown }) =>
+    ctx.tools.register({
+      ...(definition as object),
+      execute: (args: unknown, exec: unknown) => {
+        attachAgentFromPayload(exec ?? args);
+        return (definition.execute as (a: unknown, e: unknown) => unknown)(args, exec);
+      },
+    })) as typeof ctx.tools.register;
+  Object.defineProperty(toolsCtx, 'tools', { value: { register: wrappedRegister } });
+
+  registerTools(toolsCtx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
 
   // 首次装载索引与目录；失败只记日志，不阻塞装载（此刻缓存与磁盘都可能还不存在）。
   void knowledge.init().catch((error: unknown) => {

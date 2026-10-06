@@ -1978,7 +1978,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.16",
+    version: "0.1.17",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -2592,7 +2592,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.16";
+var VERSION = "0.1.17";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
@@ -2627,7 +2627,16 @@ function apply(rawCtx, rawConfig) {
     }),
     "oblivion-core: system prompt section"
   );
-  registerTools(ctx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
+  const toolsCtx = Object.create(ctx);
+  const wrappedRegister = ((definition) => ctx.tools.register({
+    ...definition,
+    execute: (args, exec) => {
+      attachAgentFromPayload(exec ?? args);
+      return definition.execute(args, exec);
+    }
+  }));
+  Object.defineProperty(toolsCtx, "tools", { value: { register: wrappedRegister } });
+  registerTools(toolsCtx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
   void knowledge.init().catch((error) => {
     ctx.logger?.warn?.(config.logPrefix + " init failed: %o", error);
   });
