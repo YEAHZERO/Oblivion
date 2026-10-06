@@ -9,7 +9,9 @@
  *   - 建议区只在 core 给出 `hints` 时出现（样本不足时它刻意不开口，这里也照实显示「样本不足」）；
  *   - 只读：面板不写任何东西，唯一的动作是「刷新」与「打开笔记」；
  *   - 「打开笔记」由宿主半边包一层注入 `onOpenFile`（见 `index.ts` 的 `openNoteInSidebar`），
- *     点条目名 / 笔记名都会走同一条路，结果写进 `panel-client-diag.json` 供排查。
+ *     点笔记名都会走同一条路，结果写进 `panel-client-diag.json` 供排查；
+ *   - 知识库只有**一栏**（所有者 2026-10-06 裁定的方案 A，见 `knowledge.ts`）：
+ *     以笔记为骨架，把同主题条目的状态与版本挂上去；没有笔记的条目补成一行并标「仅入库」/「会话整理」。
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -27,6 +29,7 @@ import {
   topBlocker,
   type HintLike,
 } from './format.js';
+import { implLabel, itemStatusLabel, mergeKnowledge, sourceLabel, type KnowledgeRow } from './knowledge.js';
 
 /** 与 Node 半边 config.routePath 的默认值一致。 */
 const STATUS_ROUTE = '/oblivion-panel/status';
@@ -41,8 +44,19 @@ interface PanelData {
   /** Node 半边由留痕现算的统计（0.0.8 起）；老 host 不发时回落 `core.stats`。 */
   live?: DecisionStats;
   trace?: { path?: string; recent?: Array<Record<string, unknown>> };
-  items?: Array<{ id?: string; topic?: string; title?: string; created_at?: number; status?: string }>;
+  items?: Array<{
+    id?: string;
+    topic?: string;
+    title?: string;
+    created_at?: number;
+    status?: string;
+    impl?: string;
+    version?: number;
+    sourceTypes?: string[];
+  }>;
   notes?: Array<{ name?: string; path?: string; mtimeMs?: number; bytes?: number }>;
+  /** `04_会话整理/*.md`（0.0.9 起）：整理件的笔记，合栏后与问答笔记同列。 */
+  digests?: Array<{ name?: string; path?: string; mtimeMs?: number; bytes?: number }>;
   problems?: string[];
 }
 
@@ -105,18 +119,24 @@ function kpi(label: string, value: JSX.Element | string): JSX.Element {
   );
 }
 
-/** 从标题/主题猜出这个条目对应的笔记文件（找不到就不给链接，绝不凭空造路径）。 */
-function notePathForItem(item: { topic?: string; title?: string }, notes: PanelData['notes']): string | undefined {
-  if (!notes || notes.length === 0) return undefined;
-  const candidates = [item.topic, item.title]
-    .map((value) => String(value ?? '').trim())
-    .filter((value) => value !== '');
-  for (const candidate of candidates) {
-    const wanted = (candidate + '.md').toLowerCase();
-    const hit = notes.find((note) => String(note.name ?? '').toLowerCase() === wanted);
-    if (hit?.path) return hit.path;
-  }
-  return undefined;
+/**
+ * 一行的第二行说明：时间 · 状态 · 落地 · 版本 · 来源 · 主题。
+ *
+ * 合栏（方案 A）之后这一行才是条目栏的价值所在 —— 标题在笔记里已经有了，
+ * 条目独有的是**版本与状态**（被降级的旧版、`impl` 落地状态、共几版）。
+ */
+function rowMeta(row: KnowledgeRow): string {
+  const parts: string[] = [];
+  if (row.at > 0) parts.push(relativeTime(row.at));
+  const status = itemStatusLabel(row.status);
+  if (status !== '') parts.push(status);
+  const impl = implLabel(row.impl);
+  if (impl !== '') parts.push(impl);
+  if (row.versions > 1) parts.push('共 ' + row.versions + ' 版');
+  const source = sourceLabel(row.source);
+  if (source !== '') parts.push(source);
+  if (row.topic !== '' && row.topic !== row.title) parts.push('主题 ' + row.topic);
+  return parts.length > 0 ? parts.join(' · ') : '—';
 }
 
 /** 空态：把「为什么没有数据」说清楚。 */
@@ -180,6 +200,9 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
     const recent = data.trace?.recent ?? [];
     const items = data.items ?? [];
     const notes = data.notes ?? [];
+    const digests = data.digests ?? [];
+    // 方案 A（所有者 2026-10-06 裁定）：笔记为骨架 + 条目状态/版本，**一栏**呈现。
+    const knowledge = mergeKnowledge({ notes, digests, items });
 
     return (
       <>
@@ -263,60 +286,37 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
           </ul>
         )}
 
-        <div style={S.h}>最近沉淀（{items.length}）</div>
-        {items.length === 0 ? (
-          <div style={S.dim}>还没有条目落盘</div>
+        <div style={S.h}>知识库（{knowledge.length}）</div>
+        <div style={{ ...S.dim, marginBottom: 4 }}>
+          问答笔记 {notes.length} · 会话整理 {digests.length} · 条目 {items.length}
+          {knowledge.length !== notes.length + digests.length + items.length
+            ? '（同主题的多版并作一行，共 ' + knowledge.length + ' 行）'
+            : ''}
+        </div>
+        {knowledge.length === 0 ? (
+          <div style={S.dim}>还没有条目，也没有笔记（{data.mdRoot ?? '—'}）</div>
         ) : (
           <ul style={S.list}>
-            {items.map((item, index) => {
-              const path = notePathForItem(item, notes);
-              return (
-                <li key={String(item.id ?? index)} style={S.li}>
-                  <div>
-                    {path ? (
-                      <a
-                        href="#"
-                        style={{ color: 'inherit' }}
-                        title={'在侧边栏打开 ' + path}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          props.onOpenFile?.(path);
-                        }}
-                      >
-                        {String(item.title ?? '(无标题)')}
-                      </a>
-                    ) : (
-                      String(item.title ?? '(无标题)')
-                    )}
-                  </div>
-                  <div style={S.dim}>
-                    {relativeTime(item.created_at)} · 主题 {String(item.topic ?? '—')} · {String(item.id ?? '')}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        <div style={S.h}>知识库笔记（{notes.length}）</div>
-        {notes.length === 0 ? (
-          <div style={S.dim}>01_问答沉淀/ 里还没有笔记（{data.mdRoot ?? '—'}）</div>
-        ) : (
-          <ul style={S.list}>
-            {notes.map((note, index) => (
-              <li key={String(note.path ?? index)} style={S.li}>
-                <a
-                  href="#"
-                  style={{ color: 'inherit' }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    if (props.onOpenFile && note.path) props.onOpenFile(note.path);
-                  }}
-                  title={note.path ?? ''}
-                >
-                  {String(note.name ?? '')}
-                </a>
-                <span style={S.dim}> · {relativeTime(note.mtimeMs)}</span>
+            {knowledge.map((row) => (
+              <li key={row.key} style={S.li}>
+                <div>
+                  {row.notePath !== undefined ? (
+                    <a
+                      href="#"
+                      style={{ color: 'inherit' }}
+                      title={'在侧边栏打开 ' + row.notePath}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        props.onOpenFile?.(row.notePath as string);
+                      }}
+                    >
+                      {row.title}
+                    </a>
+                  ) : (
+                    row.title
+                  )}
+                </div>
+                <div style={{ ...S.dim, ...S.mono }}>{rowMeta(row)}</div>
               </li>
             ))}
           </ul>

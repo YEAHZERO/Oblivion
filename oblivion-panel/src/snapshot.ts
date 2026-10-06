@@ -19,6 +19,9 @@ const MAX_JSONL_BYTES = 2 * 1024 * 1024;
 const FALLBACK_RETENTION_DAYS = 90;
 const FALLBACK_MAX_ENTRIES = 5000;
 const MS_PER_DAY = 86_400_000;
+/** 知识库里的两个笔记目录（与 `@oblivion/core` 的 md-writer 约定一致）。 */
+export const QA_NOTE_DIR = '01_问答沉淀';
+export const DIGEST_NOTE_DIR = '04_会话整理';
 
 export interface CoreStatusShape {
   version?: string;
@@ -152,8 +155,12 @@ export interface ItemRow {
   title: string;
   created_at: number;
   status: string;
+  /** 落地状态（core 0.1.11 起的 `impl`）：`implemented` / `designed` / `placeholder`。 */
+  impl: string;
   version: number;
   sources: number;
+  /** 来源类型（`session` / `digest` / …），用来判断是不是会话整理件。 */
+  sourceTypes: string[];
 }
 
 export interface NoteRow {
@@ -176,8 +183,15 @@ export interface PanelSnapshot {
    */
   live: DecisionStats;
   trace: { path: string; recent: DecisionRow[] };
+  /**
+   * 知识条目（`<dataRoot>/ts-*.json`）—— 这是**扫描窗口**（比显示条数宽），
+   * 因为客户端要按主题把同一主题的多个版本聚成一行（方案 A，见 `client/knowledge.ts`）。
+   */
   items: ItemRow[];
+  /** `01_问答沉淀/*.md`：问答落成的笔记，面板的主骨架。 */
   notes: NoteRow[];
+  /** `04_会话整理/*.md`：`oblivion_digest` 的整理件 —— 原来只在条目栏看得到，合栏后要能点开。 */
+  digests: NoteRow[];
   /** 读到了但有问题的地方（缺文件不算问题，缺文件是「还没跑」）。 */
   problems: string[];
 }
@@ -268,22 +282,27 @@ async function readItems(dataRoot: string, limit: number, problems: string[]): P
     const parsed = await readJsonCapped(join(dataRoot, name), problems);
     if (!parsed || typeof parsed !== 'object') continue;
     const item = parsed as Record<string, unknown>;
+    const sources = Array.isArray(item.sources) ? item.sources : [];
     rows.push({
       id: String(item.id ?? name.replace(/\.json$/, '')),
       topic: String(item.topic ?? ''),
       title: String(item.title ?? ''),
       created_at: Number(item.created_at ?? 0),
       status: String(item.status ?? 'active'),
+      impl: String(item.impl ?? ''),
       version: Number(item.version ?? 1),
-      sources: Array.isArray(item.sources) ? item.sources.length : 0,
+      sources: sources.length,
+      sourceTypes: sources
+        .map((source) => String((source as { type?: unknown })?.type ?? ''))
+        .filter((type) => type !== ''),
     });
   }
   return rows.sort((a, b) => b.created_at - a.created_at).slice(0, limit);
 }
 
-/** 问答沉淀目录里的笔记（按 mtime 倒序）。 */
-async function readNotes(mdRoot: string, limit: number, problems: string[]): Promise<NoteRow[]> {
-  const dir = join(mdRoot, '01_问答沉淀');
+/** 知识库某个笔记目录里的 markdown（按 mtime 倒序）。 */
+async function readNoteDir(mdRoot: string, subdir: string, limit: number, problems: string[]): Promise<NoteRow[]> {
+  const dir = join(mdRoot, subdir);
   let names: string[] = [];
   try {
     names = (await readdir(dir)).filter((name) => name.toLowerCase().endsWith('.md'));
@@ -335,10 +354,13 @@ export async function buildSnapshot(options: SnapshotOptions): Promise<PanelSnap
   const maxEntries = positiveInt(config.statsMaxEntries, FALLBACK_MAX_ENTRIES);
   const tracePath = join(options.dataRoot, 'decisions.jsonl');
 
-  const [decisions, items, notes] = await Promise.all([
+  const [decisions, items, notes, digests] = await Promise.all([
     readDecisions(tracePath, { retentionDays, maxEntries, now: now() }, problems),
-    readItems(options.dataRoot, limit, problems),
-    readNotes(mdRoot, limit, problems),
+    // 条目按**宽窗口**读：客户端要把「同主题的多版」聚成一行（被降级的旧版也在其中），
+    // 只读 limit 条会把版本历史截断，于是「共 N 版」永远显示不出来。
+    readItems(options.dataRoot, Math.max(limit * 8, 100), problems),
+    readNoteDir(mdRoot, QA_NOTE_DIR, limit, problems),
+    readNoteDir(mdRoot, DIGEST_NOTE_DIR, limit, problems),
   ]);
 
   return {
@@ -355,6 +377,7 @@ export async function buildSnapshot(options: SnapshotOptions): Promise<PanelSnap
     trace: { path: tracePath, recent: decisions.rows.slice(-limit) },
     items,
     notes,
+    digests,
     problems,
   };
 }

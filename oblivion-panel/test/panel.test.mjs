@@ -34,6 +34,7 @@ function seed() {
   const mdRoot = join(tmp, 'kb');
   mkdirSync(dataRoot, { recursive: true });
   mkdirSync(join(mdRoot, '01_问答沉淀'), { recursive: true });
+  mkdirSync(join(mdRoot, '04_会话整理'), { recursive: true });
 
   const now = Date.now();
   writeFileSync(
@@ -65,6 +66,7 @@ function seed() {
     'utf8',
   );
   writeFileSync(join(mdRoot, '01_问答沉淀', '测试主题.md'), '# 一条知识\n', 'utf8');
+  writeFileSync(join(mdRoot, '04_会话整理', '2026-10-06-整理.md'), '# 整理件\n', 'utf8');
   return { dataRoot, mdRoot };
 }
 
@@ -110,7 +112,9 @@ describe('观测快照（Node 半边数据面）', () => {
 
     assert.equal(snapshot.items.length, 1);
     assert.equal(snapshot.items[0].title, '一条知识');
+    assert.equal(snapshot.items[0].sourceTypes[0], 'session', '条目要带上来源类型（用来标「会话整理」）');
     assert.equal(snapshot.notes.length, 1);
+    assert.equal(snapshot.digests.length, 1, '04_会话整理 的整理件也要读出来（合栏后能点开）');
     assert.ok(snapshot.problems.some((p) => p.includes('不是合法 JSON')), '坏行应进 problems');
   });
 
@@ -231,5 +235,88 @@ describe('展示层纯函数', () => {
     assert.equal(live.captureRate, 1);
     assert.equal(live.score.max, 0.8);
     assert.equal(live.firstAt, at);
+  });
+});
+
+/**
+ * 方案 A（所有者 2026-10-06 裁定）：把「最近沉淀（条目库）」与「知识库笔记（磁盘）」
+ * 合成**一栏** —— 笔记为骨架，条目独有的事（版本、被降级的旧版、状态、落地状态）挂在它后面。
+ * 这里用内存夹具直接打纯函数，不碰磁盘。
+ */
+describe('知识库合栏（笔记为骨架 + 条目状态/版本）', () => {
+  const items = [
+    // 同一主题的两版：新版 active、旧版 superseded（core 的自动降级就长这样）
+    { id: 'ts-a2', topic: '同名主题', title: '同名主题', created_at: 200, status: 'active', impl: 'implemented', version: 2, sourceTypes: ['session'], sources: 1 },
+    { id: 'ts-a1', topic: '同名主题', title: '同名主题（旧）', created_at: 100, status: 'superseded', impl: 'designed', version: 1, sourceTypes: ['session'], sources: 1 },
+    // 没有对应笔记的条目（主题没落成文件）
+    { id: 'ts-b', topic: '孤条目', title: '没有笔记的一条', created_at: 300, status: 'active', impl: 'placeholder', version: 1, sourceTypes: ['session'], sources: 1 },
+    // oblivion_digest 的条目：笔记在 04_会话整理/，不在 01_问答沉淀/
+    { id: 'ts-c', topic: '整理件主题', title: '整理件标题', created_at: 400, status: 'active', impl: 'implemented', version: 1, sourceTypes: ['digest'], sources: 2 },
+  ];
+  const notes = [
+    { name: '同名主题.md', path: 'X:/kb/01_问答沉淀/同名主题.md', mtimeMs: 500 },
+    { name: '只有笔记.md', path: 'X:/kb/01_问答沉淀/只有笔记.md', mtimeMs: 50 },
+  ];
+  const digests = [{ name: '整理件主题.md', path: 'X:/kb/04_会话整理/整理件主题.md', mtimeMs: 450 }];
+
+  it('笔记为骨架：同主题的多版并作一行，状态取当前版本，按最近动静排序', () => {
+    const rows = kit.mergeKnowledge({ notes, digests, items });
+    assert.deepEqual(
+      rows.map((row) => row.title),
+      ['同名主题', '整理件主题', '没有笔记的一条', '只有笔记'],
+      '四行：笔记(2) + 无笔记条目(1) + 只有笔记(1)；同主题两版并作一行',
+    );
+    const first = rows[0];
+    assert.equal(first.notePath, 'X:/kb/01_问答沉淀/同名主题.md');
+    assert.equal(first.versions, 2, '同主题的两版都要算进来');
+    assert.equal(first.status, 'active', '状态取当前版本');
+    assert.equal(first.impl, 'implemented');
+    assert.equal(first.itemId, 'ts-a2');
+    assert.equal(first.at, 500, '时间取笔记 mtime 与条目时间的较大者');
+  });
+
+  it('无笔记的条目补成一行，并标注来源「仅入库」', () => {
+    const rows = kit.mergeKnowledge({ notes, digests, items });
+    const lonely = rows.find((row) => row.itemId === 'ts-b');
+    assert.equal(lonely.title, '没有笔记的一条');
+    assert.equal(lonely.notePath, undefined, '没有笔记就不给路径，绝不凭空造');
+    assert.equal(lonely.source, 'item');
+    assert.equal(kit.sourceLabel(lonely.source), '仅入库');
+    assert.equal(lonely.versions, 1);
+  });
+
+  it('整理件与问答笔记同列，来源标「会话整理」', () => {
+    const rows = kit.mergeKnowledge({ notes, digests, items });
+    const digest = rows[1];
+    assert.equal(digest.source, 'digest');
+    assert.equal(kit.sourceLabel(digest.source), '会话整理');
+    assert.match(String(digest.notePath), /04_会话整理/);
+    assert.equal(digest.versions, 1, '整理件条目与整理件笔记合成一行');
+  });
+
+  it('只有笔记、没有条目也是一行（版本 0，不编造状态）', () => {
+    const rows = kit.mergeKnowledge({ notes, digests, items });
+    const noteOnly = rows[3];
+    assert.equal(noteOnly.title, '只有笔记');
+    assert.equal(noteOnly.versions, 0);
+    assert.equal(noteOnly.status, '');
+    assert.equal(noteOnly.source, 'note');
+  });
+
+  it('空输入 / 缺字段不抛错', () => {
+    assert.deepEqual(kit.mergeKnowledge({}), []);
+    assert.deepEqual(kit.mergeKnowledge({ notes: [{ name: '' }], items: [{ }] }), []);
+  });
+
+  it('状态与落地状态说人话', () => {
+    assert.equal(kit.itemStatusLabel('active'), '当前版本');
+    assert.equal(kit.itemStatusLabel('superseded'), '已被新版取代');
+    assert.equal(kit.itemStatusLabel(''), '');
+    assert.equal(kit.itemStatusLabel('weird'), 'weird');
+    assert.equal(kit.implLabel('implemented'), '已落地');
+    assert.equal(kit.implLabel('designed'), '仅设计');
+    assert.equal(kit.implLabel('placeholder'), '占位');
+    assert.equal(kit.implLabel(undefined), '');
+    assert.equal(kit.sourceLabel('note'), '', '问答笔记是默认骨架，不加标注');
   });
 });

@@ -30,6 +30,16 @@ export {
   type SessionScopeLike,
 } from './client/open-note.js';
 export {
+  mergeKnowledge,
+  itemStatusLabel,
+  implLabel,
+  sourceLabel,
+  type KnowledgeItemLike,
+  type KnowledgeRow,
+  type KnowledgeSource,
+  type NoteLike,
+} from './client/knowledge.js';
+export {
   PANEL_TAB_ID,
   panelDescriptor,
   registerPanelTab,

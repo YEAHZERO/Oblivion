@@ -11,6 +11,8 @@ var MAX_JSONL_BYTES = 2 * 1024 * 1024;
 var FALLBACK_RETENTION_DAYS = 90;
 var FALLBACK_MAX_ENTRIES = 5e3;
 var MS_PER_DAY = 864e5;
+var QA_NOTE_DIR = "01_\u95EE\u7B54\u6C89\u6DC0";
+var DIGEST_NOTE_DIR = "04_\u4F1A\u8BDD\u6574\u7406";
 function ratio(part, whole) {
   return whole <= 0 ? 0 : Math.round(part / whole * 1e3) / 1e3;
 }
@@ -126,20 +128,23 @@ async function readItems(dataRoot, limit, problems) {
     const parsed = await readJsonCapped(join(dataRoot, name2), problems);
     if (!parsed || typeof parsed !== "object") continue;
     const item = parsed;
+    const sources = Array.isArray(item.sources) ? item.sources : [];
     rows.push({
       id: String(item.id ?? name2.replace(/\.json$/, "")),
       topic: String(item.topic ?? ""),
       title: String(item.title ?? ""),
       created_at: Number(item.created_at ?? 0),
       status: String(item.status ?? "active"),
+      impl: String(item.impl ?? ""),
       version: Number(item.version ?? 1),
-      sources: Array.isArray(item.sources) ? item.sources.length : 0
+      sources: sources.length,
+      sourceTypes: sources.map((source) => String(source?.type ?? "")).filter((type) => type !== "")
     });
   }
   return rows.sort((a, b) => b.created_at - a.created_at).slice(0, limit);
 }
-async function readNotes(mdRoot, limit, problems) {
-  const dir = join(mdRoot, "01_\u95EE\u7B54\u6C89\u6DC0");
+async function readNoteDir(mdRoot, subdir, limit, problems) {
+  const dir = join(mdRoot, subdir);
   let names = [];
   try {
     names = (await readdir(dir)).filter((name2) => name2.toLowerCase().endsWith(".md"));
@@ -173,10 +178,13 @@ async function buildSnapshot(options) {
   const retentionDays = positiveInt(config.statsRetentionDays, FALLBACK_RETENTION_DAYS);
   const maxEntries = positiveInt(config.statsMaxEntries, FALLBACK_MAX_ENTRIES);
   const tracePath = join(options.dataRoot, "decisions.jsonl");
-  const [decisions, items, notes] = await Promise.all([
+  const [decisions, items, notes, digests] = await Promise.all([
     readDecisions(tracePath, { retentionDays, maxEntries, now: now() }, problems),
-    readItems(options.dataRoot, limit, problems),
-    readNotes(mdRoot, limit, problems)
+    // 条目按**宽窗口**读：客户端要把「同主题的多版」聚成一行（被降级的旧版也在其中），
+    // 只读 limit 条会把版本历史截断，于是「共 N 版」永远显示不出来。
+    readItems(options.dataRoot, Math.max(limit * 8, 100), problems),
+    readNoteDir(mdRoot, QA_NOTE_DIR, limit, problems),
+    readNoteDir(mdRoot, DIGEST_NOTE_DIR, limit, problems)
   ]);
   return {
     ok: true,
@@ -192,6 +200,7 @@ async function buildSnapshot(options) {
     trace: { path: tracePath, recent: decisions.rows.slice(-limit) },
     items,
     notes,
+    digests,
     problems
   };
 }

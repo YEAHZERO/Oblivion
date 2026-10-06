@@ -167,9 +167,9 @@ function scoreText(score) {
   return String(Math.round(score * 1e3) / 1e3);
 }
 function reasonLabel(reason) {
-  const text = typeof reason === "string" ? reason : String(reason ?? "");
-  if (text.startsWith("exception:")) return "\u5224\u5B9A\u5F02\u5E38" + text.slice("exception:".length);
-  if (text.startsWith("\u672C\u8F6E\u6CA1\u6709")) return "\u65E0\u95EE\u7B54\u8F6E\uFF08\u5DE5\u5177\u8F6E / \u6CE8\u5165\u8F6E / \u65E0\u56DE\u7B54\uFF09";
+  const text2 = typeof reason === "string" ? reason : String(reason ?? "");
+  if (text2.startsWith("exception:")) return "\u5224\u5B9A\u5F02\u5E38" + text2.slice("exception:".length);
+  if (text2.startsWith("\u672C\u8F6E\u6CA1\u6709")) return "\u65E0\u95EE\u7B54\u8F6E\uFF08\u5DE5\u5177\u8F6E / \u6CE8\u5165\u8F6E / \u65E0\u56DE\u7B54\uFF09";
   const map = {
     captured: "\u901A\u8FC7\uFF1A\u5DF2\u6C89\u6DC0",
     rejected: "\u5DF2\u62E6\u622A",
@@ -184,13 +184,146 @@ function reasonLabel(reason) {
     "conflicts with existing item": "\u4E0E\u65E2\u6709\u6761\u76EE\u51B2\u7A81",
     "below value threshold": "\u4F4E\u4E8E\u4EF7\u503C\u9608\u503C"
   };
-  return map[text] ?? text;
+  return map[text2] ?? text2;
 }
 function topBlocker(byReason) {
   if (!byReason || typeof byReason !== "object") return null;
   const entries = Object.entries(byReason).filter(([reason, count]) => reason !== "captured" && typeof count === "number" && count > 0).sort((a, b) => Number(b[1]) - Number(a[1]));
   if (entries.length === 0) return null;
   return { reason: entries[0][0], count: Number(entries[0][1]) };
+}
+
+// src/client/knowledge.ts
+function text(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function num(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function itemStatusLabel(status) {
+  switch (text(status)) {
+    case "active":
+      return "\u5F53\u524D\u7248\u672C";
+    case "superseded":
+      return "\u5DF2\u88AB\u65B0\u7248\u53D6\u4EE3";
+    case "draft":
+      return "\u8349\u7A3F";
+    case "conflict":
+      return "\u6709\u51B2\u7A81";
+    case "archived":
+      return "\u5DF2\u5F52\u6863";
+    case "":
+      return "";
+    default:
+      return String(status);
+  }
+}
+function implLabel(impl) {
+  switch (text(impl)) {
+    case "implemented":
+      return "\u5DF2\u843D\u5730";
+    case "designed":
+      return "\u4EC5\u8BBE\u8BA1";
+    case "placeholder":
+      return "\u5360\u4F4D";
+    case "":
+      return "";
+    default:
+      return String(impl);
+  }
+}
+function sourceLabel(source) {
+  switch (source) {
+    case "note":
+      return "";
+    case "digest":
+      return "\u4F1A\u8BDD\u6574\u7406";
+    case "item":
+      return "\u4EC5\u5165\u5E93";
+  }
+}
+function baseName(name) {
+  return text(name).replace(/\.md$/i, "");
+}
+function lower(value) {
+  return text(value).toLowerCase();
+}
+function latest(values) {
+  return values.length === 0 ? 0 : Math.max(...values);
+}
+function mergeKnowledge(input) {
+  const items = input.items ?? [];
+  const consumed = /* @__PURE__ */ new Set();
+  const rows = [];
+  const collect = (note, source) => {
+    const base = lower(baseName(note.name));
+    if (base === "") return;
+    const matched = [];
+    items.forEach((item, index) => {
+      if (consumed.has(index)) return;
+      if (lower(item.topic) === base || lower(item.title) === base) {
+        consumed.add(index);
+        matched.push(item);
+      }
+    });
+    const at = latest([
+      num(note.mtimeMs),
+      ...matched.map((item) => num(item.created_at)),
+      ...matched.map((item) => num(item.updated_at))
+    ]);
+    const primary = pickPrimary(matched);
+    rows.push({
+      key: text(note.path) !== "" ? text(note.path) : base,
+      title: baseName(note.name),
+      notePath: text(note.path) !== "" ? text(note.path) : void 0,
+      at,
+      source,
+      status: text(primary?.status),
+      impl: text(primary?.impl),
+      versions: matched.length,
+      itemId: text(primary?.id),
+      sources: num(primary?.sources),
+      topic: text(primary?.topic)
+    });
+  };
+  for (const note of input.notes ?? []) collect(note, "note");
+  for (const note of input.digests ?? []) collect(note, "digest");
+  const groups = /* @__PURE__ */ new Map();
+  items.forEach((item, index) => {
+    if (consumed.has(index)) return;
+    const topic = text(item.topic);
+    const title = text(item.title);
+    const groupKey = lower(topic !== "" ? topic : title);
+    if (groupKey === "") return;
+    const bucket = groups.get(groupKey);
+    if (bucket === void 0) groups.set(groupKey, { key: topic !== "" ? topic : title, items: [item] });
+    else bucket.items.push(item);
+  });
+  for (const { key, items: members } of groups.values()) {
+    const primary = pickPrimary(members);
+    rows.push({
+      key: "item:" + key,
+      title: text(primary?.title) !== "" ? text(primary?.title) : key,
+      at: latest(members.map((item) => num(item.created_at))),
+      source: isDigest(primary) ? "digest" : "item",
+      status: text(primary?.status),
+      impl: text(primary?.impl),
+      versions: members.length,
+      itemId: text(primary?.id),
+      sources: num(primary?.sources),
+      topic: text(primary?.topic)
+    });
+  }
+  return rows.sort((left, right) => right.at - left.at || left.title.localeCompare(right.title));
+}
+function pickPrimary(items) {
+  if (items.length === 0) return void 0;
+  const active = items.filter((item) => text(item.status) === "active" || text(item.status) === "");
+  const pool = active.length > 0 ? active : items;
+  return pool.reduce((best, item) => num(item.created_at) >= num(best.created_at) ? item : best);
+}
+function isDigest(item) {
+  return (item?.sourceTypes ?? []).some((type) => lower(type) === "digest");
 }
 
 // src/client/Panel.tsx
@@ -238,15 +371,18 @@ function kpi(label, value) {
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.kpiValue, children: value })
   ] });
 }
-function notePathForItem(item, notes) {
-  if (!notes || notes.length === 0) return void 0;
-  const candidates = [item.topic, item.title].map((value) => String(value ?? "").trim()).filter((value) => value !== "");
-  for (const candidate of candidates) {
-    const wanted = (candidate + ".md").toLowerCase();
-    const hit = notes.find((note) => String(note.name ?? "").toLowerCase() === wanted);
-    if (hit?.path) return hit.path;
-  }
-  return void 0;
+function rowMeta(row) {
+  const parts = [];
+  if (row.at > 0) parts.push(relativeTime(row.at));
+  const status = itemStatusLabel(row.status);
+  if (status !== "") parts.push(status);
+  const impl = implLabel(row.impl);
+  if (impl !== "") parts.push(impl);
+  if (row.versions > 1) parts.push("\u5171 " + row.versions + " \u7248");
+  const source = sourceLabel(row.source);
+  if (source !== "") parts.push(source);
+  if (row.topic !== "" && row.topic !== row.title) parts.push("\u4E3B\u9898 " + row.topic);
+  return parts.length > 0 ? parts.join(" \xB7 ") : "\u2014";
 }
 function emptyReason(data) {
   if (!data.core) {
@@ -301,6 +437,8 @@ function OblivionPanel(props) {
     const recent = data.trace?.recent ?? [];
     const items = data.items ?? [];
     const notes = data.notes ?? [];
+    const digests = data.digests ?? [];
+    const knowledge = mergeKnowledge({ notes, digests, items });
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.row, children: [
         /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
@@ -348,63 +486,39 @@ function OblivionPanel(props) {
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, ...S.mono }, children: reasonLabel(row.reason) })
       ] }, index)) }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
-        "\u6700\u8FD1\u6C89\u6DC0\uFF08",
-        items.length,
+        "\u77E5\u8BC6\u5E93\uFF08",
+        knowledge.length,
         "\uFF09"
       ] }),
-      items.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.dim, children: "\u8FD8\u6CA1\u6709\u6761\u76EE\u843D\u76D8" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: items.map((item, index) => {
-        const path = notePathForItem(item, notes);
-        return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: path ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-            "a",
-            {
-              href: "#",
-              style: { color: "inherit" },
-              title: "\u5728\u4FA7\u8FB9\u680F\u6253\u5F00 " + path,
-              onClick: (event) => {
-                event.preventDefault();
-                props.onOpenFile?.(path);
-              },
-              children: String(item.title ?? "(\u65E0\u6807\u9898)")
-            }
-          ) : String(item.title ?? "(\u65E0\u6807\u9898)") }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
-            relativeTime(item.created_at),
-            " \xB7 \u4E3B\u9898 ",
-            String(item.topic ?? "\u2014"),
-            " \xB7 ",
-            String(item.id ?? "")
-          ] })
-        ] }, String(item.id ?? index));
-      }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
-        "\u77E5\u8BC6\u5E93\u7B14\u8BB0\uFF08",
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { ...S.dim, marginBottom: 4 }, children: [
+        "\u95EE\u7B54\u7B14\u8BB0 ",
         notes.length,
-        "\uFF09"
+        " \xB7 \u4F1A\u8BDD\u6574\u7406 ",
+        digests.length,
+        " \xB7 \u6761\u76EE ",
+        items.length,
+        knowledge.length !== notes.length + digests.length + items.length ? "\uFF08\u540C\u4E3B\u9898\u7684\u591A\u7248\u5E76\u4F5C\u4E00\u884C\uFF0C\u5171 " + knowledge.length + " \u884C\uFF09" : ""
       ] }),
-      notes.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
-        "01_\u95EE\u7B54\u6C89\u6DC0/ \u91CC\u8FD8\u6CA1\u6709\u7B14\u8BB0\uFF08",
+      knowledge.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
+        "\u8FD8\u6CA1\u6709\u6761\u76EE\uFF0C\u4E5F\u6CA1\u6709\u7B14\u8BB0\uFF08",
         data.mdRoot ?? "\u2014",
         "\uFF09"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: notes.map((note, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: knowledge.map((row) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: row.notePath !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "a",
           {
             href: "#",
             style: { color: "inherit" },
+            title: "\u5728\u4FA7\u8FB9\u680F\u6253\u5F00 " + row.notePath,
             onClick: (event) => {
               event.preventDefault();
-              if (props.onOpenFile && note.path) props.onOpenFile(note.path);
+              props.onOpenFile?.(row.notePath);
             },
-            title: note.path ?? "",
-            children: String(note.name ?? "")
+            children: row.title
           }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: S.dim, children: [
-          " \xB7 ",
-          relativeTime(note.mtimeMs)
-        ] })
-      ] }, String(note.path ?? index))) }),
+        ) : row.title }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, ...S.mono }, children: rowMeta(row) })
+      ] }, row.key)) }),
       (data.problems ?? []).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
         /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
           "\u8BFB\u53D6\u544A\u8B66\uFF08",

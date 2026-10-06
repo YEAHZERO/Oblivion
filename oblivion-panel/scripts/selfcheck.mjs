@@ -118,7 +118,8 @@ await check('路由真跑：GET 返回快照 JSON（含 stats / recent / items /
   );
   assert.equal(json.items.length, 1);
   assert.equal(json.notes.length, 1);
-  return 'core v' + json.core.version + ' / 判定 ' + json.trace.recent.length + ' / 条目 ' + json.items.length + ' / 笔记 ' + json.notes.length;
+  assert.ok(Array.isArray(json.digests), '快照要带 digests（04_会话整理 的整理件，合栏后要能点开）');
+  return 'core v' + json.core.version + ' / 判定 ' + json.trace.recent.length + ' / 条目 ' + json.items.length + ' / 笔记 ' + json.notes.length + ' / 整理件 ' + json.digests.length;
 });
 
 await check('留痕现算统计与 core 同口径（no-qa 不计入已评估 / captured 不算拦截）', async () => {
@@ -304,6 +305,32 @@ await check('笔记点击：openNoteInSidebar 的五条路径都被钉住', asyn
   assert.equal(kit.openNoteInSidebar({ path: 'C:/kb/f.md' }), 'no-service');
   assert.equal(kit.openNoteInSidebar({ service: capable(), path: '   ' }), 'failed');
   return 'opened / opened(快照) / opened-via-host-prop(能力位) / opened-via-host-prop(抛错) / no-session / no-service / failed';
+});
+
+await check('知识库合栏：笔记为骨架 + 条目状态/版本，无笔记条目补行', async () => {
+  const kit = await import(pathToFileURL(kitPath).href);
+  const rows = kit.mergeKnowledge({
+    notes: [{ name: '同名主题.md', path: 'K:/01_问答沉淀/同名主题.md', mtimeMs: 500 }],
+    digests: [{ name: '整理件主题.md', path: 'K:/04_会话整理/整理件主题.md', mtimeMs: 450 }],
+    items: [
+      { id: 'ts-a2', topic: '同名主题', title: '同名主题', created_at: 200, status: 'active', impl: 'implemented', sourceTypes: ['session'], sources: 1 },
+      { id: 'ts-a1', topic: '同名主题', title: '同名主题（旧）', created_at: 100, status: 'superseded', impl: 'designed', sourceTypes: ['session'], sources: 1 },
+      { id: 'ts-b', topic: '孤条目', title: '没有笔记的一条', created_at: 300, status: 'active', impl: 'placeholder', sourceTypes: ['session'], sources: 1 },
+      { id: 'ts-c', topic: '整理件主题', title: '整理件标题', created_at: 400, status: 'active', impl: 'implemented', sourceTypes: ['digest'], sources: 2 },
+    ],
+  });
+  assert.deepEqual(
+    rows.map((row) => row.title),
+    ['同名主题', '整理件主题', '没有笔记的一条'],
+    '两栏合成一栏：笔记为骨架、同主题多版并作一行、无笔记条目补在最后',
+  );
+  assert.equal(rows[0].versions, 2, '同主题两版并作一行');
+  assert.equal(rows[0].status, 'active', '状态取当前版本（旧版 superseded 不冒充当前）');
+  assert.equal(rows[0].notePath, 'K:/01_问答沉淀/同名主题.md');
+  assert.equal(rows[1].source, 'digest');
+  assert.equal(rows[2].notePath, undefined, '没有笔记就不给路径');
+  assert.equal(kit.sourceLabel(rows[2].source), '仅入库');
+  return '单栏 ' + rows.length + ' 行（笔记骨架 / 版本聚合 / 仅入库补行）';
 });
 
 rmSync(tmp, { recursive: true, force: true });

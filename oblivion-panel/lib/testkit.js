@@ -6,6 +6,8 @@ var MAX_JSONL_BYTES = 2 * 1024 * 1024;
 var FALLBACK_RETENTION_DAYS = 90;
 var FALLBACK_MAX_ENTRIES = 5e3;
 var MS_PER_DAY = 864e5;
+var QA_NOTE_DIR = "01_\u95EE\u7B54\u6C89\u6DC0";
+var DIGEST_NOTE_DIR = "04_\u4F1A\u8BDD\u6574\u7406";
 function ratio(part, whole) {
   return whole <= 0 ? 0 : Math.round(part / whole * 1e3) / 1e3;
 }
@@ -121,20 +123,23 @@ async function readItems(dataRoot, limit, problems) {
     const parsed = await readJsonCapped(join(dataRoot, name), problems);
     if (!parsed || typeof parsed !== "object") continue;
     const item = parsed;
+    const sources = Array.isArray(item.sources) ? item.sources : [];
     rows.push({
       id: String(item.id ?? name.replace(/\.json$/, "")),
       topic: String(item.topic ?? ""),
       title: String(item.title ?? ""),
       created_at: Number(item.created_at ?? 0),
       status: String(item.status ?? "active"),
+      impl: String(item.impl ?? ""),
       version: Number(item.version ?? 1),
-      sources: Array.isArray(item.sources) ? item.sources.length : 0
+      sources: sources.length,
+      sourceTypes: sources.map((source) => String(source?.type ?? "")).filter((type) => type !== "")
     });
   }
   return rows.sort((a, b) => b.created_at - a.created_at).slice(0, limit);
 }
-async function readNotes(mdRoot, limit, problems) {
-  const dir = join(mdRoot, "01_\u95EE\u7B54\u6C89\u6DC0");
+async function readNoteDir(mdRoot, subdir, limit, problems) {
+  const dir = join(mdRoot, subdir);
   let names = [];
   try {
     names = (await readdir(dir)).filter((name) => name.toLowerCase().endsWith(".md"));
@@ -168,10 +173,13 @@ async function buildSnapshot(options) {
   const retentionDays = positiveInt(config.statsRetentionDays, FALLBACK_RETENTION_DAYS);
   const maxEntries = positiveInt(config.statsMaxEntries, FALLBACK_MAX_ENTRIES);
   const tracePath = join(options.dataRoot, "decisions.jsonl");
-  const [decisions, items, notes] = await Promise.all([
+  const [decisions, items, notes, digests] = await Promise.all([
     readDecisions(tracePath, { retentionDays, maxEntries, now: now() }, problems),
-    readItems(options.dataRoot, limit, problems),
-    readNotes(mdRoot, limit, problems)
+    // 条目按**宽窗口**读：客户端要把「同主题的多版」聚成一行（被降级的旧版也在其中），
+    // 只读 limit 条会把版本历史截断，于是「共 N 版」永远显示不出来。
+    readItems(options.dataRoot, Math.max(limit * 8, 100), problems),
+    readNoteDir(mdRoot, QA_NOTE_DIR, limit, problems),
+    readNoteDir(mdRoot, DIGEST_NOTE_DIR, limit, problems)
   ]);
   return {
     ok: true,
@@ -187,6 +195,7 @@ async function buildSnapshot(options) {
     trace: { path: tracePath, recent: decisions.rows.slice(-limit) },
     items,
     notes,
+    digests,
     problems
   };
 }
@@ -255,9 +264,9 @@ function scoreText(score) {
   return String(Math.round(score * 1e3) / 1e3);
 }
 function reasonLabel(reason) {
-  const text = typeof reason === "string" ? reason : String(reason ?? "");
-  if (text.startsWith("exception:")) return "\u5224\u5B9A\u5F02\u5E38" + text.slice("exception:".length);
-  if (text.startsWith("\u672C\u8F6E\u6CA1\u6709")) return "\u65E0\u95EE\u7B54\u8F6E\uFF08\u5DE5\u5177\u8F6E / \u6CE8\u5165\u8F6E / \u65E0\u56DE\u7B54\uFF09";
+  const text2 = typeof reason === "string" ? reason : String(reason ?? "");
+  if (text2.startsWith("exception:")) return "\u5224\u5B9A\u5F02\u5E38" + text2.slice("exception:".length);
+  if (text2.startsWith("\u672C\u8F6E\u6CA1\u6709")) return "\u65E0\u95EE\u7B54\u8F6E\uFF08\u5DE5\u5177\u8F6E / \u6CE8\u5165\u8F6E / \u65E0\u56DE\u7B54\uFF09";
   const map = {
     captured: "\u901A\u8FC7\uFF1A\u5DF2\u6C89\u6DC0",
     rejected: "\u5DF2\u62E6\u622A",
@@ -272,7 +281,7 @@ function reasonLabel(reason) {
     "conflicts with existing item": "\u4E0E\u65E2\u6709\u6761\u76EE\u51B2\u7A81",
     "below value threshold": "\u4F4E\u4E8E\u4EF7\u503C\u9608\u503C"
   };
-  return map[text] ?? text;
+  return map[text2] ?? text2;
 }
 function topBlocker(byReason) {
   if (!byReason || typeof byReason !== "object") return null;
@@ -319,6 +328,139 @@ function openNoteInSidebar(input) {
   if (!service) return "no-service";
   if (!scope?.sessionId) return "no-session";
   return "failed";
+}
+
+// src/client/knowledge.ts
+function text(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function num(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function itemStatusLabel(status) {
+  switch (text(status)) {
+    case "active":
+      return "\u5F53\u524D\u7248\u672C";
+    case "superseded":
+      return "\u5DF2\u88AB\u65B0\u7248\u53D6\u4EE3";
+    case "draft":
+      return "\u8349\u7A3F";
+    case "conflict":
+      return "\u6709\u51B2\u7A81";
+    case "archived":
+      return "\u5DF2\u5F52\u6863";
+    case "":
+      return "";
+    default:
+      return String(status);
+  }
+}
+function implLabel(impl) {
+  switch (text(impl)) {
+    case "implemented":
+      return "\u5DF2\u843D\u5730";
+    case "designed":
+      return "\u4EC5\u8BBE\u8BA1";
+    case "placeholder":
+      return "\u5360\u4F4D";
+    case "":
+      return "";
+    default:
+      return String(impl);
+  }
+}
+function sourceLabel(source) {
+  switch (source) {
+    case "note":
+      return "";
+    case "digest":
+      return "\u4F1A\u8BDD\u6574\u7406";
+    case "item":
+      return "\u4EC5\u5165\u5E93";
+  }
+}
+function baseName(name) {
+  return text(name).replace(/\.md$/i, "");
+}
+function lower(value) {
+  return text(value).toLowerCase();
+}
+function latest(values) {
+  return values.length === 0 ? 0 : Math.max(...values);
+}
+function mergeKnowledge(input) {
+  const items = input.items ?? [];
+  const consumed = /* @__PURE__ */ new Set();
+  const rows = [];
+  const collect = (note, source) => {
+    const base = lower(baseName(note.name));
+    if (base === "") return;
+    const matched = [];
+    items.forEach((item, index) => {
+      if (consumed.has(index)) return;
+      if (lower(item.topic) === base || lower(item.title) === base) {
+        consumed.add(index);
+        matched.push(item);
+      }
+    });
+    const at = latest([
+      num(note.mtimeMs),
+      ...matched.map((item) => num(item.created_at)),
+      ...matched.map((item) => num(item.updated_at))
+    ]);
+    const primary = pickPrimary(matched);
+    rows.push({
+      key: text(note.path) !== "" ? text(note.path) : base,
+      title: baseName(note.name),
+      notePath: text(note.path) !== "" ? text(note.path) : void 0,
+      at,
+      source,
+      status: text(primary?.status),
+      impl: text(primary?.impl),
+      versions: matched.length,
+      itemId: text(primary?.id),
+      sources: num(primary?.sources),
+      topic: text(primary?.topic)
+    });
+  };
+  for (const note of input.notes ?? []) collect(note, "note");
+  for (const note of input.digests ?? []) collect(note, "digest");
+  const groups = /* @__PURE__ */ new Map();
+  items.forEach((item, index) => {
+    if (consumed.has(index)) return;
+    const topic = text(item.topic);
+    const title = text(item.title);
+    const groupKey = lower(topic !== "" ? topic : title);
+    if (groupKey === "") return;
+    const bucket = groups.get(groupKey);
+    if (bucket === void 0) groups.set(groupKey, { key: topic !== "" ? topic : title, items: [item] });
+    else bucket.items.push(item);
+  });
+  for (const { key, items: members } of groups.values()) {
+    const primary = pickPrimary(members);
+    rows.push({
+      key: "item:" + key,
+      title: text(primary?.title) !== "" ? text(primary?.title) : key,
+      at: latest(members.map((item) => num(item.created_at))),
+      source: isDigest(primary) ? "digest" : "item",
+      status: text(primary?.status),
+      impl: text(primary?.impl),
+      versions: members.length,
+      itemId: text(primary?.id),
+      sources: num(primary?.sources),
+      topic: text(primary?.topic)
+    });
+  }
+  return rows.sort((left, right) => right.at - left.at || left.title.localeCompare(right.title));
+}
+function pickPrimary(items) {
+  if (items.length === 0) return void 0;
+  const active = items.filter((item) => text(item.status) === "active" || text(item.status) === "");
+  const pool = active.length > 0 ? active : items;
+  return pool.reduce((best, item) => num(item.created_at) >= num(best.created_at) ? item : best);
+}
+function isDigest(item) {
+  return (item?.sourceTypes ?? []).some((type) => lower(type) === "digest");
 }
 
 // src/client/register.ts
@@ -374,6 +516,9 @@ export {
   buildSnapshot,
   formatValue,
   hintLine,
+  implLabel,
+  itemStatusLabel,
+  mergeKnowledge,
   openNoteInSidebar,
   panelDescriptor,
   percent,
@@ -381,6 +526,7 @@ export {
   registerPanelTab,
   relativeTime,
   scoreText,
+  sourceLabel,
   statNumber,
   summarizeDecisions,
   topBlocker
