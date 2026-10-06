@@ -408,9 +408,22 @@ Cordis 的守卫：`ctx.agents` / `ctx.slots` 这类服务，只要没在插件 
   DryRun / 实打 / 幂等 / 上游改写 / 已补丁五种情形均以 `%TEMP%` 下的整包副本实测通过。
   **补丁在 App 重启后才生效**（市场模块随宿主进程加载）。
 
+### 坑 13：`developerTools` 就是 `ui-settings` 行的 `config.enabled`（外观设置，不是插件问题）
+
+「新会话上方没有标准模式等预设切换」不是插件造成的，而是设置项**「显示代码工作视图」**关掉的结果
+（`packages/client/ui-agent-preset/src/client/AgentPresetSeat.tsx:134`：`!developerTools` 就直接 return null）。
+它的存储位置**不叫** developerTools：`packages/client/ui-settings/src/developer-tools-settings.ts:5`
+`DEVELOPER_TOOLS_NAMESPACE = 'ui-settings'`，字段 `{ enabled: z.boolean().default(true) }` ⇒ profile 补丁里
+`- id: ui-settings` 那行的 `config.enabled` **就是**它。本机已改 `true`（见 CHANGELOG），**要重启 App 才生效**。
+下次再遇到「设置页 / 预设 UI 少东西」，先查这一行，别先怀疑插件。
+
 ### 工程基建
 
 - **`status.json` 必须原子写**：实测被写成"一个完整对象 + 另一次写入的碎片"（两个写者交错，面板报 JSON SyntaxError）。
   已新增 `src/util/fs.ts` 的 `writeTextAtomic` / `writeJsonAtomic`（写临时文件 → 同目录 rename）。
   `status.json` 已接入；`decisions.jsonl` 裁剪、`feedback`/`profile`/`graph`/知识条目、笔记写入**待接入**。
 - **`selfcheck` 才是抓"装载失败"的那一层**（今天的崩溃、路由数、导入缺失全靠它抓到）→ 已接进根 `check`。
+- **版本号只有一处来源**：进程里一律**运行时**读包根 `VERSION`（panel 的 `readVersion()`；core 用构建期
+  常量 `__OBLIVION_CORE_VERSION__`）。panel 曾写死 `export const VERSION = '0.0.1'`，于是 bump 到 0.0.6
+  后面板标题栏还显示 v0.0.1。**bump 脚本改的那三处之外不准再出现版本字面量**；自检里已有
+  「`VERSION` === 包根 VERSION 文件」回归。

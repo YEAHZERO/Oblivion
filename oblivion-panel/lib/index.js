@@ -1,5 +1,5 @@
 // src/index.ts
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join as join2, resolve } from "node:path";
 
@@ -121,7 +121,17 @@ async function buildSnapshot(options) {
 // src/index.ts
 var name = "@oblivion/panel";
 var inject = [];
-var VERSION = "0.0.1";
+var VERSION = readVersion();
+function readVersion() {
+  for (const relative of ["../VERSION", "./VERSION", "../../VERSION"]) {
+    try {
+      const text = readFileSync(new URL(relative, import.meta.url), "utf8").trim();
+      if (text !== "") return text;
+    } catch {
+    }
+  }
+  return "0.0.0";
+}
 var DEFAULT_CONFIG = {
   dataRoot: "~/.oblivion/data",
   fallbackMdRoot: "C:/Library/\u90A3\u4E9B\u6E10\u6E10\u88AB\u9057\u5FD8",

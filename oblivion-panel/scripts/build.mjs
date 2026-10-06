@@ -60,7 +60,9 @@ const result = await build({
   jsx: 'automatic',
   external: CLIENT_EXTERNAL,
   legalComments: 'none',
-  define: { __OBLIVION_PANEL_VERSION__: JSON.stringify(version) },
+  // 刻意**不**再 define 版本常量：面板版本一律由 Node 半边运行时读包根 `VERSION`
+  // （`src/index.ts` 的 `readVersion()`）并随快照下发 `panelVersion`。
+  // 版本号一旦有第二个来源就一定会漂 —— 这里曾经 define 过 `__OBLIVION_PANEL_VERSION__`。
   logLevel: 'warning',
 });
 

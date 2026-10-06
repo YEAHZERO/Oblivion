@@ -13,7 +13,8 @@
 import { createElement } from 'react';
 import { OblivionPanel } from './Panel.js';
 import { createLeftbarAction, openOblivionTab, PolarisGlyph, type OpenTabCapable } from './leftbar.js';
-import { PANEL_TAB_ID, registerPanelTab, type ClientCtxLike } from './register.js';
+import { openNoteInSidebar, type OpenFileCapable } from './open-note.js';
+import { PANEL_TAB_ID, registerPanelTab, type ClientCtxLike, type RegisterResult } from './register.js';
 
 /**
  * **必须声明 `slots`**：Cordis 对未在 `inject` 里声明的服务访问会**抛错**
@@ -31,6 +32,17 @@ const LOG_NAME = '@oblivion/panel';
 interface SlotServiceLike {
   inject?(slot: string, callback: () => unknown): unknown;
   register?(options: Record<string, unknown>, component: unknown): unknown;
+}
+
+/**
+ * side bar 递给 tab 组件的 props 里我们真正用到的几个
+ * （官方契约是 `TabComponentProps`，`dsh-better-sidebar` 的 `lib/types/client/service.d.ts:123`：
+ * `ctx` / `store` / `scope: SessionScope` / `tab` / `visible`，外加可选的 `onOpenFile`）。
+ */
+interface PanelPropsLike {
+  visible?: boolean;
+  scope?: { sessionId?: string; cwd?: string };
+  onOpenFile?: (path: string) => void;
 }
 
 /** 把一段 JSON 报给本插件自己的 Node 半边（诊断通道；失败绝不影响装载）。 */
@@ -101,13 +113,43 @@ export function apply(ctx: ClientCtxLike): void {
   const logger = (ctx as { logger?: (name: string) => { warn?: (m: string) => void; info?: (m: string) => void } }).logger?.(LOG_NAME);
   const warn = (message: string): void => logger?.warn?.(message);
 
-  // ① 右侧栏 tab
-  const result = registerPanelTab(
-    ctx,
-    ((props: unknown) => createElement(OblivionPanel, props as never)) as never,
-    warn,
-    (size: number) => createElement(PolarisGlyph, { size }),
-  );
+  /**
+   * **在调用那一刻**才读服务句柄。
+   *
+   * `registerPanelTab` 里的 `ctx.inject(['betterSidebar'], …)` 可能是异步触发的，
+   * 提前取 `result.service` 会永远拿到 `undefined` ⇒ 左栏入口走 'no-service' 分支、
+   * 只留一条日志 —— 这就是「左下角图标点不动」的真凶（实测那一次点击的结果是
+   * `outcome:"no-service"`，修好后同一条自报变成 `outcome:"opened"`）。
+   */
+  let result: RegisterResult = { status: 'no-service', detail: '尚未注册' };
+  const readService = (): (OpenTabCapable & OpenFileCapable) | undefined =>
+    result.service as unknown as (OpenTabCapable & OpenFileCapable) | undefined;
+
+  /** 面板里点一条笔记 → 请侧边栏打开；结果落进诊断自报（点了没反应时能看出卡在哪一步）。 */
+  const openNote = (props: PanelPropsLike, path: string): void => {
+    const service = readService();
+    const outcome = openNoteInSidebar({ service, scope: props.scope, path, hostOpen: props.onOpenFile });
+    postDiag({
+      at: Date.now(),
+      where: 'open-note',
+      outcome,
+      path,
+      hasService: service !== undefined,
+      hasOpenFile: typeof service?.openFile === 'function',
+      hasSessionId: typeof props.scope?.sessionId === 'string',
+      tabStatus: result.status,
+    });
+    if (outcome === 'opened' || outcome === 'opened-via-host-prop') logger?.info?.('已请侧边栏打开笔记：' + path);
+    else warn('打开笔记失败（' + outcome + '）：' + path);
+  };
+
+  // ① 右侧栏 tab（组件外包一层：把「打开笔记」注入进去）
+  const panelComponent = (props: PanelPropsLike) =>
+    createElement(OblivionPanel, {
+      visible: props.visible,
+      onOpenFile: (path: string) => openNote(props, path),
+    });
+  result = registerPanelTab(ctx, panelComponent as never, warn, (size: number) => createElement(PolarisGlyph, { size }));
   if (result.status === 'registered') logger?.info?.('已在 side bar 注册 Oblivion 面板 tab');
   else warn('面板 tab 未注册：' + String(result.detail ?? result.status));
 
@@ -122,14 +164,6 @@ export function apply(ctx: ClientCtxLike): void {
   }
   let leftbarRegistered = false;
   if (slots && typeof slots.inject === 'function' && typeof slots.register === 'function') {
-    /**
-     * **在点击那一刻**才读服务句柄。
-     *
-     * `registerPanelTab` 里的 `ctx.inject(['betterSidebar'], …)` 可能是异步触发的，
-     * 提前取 `result.service` 会永远拿到 `undefined` ⇒ 点击走 'no-service' 分支、
-     * 只留一条日志 —— 这就是「左下角图标点不动」的真凶。
-     */
-    const readService = (): OpenTabCapable | undefined => result.service as unknown as OpenTabCapable | undefined;
     const component = createLeftbarAction(() => {
       const service = readService();
       const outcome = openOblivionTab(service, PANEL_TAB_ID);

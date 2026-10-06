@@ -23,7 +23,7 @@
  * 前者是本仓已验证的做法（`@oblivion/vimc` 的诊断路由同一套 `webServer.register`）。
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -35,7 +35,25 @@ export const name = '@oblivion/panel';
 /** 浏览器半边不需要宿主服务；Node 半边用 webServer 挂路由。 */
 export const inject: string[] = [];
 
-export const VERSION = '0.0.1';
+/**
+ * 版本号**只有一处来源**：包根的 `VERSION` 文件（`scripts/bump-version.mjs` 改的就是它）。
+ *
+ * 这里原先写死成 `'0.0.1'`，于是 bump 到 0.0.6 之后面板标题栏仍显示 `面板 v0.0.1`
+ * —— 版本号有第二个来源就一定会漂，实测踩过。`lib/index.js` 的 `../VERSION` 就是包根那份。
+ */
+export const VERSION: string = readVersion();
+
+function readVersion(): string {
+  for (const relative of ['../VERSION', './VERSION', '../../VERSION']) {
+    try {
+      const text = readFileSync(new URL(relative, import.meta.url), 'utf8').trim();
+      if (text !== '') return text;
+    } catch {
+      // 换下一个候选位置（打包层级不同时相对路径会变）
+    }
+  }
+  return '0.0.0';
+}
 
 interface Config {
   readonly dataRoot: string;

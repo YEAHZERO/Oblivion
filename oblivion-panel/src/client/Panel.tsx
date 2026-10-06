@@ -7,13 +7,25 @@
  * 设计原则（与 core 的「先跑够几天再调参」一致）：
  *   - **空态要解释原因**，不是一句「暂无数据」：没装载 / 跑过但没判定 / 数据目录找不到，三件事分开说；
  *   - 建议区只在 core 给出 `hints` 时出现（样本不足时它刻意不开口，这里也照实显示「样本不足」）；
- *   - 只读：面板不写任何东西，唯一的动作是「刷新」与「打开笔记」（交给 side bar 自己的 openFile）。
+ *   - 只读：面板不写任何东西，唯一的动作是「刷新」与「打开笔记」；
+ *   - 「打开笔记」由宿主半边包一层注入 `onOpenFile`（见 `index.ts` 的 `openNoteInSidebar`），
+ *     点条目名 / 笔记名都会走同一条路，结果写进 `panel-client-diag.json` 供排查。
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { RestartControl } from './RestartControl.js';
-import { actionLabel, hintLine, percent, relativeTime, statNumber, topReason, type HintLike } from './format.js';
+import {
+  actionLabel,
+  hintLine,
+  percent,
+  reasonLabel,
+  relativeTime,
+  scoreText,
+  statNumber,
+  topReason,
+  type HintLike,
+} from './format.js';
 
 /** 与 Node 半边 config.routePath 的默认值一致。 */
 const STATUS_ROUTE = '/oblivion-panel/status';
@@ -88,6 +100,20 @@ function kpi(label: string, value: JSX.Element | string): JSX.Element {
       <div style={S.kpiValue}>{value}</div>
     </div>
   );
+}
+
+/** 从标题/主题猜出这个条目对应的笔记文件（找不到就不给链接，绝不凭空造路径）。 */
+function notePathForItem(item: { topic?: string; title?: string }, notes: PanelData['notes']): string | undefined {
+  if (!notes || notes.length === 0) return undefined;
+  const candidates = [item.topic, item.title]
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => value !== '');
+  for (const candidate of candidates) {
+    const wanted = (candidate + '.md').toLowerCase();
+    const hit = notes.find((note) => String(note.name ?? '').toLowerCase() === wanted);
+    if (hit?.path) return hit.path;
+  }
+  return undefined;
 }
 
 /** 空态：把「为什么没有数据」说清楚。 */
@@ -200,8 +226,8 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
                 <li key={index} style={S.li}>
                   <span style={S.dim}>{relativeTime(row.at)}</span>　
                   <span>{actionLabel(row.action)}</span>
-                  {row.score !== undefined ? <span style={S.dim}> · 分值 {String(row.score)}</span> : null}
-                  <div style={{ ...S.dim, ...S.mono }}>{String(row.reason ?? '')}</div>
+                  {row.score !== undefined ? <span style={S.dim}> · 分值 {scoreText(row.score)}</span> : null}
+                  <div style={{ ...S.dim, ...S.mono }}>{reasonLabel(row.reason)}</div>
                 </li>
               ))}
           </ul>
@@ -212,14 +238,33 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
           <div style={S.dim}>还没有条目落盘</div>
         ) : (
           <ul style={S.list}>
-            {items.map((item, index) => (
-              <li key={String(item.id ?? index)} style={S.li}>
-                <div>{String(item.title ?? '(无标题)')}</div>
-                <div style={S.dim}>
-                  {relativeTime(item.created_at)} · 主题 {String(item.topic ?? '—')} · {String(item.id ?? '')}
-                </div>
-              </li>
-            ))}
+            {items.map((item, index) => {
+              const path = notePathForItem(item, notes);
+              return (
+                <li key={String(item.id ?? index)} style={S.li}>
+                  <div>
+                    {path ? (
+                      <a
+                        href="#"
+                        style={{ color: 'inherit' }}
+                        title={'在侧边栏打开 ' + path}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          props.onOpenFile?.(path);
+                        }}
+                      >
+                        {String(item.title ?? '(无标题)')}
+                      </a>
+                    ) : (
+                      String(item.title ?? '(无标题)')
+                    )}
+                  </div>
+                  <div style={S.dim}>
+                    {relativeTime(item.created_at)} · 主题 {String(item.topic ?? '—')} · {String(item.id ?? '')}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
 

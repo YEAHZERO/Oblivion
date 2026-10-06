@@ -79,6 +79,43 @@ export function statNumber(core: unknown, field: string): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+/**
+ * 分值渲染：core 的 `score` 是 0..1 的浮点，直接 `String()` 会露出 `0.7000000000000001`
+ * （面板实测过），所以按千分位取整后再显示 —— 判定阈值最小步长是 0.05，三位足够。
+ */
+export function scoreText(score: unknown): string {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return '—';
+  return String(Math.round(score * 1000) / 1000);
+}
+
+/**
+ * 判定原因的中文标签。
+ *
+ * 键是 `@oblivion/core` 真实写出的 reason 字符串（`src/knowledge/filter.ts`、
+ * `src/qa-loop/index.ts`）—— 那边改了这里就要同步；**未知键原样返回**，
+ * 宁可露出英文，也不要在这里编一个不存在的解释。
+ */
+export function reasonLabel(reason: unknown): string {
+  const text = typeof reason === 'string' ? reason : String(reason ?? '');
+  if (text.startsWith('exception:')) return '判定异常' + text.slice('exception:'.length);
+  if (text.startsWith('本轮没有')) return '无问答轮（工具轮 / 注入轮 / 无回答）';
+  const map: Record<string, string> = {
+    captured: '通过：已沉淀',
+    rejected: '已拦截',
+    'no-source': '无来源（模型没引用任何文件或工具）',
+    'oblivion-originated': '来自本插件自身（防自噬）',
+    'answer-too-short': '回答太短',
+    'meaningless-only': '没有实质内容',
+    'contains-unknown': '回答是「不知道」',
+    'pleasantry-only': '只有客套话',
+    'exact hash match': '与既有条目完全相同',
+    'semantic duplicate': '与既有条目语义重复',
+    'conflicts with existing item': '与既有条目冲突',
+    'below value threshold': '低于价值阈值',
+  };
+  return map[text] ?? text;
+}
+
 /** 主拦截原因（`byReason` 里计数最大的那个）。 */
 export function topReason(core: unknown): { reason: string; count: number } | null {
   if (!core || typeof core !== 'object') return null;

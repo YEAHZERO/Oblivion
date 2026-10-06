@@ -172,6 +172,30 @@ function statNumber(core, field) {
   const value = stats[field];
   return typeof value === "number" && Number.isFinite(value) ? value : void 0;
 }
+function scoreText(score) {
+  if (typeof score !== "number" || !Number.isFinite(score)) return "\u2014";
+  return String(Math.round(score * 1e3) / 1e3);
+}
+function reasonLabel(reason) {
+  const text = typeof reason === "string" ? reason : String(reason ?? "");
+  if (text.startsWith("exception:")) return "\u5224\u5B9A\u5F02\u5E38" + text.slice("exception:".length);
+  if (text.startsWith("\u672C\u8F6E\u6CA1\u6709")) return "\u65E0\u95EE\u7B54\u8F6E\uFF08\u5DE5\u5177\u8F6E / \u6CE8\u5165\u8F6E / \u65E0\u56DE\u7B54\uFF09";
+  const map = {
+    captured: "\u901A\u8FC7\uFF1A\u5DF2\u6C89\u6DC0",
+    rejected: "\u5DF2\u62E6\u622A",
+    "no-source": "\u65E0\u6765\u6E90\uFF08\u6A21\u578B\u6CA1\u5F15\u7528\u4EFB\u4F55\u6587\u4EF6\u6216\u5DE5\u5177\uFF09",
+    "oblivion-originated": "\u6765\u81EA\u672C\u63D2\u4EF6\u81EA\u8EAB\uFF08\u9632\u81EA\u566C\uFF09",
+    "answer-too-short": "\u56DE\u7B54\u592A\u77ED",
+    "meaningless-only": "\u6CA1\u6709\u5B9E\u8D28\u5185\u5BB9",
+    "contains-unknown": "\u56DE\u7B54\u662F\u300C\u4E0D\u77E5\u9053\u300D",
+    "pleasantry-only": "\u53EA\u6709\u5BA2\u5957\u8BDD",
+    "exact hash match": "\u4E0E\u65E2\u6709\u6761\u76EE\u5B8C\u5168\u76F8\u540C",
+    "semantic duplicate": "\u4E0E\u65E2\u6709\u6761\u76EE\u8BED\u4E49\u91CD\u590D",
+    "conflicts with existing item": "\u4E0E\u65E2\u6709\u6761\u76EE\u51B2\u7A81",
+    "below value threshold": "\u4F4E\u4E8E\u4EF7\u503C\u9608\u503C"
+  };
+  return map[text] ?? text;
+}
 function topReason(core) {
   if (!core || typeof core !== "object") return null;
   const stats = core.stats;
@@ -181,6 +205,46 @@ function topReason(core) {
   const entries = Object.entries(byReason).filter(([, count]) => typeof count === "number").sort((a, b) => Number(b[1]) - Number(a[1]));
   if (entries.length === 0) return null;
   return { reason: entries[0][0], count: Number(entries[0][1]) };
+}
+
+// src/client/open-note.ts
+function supportsOpenFile(service) {
+  if (!service || typeof service.openFile !== "function") return false;
+  if (!Array.isArray(service.features)) return true;
+  return service.features.includes("openFile");
+}
+function snapshotScope(service) {
+  try {
+    const snapshot = service?.getSnapshot?.();
+    const sessionId = snapshot?.sessionId;
+    return typeof sessionId === "string" && sessionId !== "" ? { sessionId } : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function openNoteInSidebar(input) {
+  const { service, path, hostOpen } = input;
+  const path_ = typeof path === "string" ? path.trim() : "";
+  if (path_ === "") return "failed";
+  const scope = input.scope?.sessionId ? input.scope : snapshotScope(service);
+  if (supportsOpenFile(service) && scope?.sessionId) {
+    try {
+      service?.openFile?.({ sessionId: scope.sessionId, ...scope.cwd ? { cwd: scope.cwd } : {} }, path_);
+      return "opened";
+    } catch {
+    }
+  }
+  if (typeof hostOpen === "function") {
+    try {
+      hostOpen(path_);
+      return "opened-via-host-prop";
+    } catch {
+      return "failed";
+    }
+  }
+  if (!service) return "no-service";
+  if (!scope?.sessionId) return "no-session";
+  return "failed";
 }
 
 // src/client/register.ts
@@ -236,10 +300,13 @@ export {
   buildSnapshot,
   formatValue,
   hintLine,
+  openNoteInSidebar,
   panelDescriptor,
   percent,
+  reasonLabel,
   registerPanelTab,
   relativeTime,
+  scoreText,
   statNumber,
   topReason
 };

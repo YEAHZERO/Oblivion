@@ -12,7 +12,25 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/panel` v0.0.6 + `@oblivion/core` v0.1.19：左栏入口点不动、链路真正连通
+## [未发布] — `@oblivion/panel` v0.0.7 + `@oblivion/core` v0.1.19：左栏入口点不动、链路真正连通、笔记可点开
+
+### `@oblivion/panel` v0.0.7 —— 笔记可点开、版本号不再漂、判定行说人话
+
+- **知识库笔记「点了在侧边栏打开」不生效**：`props.onOpenFile` 是 `TabComponentProps` 的**可选**字段
+  （`dsh-better-sidebar@0.24.1` 的 `lib/types/client/service.d.ts:136`），side bar 不一定递，而组件是
+  裸透传 `(props) => createElement(OblivionPanel, props)`。改为在包装层**自己注入**，并优先走服务级 API
+  `openFile(scope, path)`（`service.d.ts:586`，能力位 `'openFile'`；作用域取 `props.scope`，
+  缺席时问 `getSnapshot().sessionId`），宿主 prop 只当退路。新增 `src/client/open-note.ts`
+  （纯函数，五条路径均入自检）与诊断段 `where:'open-note'`。
+- **「最近沉淀」的条目也能点**：条目本身不带路径，用 `notePathForItem()` 按 `topic` / `title` 去比
+  `01_问答沉淀/<name>.md`；**匹配不到就不做链接**（绝不凭空造路径）。
+- **面板标题栏一直显示 `v0.0.1`**：`src/index.ts` 曾写死 `export const VERSION = '0.0.1'`，而 bump 脚本
+  只改 `VERSION` / `lib/VERSION` / `package.json` ⇒ **版本号有了第二个来源就一定会漂**。现在运行时读包根
+  `VERSION`（`readVersion()` 依次试 `../VERSION` → `./VERSION` → `../../VERSION`），构建脚本里那个
+  `__OBLIVION_PANEL_VERSION__` define 已删除；自检加了「`VERSION` === 包根 VERSION 文件」回归。
+- **判定行说人话**：`reasonLabel()` 映射 core 真实 reason（`captured` → 通过：已沉淀 等 12 条，
+  `exception:` / `本轮没有` 前缀单列，**未知键原样露出**，不在面板里编解释）；`scoreText()` 按三位小数
+  取整，不再露出 `0.7000000000000001`。
 
 ### `@oblivion/panel` v0.0.6 —— 左下角 Oblivion 图标「点了没反应」
 
@@ -50,6 +68,13 @@
   **「显示代码工作视图」（developerTools）** 控制 —— `ui-agent-preset/src/client/AgentPresetSeat.tsx:134`
   `if (!main || !developerTools || !ready) return null`。本机 profile 该值为 `false`
   （`cordis.patch.yml` 的 `ui-settings: { enabled: false }`），与 Oblivion 插件无关。
+  **2026-10-06 已打开**：第 22 行 `ui-settings: { enabled: false }` → `true`，另把第 13 行
+  `ui-settings-account: { developerTools: false }` → `true` 一并同步；备份
+  `cordis.patch.yml.bak-before-devtools-20261006-130319`，改后用 `node -e` + `yaml@2` 验过仍是 4 条目数组。
+  **补丁在 App 重启后才生效**（宿主启动时读补丁层）。判据：`DEVELOPER_TOOLS_NAMESPACE = 'ui-settings'`
+  （`packages/client/ui-settings/src/developer-tools-settings.ts:5`）+
+  `DeveloperToolsSettingsFields = { enabled: z.boolean().default(true) }`（`:14-16`）⇒ 那一行的
+  `config.enabled` **就是** developerTools 偏好本身。
 
 ## [未发布] — `@oblivion/vimc` v0.2.10：交付层从 bundle 层**改回热挂**
 

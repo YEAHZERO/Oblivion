@@ -13,7 +13,16 @@ export {
   formatValue,
   statNumber,
   topReason,
+  scoreText,
+  reasonLabel,
 } from './client/format.js';
+export {
+  openNoteInSidebar,
+  type OpenFileCapable,
+  type OpenNoteInput,
+  type OpenNoteOutcome,
+  type SessionScopeLike,
+} from './client/open-note.js';
 export {
   PANEL_TAB_ID,
   panelDescriptor,

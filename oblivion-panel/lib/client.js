@@ -162,6 +162,30 @@ function statNumber(core, field) {
   const value = stats[field];
   return typeof value === "number" && Number.isFinite(value) ? value : void 0;
 }
+function scoreText(score) {
+  if (typeof score !== "number" || !Number.isFinite(score)) return "\u2014";
+  return String(Math.round(score * 1e3) / 1e3);
+}
+function reasonLabel(reason) {
+  const text = typeof reason === "string" ? reason : String(reason ?? "");
+  if (text.startsWith("exception:")) return "\u5224\u5B9A\u5F02\u5E38" + text.slice("exception:".length);
+  if (text.startsWith("\u672C\u8F6E\u6CA1\u6709")) return "\u65E0\u95EE\u7B54\u8F6E\uFF08\u5DE5\u5177\u8F6E / \u6CE8\u5165\u8F6E / \u65E0\u56DE\u7B54\uFF09";
+  const map = {
+    captured: "\u901A\u8FC7\uFF1A\u5DF2\u6C89\u6DC0",
+    rejected: "\u5DF2\u62E6\u622A",
+    "no-source": "\u65E0\u6765\u6E90\uFF08\u6A21\u578B\u6CA1\u5F15\u7528\u4EFB\u4F55\u6587\u4EF6\u6216\u5DE5\u5177\uFF09",
+    "oblivion-originated": "\u6765\u81EA\u672C\u63D2\u4EF6\u81EA\u8EAB\uFF08\u9632\u81EA\u566C\uFF09",
+    "answer-too-short": "\u56DE\u7B54\u592A\u77ED",
+    "meaningless-only": "\u6CA1\u6709\u5B9E\u8D28\u5185\u5BB9",
+    "contains-unknown": "\u56DE\u7B54\u662F\u300C\u4E0D\u77E5\u9053\u300D",
+    "pleasantry-only": "\u53EA\u6709\u5BA2\u5957\u8BDD",
+    "exact hash match": "\u4E0E\u65E2\u6709\u6761\u76EE\u5B8C\u5168\u76F8\u540C",
+    "semantic duplicate": "\u4E0E\u65E2\u6709\u6761\u76EE\u8BED\u4E49\u91CD\u590D",
+    "conflicts with existing item": "\u4E0E\u65E2\u6709\u6761\u76EE\u51B2\u7A81",
+    "below value threshold": "\u4F4E\u4E8E\u4EF7\u503C\u9608\u503C"
+  };
+  return map[text] ?? text;
+}
 function topReason(core) {
   if (!core || typeof core !== "object") return null;
   const stats = core.stats;
@@ -217,6 +241,16 @@ function kpi(label, value) {
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.kpiLabel, children: label }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.kpiValue, children: value })
   ] });
+}
+function notePathForItem(item, notes) {
+  if (!notes || notes.length === 0) return void 0;
+  const candidates = [item.topic, item.title].map((value) => String(value ?? "").trim()).filter((value) => value !== "");
+  for (const candidate of candidates) {
+    const wanted = (candidate + ".md").toLowerCase();
+    const hit = notes.find((note) => String(note.name ?? "").toLowerCase() === wanted);
+    if (hit?.path) return hit.path;
+  }
+  return void 0;
 }
 function emptyReason(data) {
   if (!data.core) {
@@ -311,25 +345,40 @@ function OblivionPanel(props) {
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: actionLabel(row.action) }),
         row.score !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: S.dim, children: [
           " \xB7 \u5206\u503C ",
-          String(row.score)
+          scoreText(row.score)
         ] }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, ...S.mono }, children: String(row.reason ?? "") })
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { ...S.dim, ...S.mono }, children: reasonLabel(row.reason) })
       ] }, index)) }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
         "\u6700\u8FD1\u6C89\u6DC0\uFF08",
         items.length,
         "\uFF09"
       ] }),
-      items.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.dim, children: "\u8FD8\u6CA1\u6709\u6761\u76EE\u843D\u76D8" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: items.map((item, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: String(item.title ?? "(\u65E0\u6807\u9898)") }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
-          relativeTime(item.created_at),
-          " \xB7 \u4E3B\u9898 ",
-          String(item.topic ?? "\u2014"),
-          " \xB7 ",
-          String(item.id ?? "")
-        ] })
-      ] }, String(item.id ?? index))) }),
+      items.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: S.dim, children: "\u8FD8\u6CA1\u6709\u6761\u76EE\u843D\u76D8" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: S.list, children: items.map((item, index) => {
+        const path = notePathForItem(item, notes);
+        return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: S.li, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: path ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "a",
+            {
+              href: "#",
+              style: { color: "inherit" },
+              title: "\u5728\u4FA7\u8FB9\u680F\u6253\u5F00 " + path,
+              onClick: (event) => {
+                event.preventDefault();
+                props.onOpenFile?.(path);
+              },
+              children: String(item.title ?? "(\u65E0\u6807\u9898)")
+            }
+          ) : String(item.title ?? "(\u65E0\u6807\u9898)") }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.dim, children: [
+            relativeTime(item.created_at),
+            " \xB7 \u4E3B\u9898 ",
+            String(item.topic ?? "\u2014"),
+            " \xB7 ",
+            String(item.id ?? "")
+          ] })
+        ] }, String(item.id ?? index));
+      }) }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: S.h, children: [
         "\u77E5\u8BC6\u5E93\u7B14\u8BB0\uFF08",
         notes.length,
@@ -431,6 +480,46 @@ function createLeftbarAction(onActivate) {
       }
     );
   };
+}
+
+// src/client/open-note.ts
+function supportsOpenFile(service) {
+  if (!service || typeof service.openFile !== "function") return false;
+  if (!Array.isArray(service.features)) return true;
+  return service.features.includes("openFile");
+}
+function snapshotScope(service) {
+  try {
+    const snapshot = service?.getSnapshot?.();
+    const sessionId = snapshot?.sessionId;
+    return typeof sessionId === "string" && sessionId !== "" ? { sessionId } : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function openNoteInSidebar(input) {
+  const { service, path, hostOpen } = input;
+  const path_ = typeof path === "string" ? path.trim() : "";
+  if (path_ === "") return "failed";
+  const scope = input.scope?.sessionId ? input.scope : snapshotScope(service);
+  if (supportsOpenFile(service) && scope?.sessionId) {
+    try {
+      service?.openFile?.({ sessionId: scope.sessionId, ...scope.cwd ? { cwd: scope.cwd } : {} }, path_);
+      return "opened";
+    } catch {
+    }
+  }
+  if (typeof hostOpen === "function") {
+    try {
+      hostOpen(path_);
+      return "opened-via-host-prop";
+    } catch {
+      return "failed";
+    }
+  }
+  if (!service) return "no-service";
+  if (!scope?.sessionId) return "no-session";
+  return "failed";
 }
 
 // src/client/register.ts
@@ -545,12 +634,29 @@ function reportCtxShape(ctx, extra = {}) {
 function apply(ctx) {
   const logger = ctx.logger?.(LOG_NAME);
   const warn = (message) => logger?.warn?.(message);
-  const result = registerPanelTab(
-    ctx,
-    ((props) => (0, import_react3.createElement)(OblivionPanel, props)),
-    warn,
-    (size) => (0, import_react3.createElement)(PolarisGlyph, { size })
-  );
+  let result = { status: "no-service", detail: "\u5C1A\u672A\u6CE8\u518C" };
+  const readService = () => result.service;
+  const openNote = (props, path) => {
+    const service = readService();
+    const outcome = openNoteInSidebar({ service, scope: props.scope, path, hostOpen: props.onOpenFile });
+    postDiag({
+      at: Date.now(),
+      where: "open-note",
+      outcome,
+      path,
+      hasService: service !== void 0,
+      hasOpenFile: typeof service?.openFile === "function",
+      hasSessionId: typeof props.scope?.sessionId === "string",
+      tabStatus: result.status
+    });
+    if (outcome === "opened" || outcome === "opened-via-host-prop") logger?.info?.("\u5DF2\u8BF7\u4FA7\u8FB9\u680F\u6253\u5F00\u7B14\u8BB0\uFF1A" + path);
+    else warn("\u6253\u5F00\u7B14\u8BB0\u5931\u8D25\uFF08" + outcome + "\uFF09\uFF1A" + path);
+  };
+  const panelComponent = (props) => (0, import_react3.createElement)(OblivionPanel, {
+    visible: props.visible,
+    onOpenFile: (path) => openNote(props, path)
+  });
+  result = registerPanelTab(ctx, panelComponent, warn, (size) => (0, import_react3.createElement)(PolarisGlyph, { size }));
   if (result.status === "registered") logger?.info?.("\u5DF2\u5728 side bar \u6CE8\u518C Oblivion \u9762\u677F tab");
   else warn("\u9762\u677F tab \u672A\u6CE8\u518C\uFF1A" + String(result.detail ?? result.status));
   let slots;
@@ -561,7 +667,6 @@ function apply(ctx) {
   }
   let leftbarRegistered = false;
   if (slots && typeof slots.inject === "function" && typeof slots.register === "function") {
-    const readService = () => result.service;
     const component = createLeftbarAction(() => {
       const service = readService();
       const outcome = openOblivionTab(service, PANEL_TAB_ID);

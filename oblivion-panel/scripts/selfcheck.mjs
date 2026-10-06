@@ -58,7 +58,12 @@ await check('产物存在且可 import', async () => {
   assert.ok(existsSync(kitPath), 'lib/testkit.js 不存在，先运行 build');
   const mod = await import(pathToFileURL(lib).href);
   assert.equal(mod.name, '@oblivion/panel');
-  return 'lib/index.js + lib/testkit.js';
+  assert.equal(
+    mod.VERSION,
+    readFileSync(join(ROOT, 'VERSION'), 'utf8').trim(),
+    'VERSION 必须直接来自包根 VERSION 文件（曾经写死成 0.0.1，面板标题栏一直显示旧版本）',
+  );
+  return 'lib/index.js + lib/testkit.js @ v' + mod.VERSION;
 });
 
 await check('apply 注册两条路由（只读快照 + 客户端 ctx 自报）', async () => {
@@ -199,6 +204,72 @@ await check('卸载无残留：effect 里登记的 disposer 都被调用', async
   assert.equal(effects.length, 1);
   assert.equal(disposed, 1);
   return 'disposer 已随 effect 释放';
+});
+
+await check('判定行格式化：scoreText 收住浮点尾巴 / reasonLabel 未知键原样露出', async () => {
+  const kit = await import(pathToFileURL(kitPath).href);
+  assert.equal(kit.scoreText(0.7000000000000001), '0.7', '面板实测过的浮点尾巴应被收掉');
+  assert.equal(kit.scoreText(0.8), '0.8');
+  assert.equal(kit.scoreText(undefined), '—');
+  assert.equal(kit.scoreText('0.5'), '—', '非数字一律破折号，不猜');
+  assert.equal(kit.reasonLabel('captured'), '通过：已沉淀');
+  assert.equal(kit.reasonLabel('answer-too-short'), '回答太短');
+  assert.equal(kit.reasonLabel('exception: boom'), '判定异常 boom');
+  assert.equal(kit.reasonLabel('core 以后新增的原因'), 'core 以后新增的原因', '未知原因必须原样露出，不能编解释');
+  return 'scoreText / reasonLabel 各 4 条';
+});
+
+await check('笔记点击：openNoteInSidebar 的五条路径都被钉住', async () => {
+  const kit = await import(pathToFileURL(kitPath).href);
+  const calls = [];
+  const capable = (extra = {}) => ({
+    features: ['openFile'],
+    openFile: (scope, path) => calls.push({ via: 'service', scope, path }),
+    ...extra,
+  });
+
+  // ① props.scope 直接可用
+  assert.equal(
+    kit.openNoteInSidebar({ service: capable(), scope: { sessionId: 's-9', cwd: 'C:/x' }, path: ' C:/kb/a.md ' }),
+    'opened',
+  );
+  assert.equal(calls[0].path, 'C:/kb/a.md', '路径应被 trim');
+  assert.deepEqual(calls[0].scope, { sessionId: 's-9', cwd: 'C:/x' });
+
+  // ② props.scope 缺席 → 用 getSnapshot() 的当前激活会话
+  assert.equal(
+    kit.openNoteInSidebar({ service: capable({ getSnapshot: () => ({ sessionId: 's-7' }) }), path: 'C:/kb/b.md' }),
+    'opened',
+  );
+  assert.equal(calls[1].scope.sessionId, 's-7');
+
+  // ③ 能力位里没有 openFile → 不走服务，落到宿主 prop
+  assert.equal(
+    kit.openNoteInSidebar({
+      service: { features: ['other'], openFile: () => calls.push({ via: '不该走这条' }) },
+      path: 'C:/kb/c.md',
+      hostOpen: (path) => calls.push({ via: 'host', path }),
+    }),
+    'opened-via-host-prop',
+  );
+  assert.equal(calls[2].via, 'host');
+
+  // ④ openFile 自己抛错 → 也落到宿主 prop，不把异常抛进 React
+  assert.equal(
+    kit.openNoteInSidebar({
+      service: { features: ['openFile'], openFile: () => { throw new Error('boom'); } },
+      scope: { sessionId: 's-1' },
+      path: 'C:/kb/d.md',
+      hostOpen: (path) => calls.push({ via: 'host', path }),
+    }),
+    'opened-via-host-prop',
+  );
+
+  // ⑤ 服务在但没有会话 / 服务整个缺席 / 空路径
+  assert.equal(kit.openNoteInSidebar({ service: { features: ['openFile'], openFile: () => {} }, path: 'C:/kb/e.md' }), 'no-session');
+  assert.equal(kit.openNoteInSidebar({ path: 'C:/kb/f.md' }), 'no-service');
+  assert.equal(kit.openNoteInSidebar({ service: capable(), path: '   ' }), 'failed');
+  return 'opened / opened(快照) / opened-via-host-prop(能力位) / opened-via-host-prop(抛错) / no-session / no-service / failed';
 });
 
 rmSync(tmp, { recursive: true, force: true });
