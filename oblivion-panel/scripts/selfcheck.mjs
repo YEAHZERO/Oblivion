@@ -331,7 +331,26 @@ await check('知识库合栏：笔记为骨架 + 条目状态/版本，无笔记
   assert.equal(rows[1].source, 'digest');
   assert.equal(rows[2].notePath, undefined, '没有笔记就不给路径');
   assert.equal(kit.sourceLabel(rows[2].source), '仅入库');
-  return '单栏 ' + rows.length + ' 行（笔记骨架 / 版本聚合 / 仅入库补行）';
+  // 默认视图再收一层：「仅入库」只显示最近几条（实测一栏 47 行里 36 行是仅入库）。
+  const mixed = [
+    { key: 'n1', title: '有笔记', notePath: 'K:/01_问答沉淀/a.md', at: 9 },
+    { key: 'i1', title: 'i1', at: 8 },
+    { key: 'i2', title: 'i2', at: 7 },
+    { key: 'i3', title: 'i3', at: 6 },
+    { key: 'i4', title: 'i4', at: 5 },
+    { key: 'i5', title: 'i5', at: 4 },
+    { key: 'i6', title: 'i6', at: 3 },
+    { key: 'i7', title: 'i7', at: 2 },
+  ];
+  const view = kit.knowledgeView(mixed);
+  assert.deepEqual(
+    view.visible.map((row) => row.key),
+    ['n1', 'i1', 'i2', 'i3', 'i4', 'i5'],
+    '默认 = 有笔记的全部 + 仅入库最近 ' + kit.KNOWLEDGE_ITEM_LIMIT + ' 条，顺序不变',
+  );
+  assert.equal(view.hidden, 2);
+  assert.equal(kit.knowledgeView(mixed, { showAll: true }).visible.length, 8, '展开后全部回来');
+  return '单栏 ' + rows.length + ' 行（笔记骨架 / 版本聚合 / 仅入库补行 / 默认折叠 ' + view.hidden + ' 行）';
 });
 
 await check('判定曲线：纵轴 0..1 + 阈值线 + 趋势线，no-qa 不落点', async () => {

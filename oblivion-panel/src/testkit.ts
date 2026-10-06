@@ -31,12 +31,15 @@ export {
 } from './client/open-note.js';
 export {
   mergeKnowledge,
+  knowledgeView,
   itemStatusLabel,
   implLabel,
   sourceLabel,
+  KNOWLEDGE_ITEM_LIMIT,
   type KnowledgeItemLike,
   type KnowledgeRow,
   type KnowledgeSource,
+  type KnowledgeView,
   type NoteLike,
 } from './client/knowledge.js';
 export {

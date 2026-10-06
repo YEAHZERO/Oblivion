@@ -488,6 +488,22 @@ function pickPrimary(items) {
 function isDigest(item) {
   return (item?.sourceTypes ?? []).some((type) => lower(type) === "digest");
 }
+var KNOWLEDGE_ITEM_LIMIT = 5;
+function hasNote(row) {
+  return typeof row.notePath === "string" && row.notePath !== "";
+}
+function knowledgeView(rows, options = {}) {
+  const limit = Math.max(0, Math.floor(options.itemLimit ?? KNOWLEDGE_ITEM_LIMIT));
+  const backbone = [];
+  const itemOnly = [];
+  for (const row of rows) (hasNote(row) ? backbone : itemOnly).push(row);
+  if (options.showAll === true) {
+    return { backbone, itemOnly, visible: rows.slice(), hidden: 0 };
+  }
+  const keep = new Set(itemOnly.slice(0, limit).map((row) => row.key));
+  const visible = rows.filter((row) => hasNote(row) || keep.has(row.key));
+  return { backbone, itemOnly, visible, hidden: rows.length - visible.length };
+}
 
 // src/client/Panel.tsx
 var import_jsx_runtime3 = require("react/jsx-runtime");
@@ -561,6 +577,7 @@ function emptyReason(data) {
 function OblivionPanel(props) {
   const [state, setState] = (0, import_react2.useState)({ status: "loading" });
   const [expanded, setExpanded] = (0, import_react2.useState)(false);
+  const [showAllKnowledge, setShowAllKnowledge] = (0, import_react2.useState)(false);
   const load = (0, import_react2.useCallback)(async () => {
     setState((prev) => prev.status === "ready" ? prev : { status: "loading" });
     try {
@@ -608,6 +625,7 @@ function OblivionPanel(props) {
     const notes = data.notes ?? [];
     const digests = data.digests ?? [];
     const knowledge = mergeKnowledge({ notes, digests, items });
+    const knowledgeListView = knowledgeView(knowledge, { showAll: showAllKnowledge });
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.row, children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.dim, children: [
@@ -684,7 +702,7 @@ function OblivionPanel(props) {
         "\u8FD8\u6CA1\u6709\u6761\u76EE\uFF0C\u4E5F\u6CA1\u6709\u7B14\u8BB0\uFF08",
         data.mdRoot ?? "\u2014",
         "\uFF09"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: S.list, children: knowledge.map((row) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("li", { style: S.li, children: [
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: S.list, children: knowledgeListView.visible.map((row) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("li", { style: S.li, children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { children: row.notePath !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
           "a",
           {
@@ -700,6 +718,15 @@ function OblivionPanel(props) {
         ) : row.title }),
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { ...S.dim, ...S.mono }, children: rowMeta(row) })
       ] }, row.key)) }),
+      knowledgeListView.itemOnly.length > KNOWLEDGE_ITEM_LIMIT || showAllKnowledge ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        "button",
+        {
+          type: "button",
+          style: { ...S.btn, marginTop: 4 },
+          onClick: () => setShowAllKnowledge((prev) => !prev),
+          children: showAllKnowledge ? "\u53EA\u770B\u6709\u7B14\u8BB0\u7684 " + knowledgeListView.backbone.length + " \u884C" : "\u5C55\u5F00\u5168\u90E8 " + knowledge.length + " \u884C\uFF08\u53E6\u6709 " + knowledgeListView.hidden + " \u884C\u4EC5\u5165\u5E93\uFF09"
+        }
+      ) : null,
       (data.problems ?? []).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: S.h, children: [
           "\u8BFB\u53D6\u544A\u8B66\uFF08",
@@ -709,7 +736,7 @@ function OblivionPanel(props) {
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: S.list, children: (data.problems ?? []).map((problem, index) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("li", { style: { ...S.li, ...S.mono, ...S.dim }, children: problem }, index)) })
       ] }) : null
     ] });
-  }, [state, load, props.onOpenFile, expanded]);
+  }, [state, load, props.onOpenFile, expanded, showAllKnowledge]);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: S.root, children: body });
 }
 

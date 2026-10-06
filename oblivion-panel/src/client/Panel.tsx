@@ -34,7 +34,15 @@ import {
   topBlocker,
   type HintLike,
 } from './format.js';
-import { implLabel, itemStatusLabel, mergeKnowledge, sourceLabel, type KnowledgeRow } from './knowledge.js';
+import {
+  implLabel,
+  itemStatusLabel,
+  KNOWLEDGE_ITEM_LIMIT,
+  knowledgeView,
+  mergeKnowledge,
+  sourceLabel,
+  type KnowledgeRow,
+} from './knowledge.js';
 
 /** 与 Node 半边 config.routePath 的默认值一致。 */
 const STATUS_ROUTE = '/oblivion-panel/status';
@@ -172,6 +180,8 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   /** 「最近判定」是否展开（默认只看最近几条）。 */
   const [expanded, setExpanded] = useState(false);
+  /** 知识库一栏是否连「仅入库」也全列（默认只列最近几条）。 */
+  const [showAllKnowledge, setShowAllKnowledge] = useState(false);
 
   const load = useCallback(async () => {
     setState((prev) => (prev.status === 'ready' ? prev : { status: 'loading' }));
@@ -226,6 +236,9 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
     const digests = data.digests ?? [];
     // 方案 A（所有者 2026-10-06 裁定）：笔记为骨架 + 条目状态/版本，**一栏**呈现。
     const knowledge = mergeKnowledge({ notes, digests, items });
+    // 一栏里还能再收一层：「仅入库」（没有笔记文件的条目）默认只显示最近几条，
+    // 免得 30+ 行纯条目把能点开的笔记挤下去（所有者对「最近判定」说的是同一句话）。
+    const knowledgeListView = knowledgeView(knowledge, { showAll: showAllKnowledge });
 
     return (
       <>
@@ -334,7 +347,7 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
           <div style={S.dim}>还没有条目，也没有笔记（{data.mdRoot ?? '—'}）</div>
         ) : (
           <ul style={S.list}>
-            {knowledge.map((row) => (
+            {knowledgeListView.visible.map((row) => (
               <li key={row.key} style={S.li}>
                 <div>
                   {row.notePath !== undefined ? (
@@ -358,6 +371,17 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
             ))}
           </ul>
         )}
+        {knowledgeListView.itemOnly.length > KNOWLEDGE_ITEM_LIMIT || showAllKnowledge ? (
+          <button
+            type="button"
+            style={{ ...S.btn, marginTop: 4 }}
+            onClick={() => setShowAllKnowledge((prev) => !prev)}
+          >
+            {showAllKnowledge
+              ? '只看有笔记的 ' + knowledgeListView.backbone.length + ' 行'
+              : '展开全部 ' + knowledge.length + ' 行（另有 ' + knowledgeListView.hidden + ' 行仅入库）'}
+          </button>
+        ) : null}
 
         {(data.problems ?? []).length > 0 ? (
           <>
@@ -373,7 +397,7 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
         ) : null}
       </>
     );
-  }, [state, load, props.onOpenFile, expanded]);
+  }, [state, load, props.onOpenFile, expanded, showAllKnowledge]);
 
   return <div style={S.root}>{body}</div>;
 }

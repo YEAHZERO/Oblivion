@@ -234,3 +234,47 @@ function pickPrimary(items: KnowledgeItemLike[]): KnowledgeItemLike | undefined 
 function isDigest(item: KnowledgeItemLike | undefined): boolean {
   return (item?.sourceTypes ?? []).some((type) => lower(type) === 'digest');
 }
+
+/** 「仅入库」默认显示几条（其余按需展开）—— 与「最近判定」同一个取舍。 */
+export const KNOWLEDGE_ITEM_LIMIT = 5;
+
+/** 默认视图的切分结果（纯数据，便于自检与测试）。 */
+export interface KnowledgeView {
+  /** 有笔记的行（问答沉淀 / 会话整理）—— 能点开的是这些。 */
+  backbone: KnowledgeRow[];
+  /** 只有条目、没有笔记文件的行（仅入库）。 */
+  itemOnly: KnowledgeRow[];
+  /** 实际要渲染的行（**保持原顺序**）。 */
+  visible: KnowledgeRow[];
+  /** 被折叠掉的行数。 */
+  hidden: number;
+}
+
+function hasNote(row: KnowledgeRow): boolean {
+  return typeof row.notePath === 'string' && row.notePath !== '';
+}
+
+/**
+ * 默认视图：**有笔记的行全部显示，「仅入库」只显示最近几条**。
+ *
+ * 为什么（实测 2026-10-06）：本机 65 个条目合成 **47 行**，其中 36 行是「仅入库」
+ * （没有笔记文件的纯条目）—— 一屏列表里它们把真正能点开的笔记挤到看不见。
+ * 所有者对「最近判定」的裁定是同一句话（「不需要这么多」），所以这里照同一取舍办：
+ * 默认少量 + 一个展开按钮。展开时**顺序完全不变**（按原数组过滤、不重排），
+ * 免得折叠与展开之间位置跳动。
+ */
+export function knowledgeView(
+  rows: KnowledgeRow[],
+  options: { itemLimit?: number; showAll?: boolean } = {},
+): KnowledgeView {
+  const limit = Math.max(0, Math.floor(options.itemLimit ?? KNOWLEDGE_ITEM_LIMIT));
+  const backbone: KnowledgeRow[] = [];
+  const itemOnly: KnowledgeRow[] = [];
+  for (const row of rows) (hasNote(row) ? backbone : itemOnly).push(row);
+  if (options.showAll === true) {
+    return { backbone, itemOnly, visible: rows.slice(), hidden: 0 };
+  }
+  const keep = new Set(itemOnly.slice(0, limit).map((row) => row.key));
+  const visible = rows.filter((row) => hasNote(row) || keep.has(row.key));
+  return { backbone, itemOnly, visible, hidden: rows.length - visible.length };
+}

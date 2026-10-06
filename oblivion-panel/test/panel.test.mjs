@@ -391,3 +391,61 @@ describe('知识库合栏（笔记为骨架 + 条目状态/版本）', () => {
     assert.equal(kit.sourceLabel('note'), '', '问答笔记是默认骨架，不加标注');
   });
 });
+
+/**
+ * 知识库一栏的默认视图（所有者 2026-10-06 对「最近判定」说的是同一句话：「不需要这么多」）。
+ * 实测一栏 47 行里 36 行是「仅入库」，会把能点开的笔记挤到看不见。
+ */
+describe('知识库默认视图（仅入库折叠）', () => {
+  const row = (key, notePath) => ({
+    key,
+    title: key,
+    notePath,
+    at: 0,
+    source: notePath ? 'note' : 'item',
+    status: '',
+    impl: '',
+    versions: 1,
+    itemId: '',
+    sources: 0,
+    topic: '',
+  });
+  const rows = [
+    row('a', 'K:/01_问答沉淀/a.md'),
+    row('i1'),
+    row('i2'),
+    row('i3'),
+    row('i4'),
+    row('i5'),
+    row('i6'),
+    row('i7'),
+    row('b', 'K:/04_会话整理/b.md'),
+  ];
+
+  it('默认：有笔记的全显示，仅入库只留最近 5 条，且顺序不变', () => {
+    const view = kit.knowledgeView(rows);
+    assert.equal(view.backbone.length, 2);
+    assert.equal(view.itemOnly.length, 7);
+    assert.deepEqual(
+      view.visible.map((item) => item.key),
+      ['a', 'i1', 'i2', 'i3', 'i4', 'i5', 'b'],
+      '按原数组过滤，不重排（折叠与展开之间位置不跳）',
+    );
+    assert.equal(view.hidden, 2);
+    assert.equal(kit.KNOWLEDGE_ITEM_LIMIT, 5);
+  });
+
+  it('展开：全部行回来，hidden 归零', () => {
+    const view = kit.knowledgeView(rows, { showAll: true });
+    assert.equal(view.visible.length, rows.length);
+    assert.equal(view.hidden, 0);
+  });
+
+  it('itemLimit 可调；没有仅入库行 / 空输入都不抛错', () => {
+    assert.equal(kit.knowledgeView(rows, { itemLimit: 2 }).visible.length, 4);
+    assert.equal(kit.knowledgeView(rows, { itemLimit: 0 }).visible.length, 2);
+    assert.equal(kit.knowledgeView([row('a', 'K:/a.md')]).hidden, 0);
+    assert.deepEqual(kit.knowledgeView([]).visible, []);
+    assert.equal(kit.knowledgeView([]).hidden, 0);
+  });
+});

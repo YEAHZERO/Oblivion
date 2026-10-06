@@ -463,6 +463,22 @@ function pickPrimary(items) {
 function isDigest(item) {
   return (item?.sourceTypes ?? []).some((type) => lower(type) === "digest");
 }
+var KNOWLEDGE_ITEM_LIMIT = 5;
+function hasNote(row) {
+  return typeof row.notePath === "string" && row.notePath !== "";
+}
+function knowledgeView(rows, options = {}) {
+  const limit = Math.max(0, Math.floor(options.itemLimit ?? KNOWLEDGE_ITEM_LIMIT));
+  const backbone = [];
+  const itemOnly = [];
+  for (const row of rows) (hasNote(row) ? backbone : itemOnly).push(row);
+  if (options.showAll === true) {
+    return { backbone, itemOnly, visible: rows.slice(), hidden: 0 };
+  }
+  const keep = new Set(itemOnly.slice(0, limit).map((row) => row.key));
+  const visible = rows.filter((row) => hasNote(row) || keep.has(row.key));
+  return { backbone, itemOnly, visible, hidden: rows.length - visible.length };
+}
 
 // src/client/chart.ts
 var DEFAULT_WIDTH = 320;
@@ -611,6 +627,7 @@ function registerPanelTab(ctx, component, warn, icon) {
   return result;
 }
 export {
+  KNOWLEDGE_ITEM_LIMIT,
   PANEL_TAB_ID,
   actionLabel,
   buildScoreCurve,
@@ -620,6 +637,7 @@ export {
   hintLine,
   implLabel,
   itemStatusLabel,
+  knowledgeView,
   mergeKnowledge,
   openNoteInSidebar,
   panelDescriptor,

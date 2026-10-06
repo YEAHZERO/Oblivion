@@ -12,7 +12,20 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/brand` v0.1.3 + `@oblivion/core` v0.2.0 + `@oblivion/panel` v0.0.11：挂载层判定修正、判定区文案、rename EPERM 退回直接写（0.0.10 的判定曲线等条目见下）
+## [未发布] — `@oblivion/brand` v0.1.3 + `@oblivion/core` v0.2.0 + `@oblivion/panel` v0.0.12：挂载层判定修正、判定区文案、知识库「仅入库」折叠、rename EPERM 退回直接写（0.0.10 的判定曲线等条目见下）
+
+### `@oblivion/panel` v0.0.12 —— 知识库一栏再收一层：「仅入库」默认只列最近几条
+
+- **症状**：合栏之后本机 65 个条目合成 **47 行**，其中 36 行是「仅入库」（没有笔记文件的纯条目），
+  一屏列表里它们把能点开的 11 行笔记挤到看不见 —— 与「最近判定」是同一句话：
+  所有者要的是「不需要这么多」，不是「都列出来」。
+- **修法**：新增纯函数 `knowledgeView(rows, { itemLimit = KNOWLEDGE_ITEM_LIMIT(5), showAll })`
+  → `{ backbone, itemOnly, visible, hidden }`。默认**有笔记的行全部显示**、「仅入库」只留最近 5 行，
+  其余一个按钮展开（`展开全部 47 行（另有 36 行仅入库）` ↔ `只看有笔记的 11 行`）。
+- **顺序不变**：`visible` 是「按原数组过滤」得来的（不是「先 backbone 再 itemOnly」拼接），
+  折叠与展开之间行位置不跳；展开时 `hidden` 归零。
+- 测试 **28/28**（新增 3 项折叠用例：默认切分与顺序 / 展开 / itemLimit 与空输入）、
+  自检 14 项（「知识库合栏」一项里补默认折叠断言）。
 
 ### `@oblivion/panel` v0.0.11 —— 去掉「最近判定」标题里的窗口说明
 
