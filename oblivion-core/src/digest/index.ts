@@ -35,6 +35,9 @@ export interface DigestSection {
   body: string;
 }
 
+/** 会话整理件的**建边文本预算**（字符）：超过这个长度的部分不参与实体抽取，见 `save()` 的说明。 */
+export const DIGEST_EDGE_TEXT_BUDGET = 1200;
+
 export interface DigestInput {
   title: string;
   /** 主题桶（决定笔记文件名与条目 topic）；缺省从 title 派生。 */
@@ -215,9 +218,17 @@ export function registerDigest(
     }
 
     // ② 共现建边（用整理正文当一次「问答」文本，走同一套实体抽取 + 权重规则）
+    //
+    // **建边限流（保留"主题相邻"信号、砍掉噪声）**：整理文本长且跨主题，实测一次整理
+    // 抽出 ~24 个实体 → C(24,2) = **276 条边**，等于在共现图里塞了一个全连接团，
+    // 反而把"同一次问答里真正相邻的两个概念"这个信号淹没了。
+    // 做法：**按文本预算限流** —— 只把前 `DIGEST_EDGE_TEXT_BUDGET` 个字符喂给实体抽取
+    // （摘要在前、越往后越是细节），于是实体数与边数都随正文长度**有界**。
+    // 不引入新配置键：这是"整理件天生跨主题"的固有属性，不是可调偏好。
+    const edgeText = markdown.slice(0, DIGEST_EDGE_TEXT_BUDGET);
     const qa: QAPair = {
       question: composed.title,
-      answer: markdown,
+      answer: edgeText,
       sources,
       sessionId: input.sessionId ?? 'local',
       turn: 0,

@@ -268,6 +268,29 @@ function appendSource(existing: string, payload: MdPayload): string {
  * 所以目标文件若已存在且**不含任何 `oblivion:` 标记**，就视为外来文件 —— 不追加、不改写，
  * 改为写 `<topic>-oblivion.md`。发现这种情况时不会有静默覆盖。
  */
+/**
+ * 推算某个条目**已经落盘**的笔记路径（用于双链反向回填）。
+ *
+ * 与 `writeMD` 同一套定位规则：`<mdRoot>/<分类目录>/<topic>.md`，
+ * 若该文件不含 `oblivion:` 标记（说明是**用户自己的同名笔记**）则改用 `<topic>-oblivion.md`。
+ * 返回 `''` 表示两处都不存在 —— 调用方应跳过（绝不新建文件：反填是锦上添花，不该产生副作用）。
+ */
+export async function notePathFor(
+  root: string,
+  item: KnowledgeItem,
+  classify?: MdClassifyMap,
+): Promise<string> {
+  const dir = join(root, classifyDir(item, classify));
+  const name = safeName(item.topic);
+  const primary = join(dir, name + '.md');
+  const primaryText = await readFile(primary, 'utf8').catch(() => '');
+  if (primaryText.includes(ID_MARKER) || primaryText.includes('oblivion:digest')) return primary;
+  const fallback = join(dir, name + '-oblivion.md');
+  const fallbackText = await readFile(fallback, 'utf8').catch(() => '');
+  if (fallbackText.includes(ID_MARKER) || fallbackText.includes('oblivion:digest')) return fallback;
+  return '';
+}
+
 export async function writeMD(
   root: string,
   payload: MdPayload,

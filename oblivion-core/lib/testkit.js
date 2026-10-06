@@ -620,6 +620,17 @@ function appendSource(existing, payload) {
   if (existing.includes(line)) return existing;
   return existing.trimEnd() + "\n" + line + "\n";
 }
+async function notePathFor(root, item, classify) {
+  const dir = join2(root, classifyDir(item, classify));
+  const name = safeName(item.topic);
+  const primary = join2(dir, name + ".md");
+  const primaryText = await readFile(primary, "utf8").catch(() => "");
+  if (primaryText.includes(ID_MARKER) || primaryText.includes("oblivion:digest")) return primary;
+  const fallback = join2(dir, name + "-oblivion.md");
+  const fallbackText = await readFile(fallback, "utf8").catch(() => "");
+  if (fallbackText.includes(ID_MARKER) || fallbackText.includes("oblivion:digest")) return fallback;
+  return "";
+}
 async function writeMD(root, payload, classify) {
   if (payload.action === "conflict") {
     const dir2 = join2(root, CONFLICTS_DIR);
@@ -857,6 +868,13 @@ function registerQaLoop(ctx, config, deps) {
         if (related.length > 0 && notePath !== "") {
           await appendRelatedLinks(notePath, related.map((item) => item.title));
         }
+        for (const item of related) {
+          const existingItem = deps.knowledge.index.all().find((candidate) => candidate.id === item.id);
+          if (!existingItem) continue;
+          const path = await notePathFor(mdRoot, existingItem, config.mdClassify);
+          if (path === "") continue;
+          await appendRelatedLinks(path, [result.item.title]);
+        }
         await writeIndexNote(mdRoot, deps.knowledge.index.all());
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + " \u53CC\u94FE/\u7D22\u5F15\u5199\u56DE\u5931\u8D25\uFF1A%o", error);
@@ -920,7 +938,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join3(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.13",
+    version: "0.1.14",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -1631,6 +1649,7 @@ function registerPerspective(ctx, config, deps) {
 // src/digest/index.ts
 import { mkdir as mkdir5, readFile as readFile5, writeFile as writeFile5 } from "node:fs/promises";
 import { join as join6 } from "node:path";
+var DIGEST_EDGE_TEXT_BUDGET = 1200;
 function safeFileName(input) {
   const cleaned = (input || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim();
   return (cleaned || "untitled").slice(0, 80);
@@ -1740,9 +1759,10 @@ function registerDigest(ctx, config, deps) {
     } else {
       await writeFile5(notePath, markdown, "utf8");
     }
+    const edgeText = markdown.slice(0, DIGEST_EDGE_TEXT_BUDGET);
     const qa = {
       question: composed.title,
-      answer: markdown,
+      answer: edgeText,
       sources,
       sessionId: input.sessionId ?? "local",
       turn: 0,

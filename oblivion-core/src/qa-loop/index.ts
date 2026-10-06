@@ -9,7 +9,7 @@ import { expandHome } from '../util/paths.js';
 import { describeCtx } from '../util/ctx-shape.js';
 import type { DecisionRecord } from '../stats/trace.js';
 import { extractQAPair, type TurnEventLike } from './extract.js';
-import { appendRelatedLinks, ensureMdDirs, writeIndexNote, writeMD, type MdAction } from './md-writer.js';
+import { appendRelatedLinks, ensureMdDirs, notePathFor, writeIndexNote, writeMD, type MdAction } from './md-writer.js';
 import { findRelatedItems } from '../graph/backlink.js';
 
 interface SessionLike {
@@ -282,8 +282,20 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
       // 双链写回 + 索引重建：都是"锦上添花"，失败只记日志，不影响捕获本身。
       try {
         const related = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
+        // 正向：新笔记里指向相关条目
         if (related.length > 0 && notePath !== '') {
           await appendRelatedLinks(notePath, related.map((item) => item.title));
+        }
+        // 反向（①：双链反向回填既有笔记）：相关条目的笔记里也指向这条新笔记，
+        // 否则链接是单向的 —— 在 Obsidian 里读旧笔记永远看不到新沉淀。
+        // 安全前提：`appendRelatedLinks` 只写含 `oblivion:` 标记的笔记，
+        // 用户自有笔记一个字都不动；`notePathFor` 找不到文件时返回 ''（绝不新建）。
+        for (const item of related) {
+          const existingItem = deps.knowledge.index.all().find((candidate) => candidate.id === item.id);
+          if (!existingItem) continue;
+          const path = await notePathFor(mdRoot, existingItem, config.mdClassify);
+          if (path === '') continue;
+          await appendRelatedLinks(path, [result.item.title]);
         }
         await writeIndexNote(mdRoot, deps.knowledge.index.all());
       } catch (error) {

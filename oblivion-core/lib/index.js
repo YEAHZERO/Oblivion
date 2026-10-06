@@ -504,6 +504,17 @@ function appendSource(existing, payload) {
   if (existing.includes(line)) return existing;
   return existing.trimEnd() + "\n" + line + "\n";
 }
+async function notePathFor(root, item, classify) {
+  const dir = join4(root, classifyDir(item, classify));
+  const name2 = safeName(item.topic);
+  const primary = join4(dir, name2 + ".md");
+  const primaryText = await readFile3(primary, "utf8").catch(() => "");
+  if (primaryText.includes(ID_MARKER) || primaryText.includes("oblivion:digest")) return primary;
+  const fallback = join4(dir, name2 + "-oblivion.md");
+  const fallbackText = await readFile3(fallback, "utf8").catch(() => "");
+  if (fallbackText.includes(ID_MARKER) || fallbackText.includes("oblivion:digest")) return fallback;
+  return "";
+}
 async function writeMD(root, payload, classify) {
   if (payload.action === "conflict") {
     const dir2 = join4(root, CONFLICTS_DIR);
@@ -573,6 +584,7 @@ async function appendRelatedLinks(notePath, titles) {
 }
 
 // src/digest/index.ts
+var DIGEST_EDGE_TEXT_BUDGET = 1200;
 function safeFileName(input) {
   const cleaned = (input || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim();
   return (cleaned || "untitled").slice(0, 80);
@@ -682,9 +694,10 @@ function registerDigest(ctx, config, deps) {
     } else {
       await writeFile4(notePath, markdown, "utf8");
     }
+    const edgeText = markdown.slice(0, DIGEST_EDGE_TEXT_BUDGET);
     const qa = {
       question: composed.title,
-      answer: markdown,
+      answer: edgeText,
       sources,
       sessionId: input.sessionId ?? "local",
       turn: 0,
@@ -1855,6 +1868,13 @@ function registerQaLoop(ctx, config, deps) {
         if (related.length > 0 && notePath !== "") {
           await appendRelatedLinks(notePath, related.map((item) => item.title));
         }
+        for (const item of related) {
+          const existingItem = deps.knowledge.index.all().find((candidate) => candidate.id === item.id);
+          if (!existingItem) continue;
+          const path = await notePathFor(mdRoot, existingItem, config.mdClassify);
+          if (path === "") continue;
+          await appendRelatedLinks(path, [result.item.title]);
+        }
         await writeIndexNote(mdRoot, deps.knowledge.index.all());
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + " \u53CC\u94FE/\u7D22\u5F15\u5199\u56DE\u5931\u8D25\uFF1A%o", error);
@@ -1918,7 +1938,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join8(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.13",
+    version: "0.1.14",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -2532,7 +2552,7 @@ function registerTools(ctx, deps) {
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt"];
-var VERSION = "0.1.13";
+var VERSION = "0.1.14";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
