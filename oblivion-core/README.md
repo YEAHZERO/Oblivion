@@ -171,7 +171,7 @@ oblivion-core/
 | --- | --- |
 | `pnpm run build` | ✅ `lib/index.js` ~67 KB + `lib/testkit.js`（v0.1.5） |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **14/14**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 7 工具注册 + 整理结构」） |
+| `pnpm run test` | ✅ **23/23**（含「装载即建目录 + 自定义 mdRoot + 目录名消毒 + 8 工具注册 + 整理结构 + 改名打标签」） |
 | `pnpm run selfcheck` | ✅ **26/26**（真实事件流端到端落盘、幂等 ×2、注入上下文过滤、兜底路径、防回灌、L3 四条规则、F2/F3 闸门、F3 深度 ≥3 候选、F5 保留期、§25.3 分类落盘、共用知识库防误伤、装载即建目录、自定义知识库位置、目录名消毒、**判定留痕**、**oblivion_status 快照**、**调参建议边界**、**会话整理落盘**、时钟保护、去重、阈值分布） |
 | `pnpm run check:version` | ✅ `0.1.10` 一致 |
 | `dshx check`（CLI） | ✅ manifest / object-form / boot-marker 全绿 |
@@ -241,11 +241,12 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
         dataRoot: '~/.oblivion/data'
 ```
 
-### 9.3 用七个模型面工具
+### 9.3 用八个模型面工具
 
 | 工具 | 用途 | 例 |
 | --- | --- | --- |
 | `oblivion_digest` | **整理当前对话**：模型产出结构（章节/决策/待办/未决/双链），插件落成**一篇整理笔记 + 一条可检索条目**（并建共现边） | 「整理一下当前对话」 |
+| `oblivion_retitle` | **给沉淀件改名打标签**：先给候选（现名/原问句/答案摘要），模型起内容名 + 标签，插件改名并同步条目与索引 | 「把这些笔记的名字改成讲什么」 |
 | `oblivion_status` | **观测与调参入口**：生效配置 + 真实统计 + 「该改哪个键」建议 + 最近判定 | 「这几天的捕获率多少？该调什么？」 |
 | `oblivion_query` | 关键词 + 共现扩展检索，带来源 | 「库里关于 cordis 注入的记录」 |
 | `oblivion_capture` | 手工沉淀一条问答（走同一套四层筛选） | 把一段读书笔记沉淀成条目 |
@@ -264,6 +265,34 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
 —— 模型不必猜格式，人也能一眼扫完。触发方式就是在对话里说一句：
 
 > 「整理一下当前对话」「把这次讨论整理成一篇笔记」
+
+#### 9.3.2 给沉淀件改名打标签（`oblivion_retitle`）
+
+管线里的命名规则（`src/knowledge/naming.ts`）是**纯字符串**的：答案里有小标题就取小标题，
+否则是「去掉水词的整句问句」。所以散文式答案的名字仍然像问题 —— 真摘要只能由模型给。
+`oblivion_retitle` 就是这条路，分工与整理件完全一致：**模型起名，插件落盘**。
+
+两段式，一次对话里自洽：
+
+1. **不带 `items` 调一次** → 返回候选（按修改时间倒序，只含我们自己的笔记）：
+   `id` / 现文件名 / `topic` / **原问句**（老笔记回退到 `title`）/ 答案摘要（前 80 字）。
+2. **带 `items` 再调一次** → `[{ id, title, tags }]`，插件：改文件名（重名自动 `-2`）、
+   改正文 `# H1` 与 frontmatter 的 `title`/`tags`、**把原问句留在 `ask:` 与 `>Ask：`**、
+   同步条目 `<dataRoot>/<id>.json`、重建 `00-Index/索引.md`。
+
+三条不变量：只动带 `<!-- oblivion:id=… -->` 的笔记（用户自有的 md 一个字不改）；
+改名不丢信息（原问句进 `ask`）；改名必须同步条目 JSON（落盘路径是按名字算的，
+只改文件名不同步条目，下一次同条目写入会按旧名再起一份）。
+
+存量回填用同一套读写逻辑，走脚本（默认 dry-run）：
+
+```powershell
+node scripts/rename-notes.mjs --dirs 01_问答沉淀                  # 先看计划
+node scripts/rename-notes.mjs --dirs 01_问答沉淀 --apply          # 落地 + 重建索引
+node scripts/rename-notes.mjs --dirs 01_问答沉淀 --apply --clean-tmp --tmp-age-min 2   # 顺手清临时文件
+```
+
+`--clean-tmp` 只删**早于 `--tmp-age-min` 分钟**的 `*.tmp`（默认 10），避免删掉正在写的那一个。
 
 ### 9.4 调参（改 config，不写代码）
 

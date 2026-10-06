@@ -81,10 +81,10 @@ function makeCtx() {
   };
 }
 
-await check('apply 注册面完整（7 工具 / 1 段落 / 事件 / 各自 effect）', () => {
+await check('apply 注册面完整（8 工具 / 1 段落 / 事件 / 各自 effect）', () => {
   const { ctx, reg } = makeCtx();
   mod.apply(ctx, { dataRoot, mdRoot });
-  assert.equal(reg.tools.length, 7, '工具数应为 7（含观测面与整理）');
+  assert.equal(reg.tools.length, 8, '工具数应为 8（含观测面、整理与改名）');
   assert.deepEqual(reg.sections, ['OBLIVION_COGNITION']);
   assert.ok(reg.events.some((e) => e.event === 'session/event'), '必须监听 session/event');
   assert.ok(reg.events.some((e) => e.event === 'agent/created'), '必须在 agent 作用域补挂订阅');

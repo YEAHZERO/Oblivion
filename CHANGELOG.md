@@ -12,7 +12,46 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/brand` v0.1.3 + `@oblivion/core` v0.2.1 + `@oblivion/panel` v0.0.13：沉淀件按内容命名 + 打标签、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+## [未发布] — `@oblivion/brand` v0.1.3 + `@oblivion/core` v0.2.2 + `@oblivion/panel` v0.0.13：沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写
+
+### `@oblivion/core` v0.2.2 —— 存量回填（53 篇）+ 清临时文件 + 模型面改名工具 `oblivion_retitle`
+
+- 所有者 2026-10-06（看过 0.2.1 的命名效果后）：「存量 53 篇的改名回填，清理 `.28424-*.tmp`。
+  让模型用 `oblivion_digest` 那种方式顺手给最近的笔记改名打标签」。
+- **新增 `src/knowledge/retitle.ts`**（回填脚本与工具共用的一层）：`parseNote` / `renderNote` /
+  `contentSection` / `listNotes` / `applyRetitle` / `createRetitleService`。三条不变量：
+  ① 只动正文带 `<!-- oblivion:id=… -->` 的笔记（用户自有的 md 一个字不改）；
+  ② 改名**不丢信息** —— 原问句写进 frontmatter `ask:` 与正文 `>Ask：`；
+  ③ 改名**必须同步条目 JSON** 的 `title`（落盘路径 `notePathFor` 是按名字算的，只改文件名的话，
+  下一次同条目写入会按旧名再起一份笔记）。
+- **新增脚本 `scripts/rename-notes.mjs`**：默认 dry-run 打印计划，`--apply` 落地；
+  `--dirs`（本次用 `01_问答沉淀`）、`--root/--data/--limit/--no-tags/--json`、
+  `--clean-tmp --tmp-age-min <分钟>` 顺手清临时文件（**只删早于该年龄的**，不碰正在写的那一个）。
+- **实测落地（本机真实知识库）**：计划 `54 篇需要动：改名 47、只改标签 7` → `成功 54 / 计划 54`；
+  `00-Index/索引.md` 重建为 **73 条**；临时文件删除 **1488 个 / 45,241,120 字节**，
+  知识库与 `~/.oblivion/data` 两处的 `*.tmp` 事后均为 **0**。
+  效果例：`给出实施的具体方案.md → Oblivion C 方案 · 具体实施计划.md`、
+  `查看这个方案.md → Oblivion C 方案完整设计书.md`、`key.md → 方式 2 读 key + 直连 Exa_Tavily_Fire.md`。
+- **新增第 8 个模型面工具 `oblivion_retitle`**（两段式）：不带 `items` 返回候选
+  （`id` / 现名 / `topic` / **原问句** / 答案摘要前 80 字）；带 `items: [{ id, title, tags }]`
+  落地改名 + 打标签 + 同步条目 + 重建索引。**模型起名、插件落盘**，与其他工具一致地不调 LLM。
+- 过程中发现并修掉的问题：
+  - `renderNote()` 写了 `next.ask ?? parsed.meta.ask ?? parsed.meta.title`，而 `parseNote()` 把缺失字段
+    读成**空串**，`??` 认它「已给值」⇒ `ask` 恒空。**那 54 篇被改名的笔记因此漏写了 `ask:` / `>Ask：`**，
+    原问句在笔记里丢了。已改成 `||`，并用回填计划日志里保存的原问句（每条计划的 `ask`）一次性补回 54 篇。
+  - `listNotes()` 的 `ask` 回退到 `title`：0.2.1 之前的笔记没有 `ask:`，那时的 `title` 就是问句 ——
+    模型在候选列表里必须能看到「这篇原来在问什么」。
+  - `fileNameOf()` 加**弱名字守卫**：`继续`/`不行`/`untitled` 这类名字之间没有信息差，
+    两个都弱时守住 `topic`，否则会出现 `untitled.md → 继续.md` 这种倒退。
+  - 标签：`extra` 只收「技术词形状」的串（回填时 `topic` 本身是整句问句，会把整句话当标签）；
+    `#tag` 正则加前缀守卫（`## 内容` 曾被当成标签「内容」）；`cleanTitle()` 去掉 URL。
+- **测试 23/23**（新增 4 项：只认自己的笔记 / 改名 + 同步 + 索引重建 / `ask` 只写第一次 /
+  工具两段式与「服务缺席只回 skipped」），自检 **30 项**（工具注册面断言由 7 改为 8）。
+- 一处**接线说明**：`createRetitleService` 的构造与两处 `registerTools` 依赖在 `src/index.ts`
+  （该文件此刻同时在另一条工作流手里，未随本次提交）。
+- 诚实的边界：纯字符串命名对**散文式答案**只能给出「去水词后的整句问句」，不是真摘要 ——
+  所以 `oblivion_retitle` 才是这条诉求的落点（原名如 `memory整个文件夹都是.gitignore.md`
+  这类候选，交给模型起名）。
 
 ### `@oblivion/core` v0.2.1 —— 沉淀件的名字与标签：「我问了什么」→「这里讲了什么」
 
@@ -36,8 +75,8 @@
 - 一处**记下来的错误**：第一版让名字「在第一个标点处截断」，实测把好名字截没了 ——
   「查看opencode的配置，里面有API和密钥」被截成「opencode的配置」，而「里面有API和密钥」
   恰恰是这条沉淀的内容。现在保留整句，只按 32 字上限收尾。
-- 存量笔记（本机 53 篇）的**改名回填还没做**：笔记里只存了问句前缀（`title`/`topic`）与答案正文，
-  回填要用 frontmatter 的 `title` 当问句重算，并同步条目 JSON 与 `00-Index/索引.md`。
+- 存量笔记（本机 53 篇）的**改名回填**在同一天完成，见上面的 `v0.2.2`：笔记里只存了问句前缀
+  （`title`/`topic`）与答案正文，回填用 frontmatter 的 `title` 当问句重算，并同步条目 JSON 与 `00-Index/索引.md`。
 - 测试 **19/19**（新增 5 项命名/标签用例）、自检 **30 项**（新增一项：真实 `writeMD()` 落一篇，
   断言文件名取自标题、不含 `topic` 的问句简写）。
 

@@ -59,13 +59,68 @@ const GENERIC = new Set([
 
 /** 问句开头的水词（去掉它们名字才开始像「内容」）。 */
 const LEAD_NOISE =
-  /^(请|请你|帮我|帮忙|麻烦|现在|然后|接着|先|需要|想要|我要|我们|我|你|这个|那个|关于|如何|怎么|为什么|是否|能否|可以|查看|看一下|看看|检查|核对|复核|分析|给出|说明|解释|介绍|对比|比较|整理|列出|写一个|做一个|实现|修改|修复|添加|把|将|我的|还是|不行的话就|单独做一个|直接)/;
+  /^(请|请你|帮我|帮忙|麻烦|现在|然后|接着|先|需要|想要|我要|我们|我|你|这个|那个|这两个|那两个|关于|如何|怎么|为什么|是否|能否|可以|查看|看一下|看看|检查|核对|复核|分析|给出|说明|解释|介绍|对比|比较|整理|列出|写一个|做一个|实现|修改|修复|添加|把|将|我的|还是|不行的话就|单独做一个|直接)/;
 
 /** 名字在第一个标点处就该断（问句往往是「标题，然后一堆补充」）。 */
 const PUNCT = /[，。！？；：、,.!?;:（(【[]/;
 
+/**
+ * 开头/结尾的装饰性标点（含全角）。
+ *
+ * 回填时实测到的坏名字：`，按照你的建议执行…`、`（改代码，更稳）：让 bridge…`、
+ * `还是不行` ⇒ `不行` —— 前者是标点没去干净，后者见 `WEAK_TITLES`。
+ */
+const EDGE_PUNCT =
+  /^[\s·:：;；,，.。、\-—–_~!！?？…/\\|"'`（(「『【《〈\[{<]+|[\s·:：;；,，.。、\-—–_~!！?？…/\\|"'`）)」』】》〉\]}>]+$/g;
+
 /** 名字最长多少字（文件名要能一眼读完，也远小于 `safeName()` 的 80 字节上限）。 */
 const MAX_TITLE = 32;
+
+/**
+ * 这些「名字」不含任何内容信息 —— 它们是**对话里的应答**，不是主题。
+ *
+ * 回填实测：`untitled.md → 继续.md`、`还是不行.md → 不行.md`。改名反而更糟，
+ * 所以遇到这类名字就**守住原名**（见 `fileNameOf()`：标题弱则退回 `topic`）。
+ */
+const WEAK_TITLES = new Set([
+  '继续',
+  '继续吧',
+  '继续查',
+  '行',
+  '不行',
+  '可以',
+  '好的',
+  '好',
+  '是',
+  '对',
+  '没有',
+  '没事',
+  '嗯',
+  '哦',
+  '知道',
+  '明白',
+  '收到',
+  '测试',
+  '试试',
+  '看看',
+  '再看',
+  '下一个',
+  '开始',
+  '完成',
+  '好了',
+  '重启',
+  '重启了',
+  '已重启',
+  '已重开',
+  '已装',
+  '已经装了',
+  'ok',
+  'okay',
+  'yes',
+  'no',
+  'done',
+  'untitled',
+]);
 
 /** 技术词（与 0.1.x 的旧表兼容，另补了几个本机在用的）。 */
 const TECH =
@@ -105,7 +160,9 @@ function squeeze(value: string): string {
 /** 去掉 markdown 装饰、结尾标点；过长则截断（文件名与索引都要短）。 */
 function cleanTitle(raw: string): string {
   let text = squeeze(raw.replace(/[#*`>~]/g, ' '));
-  text = text.replace(/^[\s·:：\-—–]+/, '').replace(/[\s·:：\-–]+$/, '');
+  // URL 不能当名字：回填实测出现过 `这两个：https___github.com_wqty123_….md`。
+  text = squeeze(text.replace(/https?:\/\/\S+/gi, ' ').replace(/\bwww\.\S+/gi, ' '));
+  text = squeeze(text.replace(EDGE_PUNCT, ''));
   text = text.replace(/[。.，,；;：:、!！?？…]+$/g, '');
   // 「结论：应该这么做」→「应该这么做」：套话只当噪声，不当名字。
   for (const generic of GENERIC) {
@@ -114,8 +171,20 @@ function cleanTitle(raw: string): string {
       break;
     }
   }
-  if (text.length <= MAX_TITLE) return text;
-  return text.slice(0, MAX_TITLE - 1) + '…';
+  if (text.length > MAX_TITLE) text = text.slice(0, MAX_TITLE - 1) + '…';
+  // 截断会切出新的尾标点（`…（窗口 10 条，显示最近 6 条` 这种），所以收尾要再来一次。
+  return squeeze(text.replace(EDGE_PUNCT, ''));
+}
+
+/**
+ * 这个名字是不是「等于没名字」（纯应答、或短到无法表达内容）。
+ *
+ * 管线（`fileNameOf()`）与回填脚本都用它守住一个底线：**改名不能把名字改得更差**。
+ */
+export function isWeakTitle(title: string): boolean {
+  const text = cleanTitle(title ?? '').toLowerCase();
+  if (text === '' || text.length < 3) return true;
+  return WEAK_TITLES.has(text);
 }
 
 /** ① 答案里第一个不像套话的小标题 / 加粗小标题。 */
@@ -182,15 +251,18 @@ export function tagsFromQA(question: string, answer: string, extra: string[] = [
   const haystack = (question ?? '') + '\n' + (answer ?? '');
   const out = new Set<string>();
   for (const tag of extra) {
+    // `extra` 传进来的是 `topicHint`（通常是包名/技术词）。回填时实测到过一条坏标签：
+    // 某篇笔记的 topic 就是问句本身（`继续查并修掉这个激活问题`），于是整句话被当标签打上。
+    // 标签只收「技术词形状」（ASCII、无空格），其余一律丢掉。
     const value = squeeze(tag);
-    if (value !== '') out.add(value);
+    if (value !== '' && value.length <= 40 && /^[A-Za-z0-9@][A-Za-z0-9@._+/-]*$/.test(value)) out.add(value);
   }
   for (const match of haystack.matchAll(TECH)) out.add(match[0].toLowerCase());
   // 包名：@scope/name 与 dsh-* 是这台机器上「最有用的一类标签」（一个包名 = 一个主题域）。
   for (const match of haystack.matchAll(/@[a-z0-9][\w.-]*\/[\w.-]+/gi)) out.add(match[0].toLowerCase());
   for (const match of haystack.matchAll(/\bdsh-[\w-]+/gi)) out.add(match[0].toLowerCase());
-  // 正文里手写的 #标签。
-  for (const match of haystack.matchAll(/#([\p{L}\p{N}_-]{2,20})/gu)) out.add(match[1]);
+  // 正文里手写的 #标签。前面不能是 `#`（否则 markdown 的 `## 内容` 会被认成标签「内容」）。
+  for (const match of haystack.matchAll(/(?<![#\w])#([\p{L}\p{N}_-]{2,20})/gu)) out.add(match[1]);
   for (const [pattern, tag] of ZH_TAGS) if (pattern.test(haystack)) out.add(tag);
   return [...out].slice(0, 8);
 }

@@ -9,7 +9,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync as mkdtemp, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync as mkdtemp, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
@@ -97,7 +97,7 @@ function fakeCtx() {
 }
 
 describe('装配（apply）', () => {
-  it('注册 7 个模型面工具（含观测面与整理）', () => {
+  it('注册 8 个模型面工具（含观测面、整理与改名）', () => {
     const { ctx, seen } = fakeCtx();
     // 用系统临时目录：插件装载时会写 status.json / decisions.jsonl，绝不能落在仓库里
     const tmp = mkdtemp(join(tmpdir(), 'oblivion-tools-'));
@@ -110,6 +110,7 @@ describe('装配（apply）', () => {
         'oblivion_graph_neighbors',
         'oblivion_profile',
         'oblivion_query',
+        'oblivion_retitle',
         'oblivion_status',
       ]);
     } finally {
@@ -265,5 +266,200 @@ describe('命名与打标签（由内容决定，不调模型）', () => {
       sources: [],
     });
     assert.equal(title, '分阶段落地');
+  });
+});
+
+/**
+ * 笔记改名 / 打标签（`oblivion_retitle`）。
+ *
+ * 所有者 2026-10-06：「让模型用 oblivion_digest 那种方式顺手给最近的笔记改名打标签」——
+ * 分工与整理件一致：**模型负责起名，插件只负责落盘、同步条目、重建索引**（插件不调 LLM）。
+ */
+describe('改名与打标签（oblivion_retitle）', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  function noteOf(id, title) {
+    return `---
+title: "${title}"
+topic: "方案"
+source: "session"
+ref: "session-x#turn-1"
+created_at: "2026-10-06"
+updated_at: "2026-10-06"
+tags: ["dsh"]
+status: "active"
+impl: "implemented"
+related_wiki: []
+---
+
+# ${title}
+
+>Date :  2026-10-06
+>Source：Oblivion
+>Note：先做这一步。
+>Tags： #dsh
+
+## 内容
+
+### 具体实施计划
+
+第一步先装 bundle。
+
+## 来源
+
+- \`session\`: session-x#turn-1
+
+<!-- oblivion:id=${id} version=1 -->
+`;
+  }
+
+  function fixture() {
+    const tmp = mkdtemp(join(tmpdir(), 'oblivion-retitle-'));
+    const mdRoot = join(tmp, 'kb');
+    const mdDir = join(mdRoot, '01_问答沉淀');
+    const dataDir = join(tmp, 'data');
+    mkdirSync(mdDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(mdDir, '给出实施的具体方案.md'), noteOf('ts-test-1', '给出实施的具体方案'), 'utf8');
+    // 用户自有的笔记（正文里没有 oblivion 标记）：一个字都不该动
+    writeFileSync(join(mdDir, '我自己的笔记.md'), '# 我自己的笔记\n\n别碰我。\n', 'utf8');
+    writeFileSync(
+      join(dataDir, 'ts-test-1.json'),
+      JSON.stringify({
+        id: 'ts-test-1',
+        topic: '方案',
+        title: '给出实施的具体方案',
+        content: '',
+        tags: ['dsh'],
+        sources: [],
+        status: 'active',
+        created_at: 0,
+        updated_at: 0,
+        version: 1,
+      }),
+      'utf8',
+    );
+    return { tmp, mdRoot, mdDir, dataDir };
+  }
+
+  function serviceOf(f) {
+    return kit.createRetitleService({
+      mdRoot: f.mdRoot,
+      dataRoot: f.dataDir,
+      classify: { session: '01_问答沉淀' },
+    });
+  }
+
+  it('只认自己的笔记：用户自有的 md 不列出来', async () => {
+    const f = fixture();
+    try {
+      const list = await serviceOf(f).list(10);
+      assert.deepEqual(list.map((n) => n.id), ['ts-test-1']);
+      assert.equal(list[0].ask, '给出实施的具体方案', '旧 title 就是原问句，要能读出来给模型看');
+      assert.ok(list[0].excerpt.includes('第一步先装 bundle'), '要有答案摘要：' + list[0].excerpt);
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('落地：改名 + H1/frontmatter 同步 + 原问句留在 ask + 条目 JSON 同步 + 索引重建', async () => {
+    const f = fixture();
+    try {
+      const self = { items: [] };
+      const svc = kit.createRetitleService({
+        mdRoot: f.mdRoot,
+        dataRoot: f.dataDir,
+        classify: { session: '01_问答沉淀' },
+        host: {
+          store: { loadAll: async () => self.items },
+          index: {
+            rebuild: (items) => {
+              self.items = items;
+            },
+            all: () => self.items,
+          },
+        },
+      });
+      const { results, index } = await svc.apply([
+        { id: 'ts-test-1', title: 'Oblivion 具体实施计划', tags: ['dsh', 'plan'] },
+      ]);
+
+      assert.equal(results[0].ok, true);
+      assert.equal(results[0].from, '给出实施的具体方案.md');
+      assert.equal(results[0].to, 'Oblivion 具体实施计划.md');
+      assert.equal(results[0].itemSynced, true);
+      assert.ok(!existsSync(join(f.mdDir, '给出实施的具体方案.md')), '旧名字不该留下');
+
+      const note = readFileSync(join(f.mdDir, 'Oblivion 具体实施计划.md'), 'utf8');
+      assert.ok(note.includes('title: "Oblivion 具体实施计划"'), 'frontmatter 的 title 要跟着改');
+      assert.ok(note.includes('# Oblivion 具体实施计划'), '正文 H1 也要跟着改');
+      assert.ok(note.includes('ask: "给出实施的具体方案"'), '原问句必须留下');
+      assert.ok(note.includes('>Ask： 给出实施的具体方案'), '正文也要有人读的那一行');
+      assert.ok(/>Tags：.*#plan/.test(note), '新标签要写进正文：' + note.split('\n').find((l) => l.startsWith('>Tags')));
+
+      const item = JSON.parse(readFileSync(join(f.dataDir, 'ts-test-1.json'), 'utf8'));
+      assert.equal(item.title, 'Oblivion 具体实施计划', '条目 title 不同步 ⇒ 下次写入会按旧名再起一份');
+      assert.deepEqual(item.tags, ['dsh', 'plan']);
+      assert.ok(item.updated_at > 0);
+
+      assert.ok(index && existsSync(index.path), '要重建 00-Index/索引.md：' + JSON.stringify(index));
+      assert.equal(index.count, self.items.length);
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('ask 只在第一次写：再改一次名字，原问句不会被新名字顶掉', async () => {
+    const f = fixture();
+    try {
+      const svc = serviceOf(f);
+      await svc.apply([{ id: 'ts-test-1', title: 'Oblivion 具体实施计划' }]);
+      await svc.apply([{ id: 'ts-test-1', title: 'Oblivion 落地步骤' }]);
+
+      const note = readFileSync(join(f.mdDir, 'Oblivion 落地步骤.md'), 'utf8');
+      assert.ok(note.includes('ask: "给出实施的具体方案"'), '第二次改名仍要守住原问句');
+      assert.ok(!note.includes('ask: "Oblivion 具体实施计划"'), '不能把上一次的新名字当成原问句');
+      assert.equal((note.match(/>Ask：/g) ?? []).length, 1, '>Ask 行只写一次');
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('工具两段式：不带 items 给候选，带 items 落地；服务缺席时只回 skipped', async () => {
+    const f = fixture();
+    try {
+      const defs = new Map();
+      const ctx = { tools: { register: (d) => defs.set(d.name, d) } };
+      kit.registerTools(ctx, { knowledge: {}, profile: {}, feedback: null, graph: {}, retitle: serviceOf(f) });
+
+      const tool = defs.get('oblivion_retitle');
+      assert.ok(tool, '要注册 oblivion_retitle');
+
+      const listed = await tool.execute({ limit: 5 }, {});
+      assert.equal(listed.mode, 'list');
+      assert.equal(listed.notes.length, 1);
+      assert.equal(listed.notes[0].id, 'ts-test-1');
+      assert.equal(listed.notes[0].ask, '给出实施的具体方案');
+
+      const applied = await tool.execute(
+        { items: [{ id: 'ts-test-1', title: 'Oblivion 具体实施计划', tags: ['plan'] }] },
+        {},
+      );
+      assert.equal(applied.mode, 'apply');
+      assert.equal(applied.total, 1);
+      assert.equal(applied.renamed, 1);
+      assert.deepEqual(applied.failed, []);
+
+      const none = new Map();
+      const ctx2 = { tools: { register: (d) => none.set(d.name, d) } };
+      kit.registerTools(ctx2, { knowledge: {}, profile: {}, feedback: null, graph: {}, retitle: null });
+      assert.equal((await none.get('oblivion_retitle').execute({}, {})).skipped, true);
+    } finally {
+      rmSync(f.tmp, { recursive: true, force: true });
+    }
   });
 });

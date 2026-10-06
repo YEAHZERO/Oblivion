@@ -12,7 +12,7 @@ export { effectiveWeight, reinforce } from './graph/decay.js';
 export { extractEntities } from './graph/index.js';
 export { extractQAPair, textOfMessage, isHumanUserMessage, userMessageSourceKind } from './qa-loop/extract.js';
 export { registerQaLoop } from './qa-loop/index.js';
-export { classifyDir, ensureMdDirs, mdDirNames, safeDirName, MD_FALLBACK_DIR, writeMD } from './qa-loop/md-writer.js';
+export { classifyDir, ensureMdDirs, mdDirNames, safeDirName, MD_FALLBACK_DIR, writeMD, fileNameOf } from './qa-loop/md-writer.js';
 export {
   appendRelatedLinks,
   renderConflict,
@@ -24,7 +24,9 @@ export {
 } from './qa-loop/md-writer.js';
 export { findRelatedItems } from './graph/backlink.js';
 export { deriveTitle, deriveTopic } from './knowledge/index.js';
-export { tagsFromQA, titleFromQA } from './knowledge/naming.js';
+export { tagsFromQA, titleFromQA, isWeakTitle } from './knowledge/naming.js';
+export { applyRetitle, contentSection, createRetitleService, listNotes, parseNote, renderNote } from './knowledge/retitle.js';
+export type { NoteRef, NoteMeta, ParsedNote, RetitleEntry, RetitleIndexHost, RetitleResult, RetitleService } from './knowledge/retitle.js';
 export { registerKnowledge } from './knowledge/index.js';
 export { registerFeedback } from './feedback/index.js';
 export { defaultProfile, mergeProfile } from './profile/schema.js';
@@ -38,6 +40,8 @@ export { registerDigest, composeDigest, safeFileName } from './digest/index.js';
 export { summarize, suggest } from './stats/summary.js';
 export { createTraceStore } from './stats/trace.js';
 export { registerStats } from './stats/index.js';
+export { registerTools } from './tools.js';
+export type { ToolDeps } from './tools.js';
 export { DEFAULT_CONFIG, resolveConfig } from './config.js';
 export { expandHome } from './util/paths.js';
 export { normalizeForHash, sha1, shortHash } from './util/hash.js';

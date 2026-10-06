@@ -3,6 +3,7 @@ import { writeFile } from '../util/fs.js';
 import { join } from 'node:path';
 import type { KnowledgeItem } from '../types.js';
 import { isoDate } from '../util/time.js';
+import { isWeakTitle } from '../knowledge/naming.js';
 
 export type MdAction = 'created' | 'appended' | 'duplicate' | 'conflict';
 
@@ -97,17 +98,24 @@ function safeName(topic: string): string {
 
 /**
  * 笔记文件名取自**标题**（内容名，core 0.2.1 起由 `knowledge/naming.ts` 生成），
- * 没有标题才退回 `topic`。
+ * 标题**弱**（纯应答，如「继续」「不行」）或没有标题时才退回 `topic`。
  *
  * 为什么不用 `topic`：`topic` 的语义是「主题桶」（用来聚合同一主题的多版、给索引分组），
  * 它是「问句里第一个词串」，于是文件名长成了 `查看这个方案.md`、`我的0.md`
  * —— 所有者 2026-10-06：「命名上看不出是什么内容，单纯只是我的问题的简写而已」。
  * 标题才是「这里讲了什么」，`topic` 继续管分组，两件事各归各位。
  */
-function fileNameOf(item: { title?: string; topic?: string }): string {
+export function fileNameOf(item: { title?: string; topic?: string }): string {
   const title = typeof item.title === 'string' ? item.title.trim() : '';
   const topic = typeof item.topic === 'string' ? item.topic.trim() : '';
-  return safeName(title !== '' ? title : topic);
+  // 名字弱（「继续」「不行」「已重启」）时**宁可退回 topic**：改名不能把名字改得更差。
+  // 回填实测：`untitled.md → 继续.md`、`还是不行.md → 不行.md` 就是没有这条守卫的后果。
+  if (title !== '' && !isWeakTitle(title)) return safeName(title);
+  if (topic !== '' && !isWeakTitle(topic)) return safeName(topic);
+  // 两个都弱（`继续` + `untitled`）时**守住 topic**：这一个分支上「不动」优于「改名」，
+  // 因为弱名字之间没有信息差，改名只会让既有笔记的路径漂移。
+  if (topic !== '') return safeName(topic);
+  return safeName(title !== '' ? title : 'untitled');
 }
 
 const ID_MARKER = 'oblivion:';

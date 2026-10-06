@@ -5,6 +5,7 @@ import type { GraphService } from './graph/index.js';
 import type { KnowledgeService } from './knowledge/index.js';
 import type { ProfileService } from './profile/index.js';
 import type { DigestService } from './digest/index.js';
+import type { RetitleService } from './knowledge/retitle.js';
 import type { StatsService } from './stats/index.js';
 import type { Source, UserProfile } from './types.js';
 import { sha1 } from './util/hash.js';
@@ -47,6 +48,8 @@ export interface ToolDeps {
   stats?: StatsService | null;
   /** 会话整理（`oblivion_digest`）。 */
   digest?: DigestService | null;
+  /** 笔记改名 / 打标签（`oblivion_retitle`）。 */
+  retitle?: RetitleService | null;
   /** 陪伴模块的运行计数（触发闸门命中情况）。 */
   perspectiveStats?: () => Record<string, number> | null;
 }
@@ -245,6 +248,75 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
         note: result.notePath,
         item: result.itemId,
         edges: result.entities,
+      });
+    },
+  }));
+
+  /**
+   * 笔记改名 / 打标签：**模型负责起名，插件只负责落盘与同步**（与 `oblivion_digest` 同一种分工）。
+   *
+   * 为什么合成一个工具的两段式，而不是「列表」+「改名」两个工具：起名这件事**必须先看内容**，
+   * 而看哪几篇是模型自己决定的（它知道刚才在聊什么）。所以不带 `items` 时先给候选，
+   * 带 `items` 时才落地 —— 一次调用就能自洽，不需要模型记住另一套 id 清单。
+   */
+  ctx.tools.register(defineTool({
+    name: 'oblivion_retitle',
+    description:
+      'Rename / re-tag Oblivion notes so the file name says what is actually inside. ' +
+      'Call it with NO `items` first: it returns candidate notes (id, current file name, topic, the original question, an answer excerpt). ' +
+      'Then call it again with `items` giving each note a content-based title (<= 32 chars) and 2-8 tags. ' +
+      'The plugin renames the file, rewrites the note header/frontmatter (the original question is preserved in `ask:` / `>Ask：`), ' +
+      'syncs the knowledge item, and rebuilds <mdRoot>/00-Index/索引.md.',
+    parameters: {
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true, description: 'Note id from the candidate list (the value inside <!-- oblivion:id=… -->).' },
+            title: { type: 'string', required: true, description: 'New content-based name, e.g. "Exa/Tavily 密钥读取与直连检索".' },
+            tags: { type: 'array', items: { type: 'string' }, description: 'Replacement tags (2-8, lowercase, no #).' },
+          },
+        },
+        description: 'Notes to rename. Omit (or pass an empty array) to get the candidate list instead.',
+      },
+      limit: { type: 'number', description: 'How many candidates to return in list mode (default 10, max 50).' },
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.retitle) {
+        return asCanonical({ skipped: true, reason: 'retitle service unavailable' });
+      }
+      const items = (args.items ?? []) as Array<{ id: string; title: string; tags?: string[] }>;
+      if (items.length === 0) {
+        const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(50, Math.floor(args.limit)) : 10;
+        const notes = await deps.retitle.list(limit);
+        return asCanonical({
+          mode: 'list',
+          count: notes.length,
+          hint: '给每篇一个内容名（<= 32 字）与 2-8 个标签，再调一次本工具并在 items 里带上 id/title/tags。',
+          notes: notes.map((n) => ({
+            id: n.id,
+            file: n.file,
+            title: n.title,
+            topic: n.topic,
+            tags: n.tags,
+            ask: n.ask,
+            excerpt: n.excerpt,
+          })),
+        });
+      }
+      const { results, index } = await deps.retitle.apply(items);
+      const ok = results.filter((r) => r.ok);
+      return asCanonical({
+        mode: 'apply',
+        total: results.length,
+        renamed: ok.filter((r) => r.from !== r.to).length,
+        retagged: ok.filter((r) => r.from === r.to).length,
+        failed: results.filter((r) => !r.ok),
+        results,
+        index,
       });
     },
   }));
