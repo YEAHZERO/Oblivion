@@ -35,25 +35,18 @@ Desktop.ini
 # ============================================================
 # 本地协作层（.memory）
 #
-# 原则：**规则与模板入库，逐日记录不入库**。
-#   - 入库的是「怎么用这个记忆库」—— README、各目录 TEMPLATE、release 分层规则。
-#     它们是流程规范，任何机器上都应一致。
-#   - 不入库的是**本机积累的记录** —— 每天的日志、TODO、设计草稿、需求规格、
-#     版本增量记录。它们随个人与机器而异，入库只会制造噪音与合并冲突。
+# 2026-10-06 所有者裁定：**整棵 .memory/ 都不入库**。
+# 这里是本机协作层 —— 流程规则与模板、逐日记录、设计草稿、本机插件清单、
+# bridge-token.txt 这类凭据全在里面，一律不同步到 GitHub。
+# （原「规则与模板入库、逐日记录不入库」的分层约定自此作废；
+#   该约定与理由见 .memory/README.md，已随之失效。）
 #
+# 注 1：忽略规则只对**未跟踪**文件生效。.memory/README.md 与各 TEMPLATE.md
+#       此前已被跟踪，要让它们真正离开仓库需要 `git rm --cached <path>`。
+# 注 2：目录整体被排除后，`!.memory/xxx` 形式的反选不再生效（Git 的限制）。
 # 需要对外公开的版本说明写根 CHANGELOG.md，不要指望 .memory/ 会被别人看到。
 # ============================================================
-.memory/TODO.md
-.memory/daily/*.md
-!.memory/daily/TEMPLATE.md
-.memory/review/*.md
-!.memory/review/TEMPLATE.md
-.memory/design/*.md
-!.memory/design/TEMPLATE.md
-.memory/specs/*.md
-!.memory/specs/TEMPLATE.md
-.memory/release/alpha/*.md
-.memory/deferred/
+.memory/
 
 # .action 是 Agent 协作规范，**必须入库**（模板曾错误地忽略它，已修正）。
 # 这条注释是防止后来者把它加进忽略列表。
