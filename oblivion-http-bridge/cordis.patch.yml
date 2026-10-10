@@ -1,0 +1,20 @@
+# ============================================================
+# @oblivion/http-bridge — 热挂（hot-mount）插入行
+#
+# 本包**刻意不声明** `dsh.bundle`：与 @oblivion/core 同理，走 profile 用户层
+# `cordis.patch.yml` 的插入行激活。该补丁层**被监视**，落盘即装载，不必重启 App。
+#
+# 顺序：0.1.1 起**无要求**。曾经写 `inject: ['oblivion']`，core 还没 provide
+# 该服务时本包会停在 pending（不报错，但也不激活，`apply()` 一次都不跑）。
+# 现在 `inject: []`、端点每请求惰性解析，排在 core 之前也能起来
+# （端点未就绪时如实回 503，见 README「如何工作」）。排在 core 之后只是读起来顺。
+#
+# 这份文件有两个用途：
+#   ① 插入行的**正本** —— 照抄到用户层补丁即可（见 README「安装」一节）；
+#   ② 插件市场热挂按钮的**读取源** —— 未声明 `dsh.bundle.patch` 时回退到包根这份。
+# 注意：patch 会**替换整段 config** 而非合并，因此这里不写 config。
+# ============================================================
+
+- insert:
+    - id: '@oblivion/http-bridge'
+      name: '@oblivion/http-bridge'

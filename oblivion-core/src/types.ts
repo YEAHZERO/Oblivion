@@ -71,10 +71,19 @@ export interface CooccurrenceEdge {
 }
 
 export interface EdgeEvent {
+  /** `prune` 事件没有单条边可指，`edge_id` 是空串。 */
   edge_id: string;
-  event_type: 'create' | 'reinforce';
+  event_type: 'create' | 'reinforce' | 'prune';
   weight_delta: number;
   created_at: number;
+  /**
+   * 仅 `prune`：这次裁剪丢了多少条边 / 多少个节点。
+   *
+   * 为什么要记：裁剪是唯一会**删数据**的图操作，静默丢弃是知识库最不可逆的损坏；
+   * 事件表留着「什么时候按什么上限裁掉了多少」的账。
+   */
+  dropped_edges?: number;
+  dropped_nodes?: number;
 }
 
 export interface UserProfile {

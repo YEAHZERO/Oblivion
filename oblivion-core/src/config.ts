@@ -46,6 +46,17 @@ export interface Config {
   readonly graphWeightCap: number;
   readonly graphDecayBase: number;
   readonly graphDecayPeriodDays: number;
+  /**
+   * 共现图上限（`graph/prune.ts`）：留不住的边按有效权重从低到高丢。
+   *
+   * 为什么要上限（实测 2026-10-07）：单次捕获最多抽 24 个实体 ⇒ 一次就是 `C(24,2)=276` 条边，
+   * 图长到 23,253 条边 / 3.64 MB 时，**每一轮捕获都要整份读盘 + `JSON.parse`**，而绝大多数是
+   * 「只共现过一次」的弱边（权重 0.3、`reinforce_count` 0）。上限让代价封顶，收益靠强边。
+   * `<= 0` 表示不限制（不推荐：那是一次实验用的开关）。
+   */
+  readonly graphMaxEdges: number;
+  /** 节点数上限；超限时先丢「节点强度」最低的节点及其边。`<= 0` 表示不限制。 */
+  readonly graphMaxNodes: number;
 
   readonly feedbackTuneThreshold: number;
   readonly promptSectionOrder: number;
@@ -142,6 +153,13 @@ export const DEFAULT_CONFIG: Config = {
   graphWeightCap: 1.0,
   graphDecayBase: 0.95,
   graphDecayPeriodDays: 30,
+  /**
+   * 上限按本机实测标定（23,253 条边 / 1,437 个节点、权重中位数就是初始值 0.3）：
+   * 留 8,000 条边 ≈ 保留「共现过 ≥2 次或较新」的那部分，文件降到 ~1 MB；
+   * 600 个节点保住 `graph_neighbors` 最常查的中心节点，弱节点连边一起走。
+   */
+  graphMaxEdges: 8000,
+  graphMaxNodes: 600,
 
   feedbackTuneThreshold: 3,
   promptSectionOrder: 50,

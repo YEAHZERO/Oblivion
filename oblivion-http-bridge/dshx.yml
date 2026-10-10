@@ -1,0 +1,20 @@
+# ============================================================
+# @oblivion/http-bridge — DSHX 清单
+#
+# id 必须与 package.json 的 name 逐字相同：`dshx activate` 有一条硬校验
+# `plugin.id === packageName`。目录名 oblivion-http-bridge 只用于人读，
+# 同时也是 pnpm-workspace.yaml 里 `oblivion-*` glob 的匹配项。
+#
+# marker 必须与 src/index.ts 里的 console.log 逐字相同，
+# dshx verify-boot 用它证明 apply() 真的跑过。
+#
+# kind: object —— 本包是 Host 侧插件（无浏览器半边）。
+# profile: desktop —— 与 @oblivion/core 同 profile。MCP 通道挂在进程内
+# globalThis 上（Symbol.for('@oblivion/core/mcp')），跨进程共享不了；
+# 0.1.1 起本包 inject 为空，不再有「必须等 core 的服务」这一约束。
+# ============================================================
+id: '@oblivion/http-bridge'
+entry: src/index.ts
+marker: "[oblivion-http-bridge] loaded"
+kind: object
+profile: desktop

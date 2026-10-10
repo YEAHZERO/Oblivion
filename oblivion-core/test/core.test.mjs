@@ -300,6 +300,72 @@ describe('命名与打标签（由内容决定，不调模型）', () => {
 });
 
 /**
+ * 问答抽取：**推理块不是答案**。
+ *
+ * 起因（所有者 2026-10-07）：76 篇笔记里 40 篇的 `>Note：` 是英文推理碎片 ——
+ * 根因是 `textOfMessage()` 把所有带 `text` 的 content block 拼起来，而推理块
+ * 与可见文本块形状完全相同（都是 `{ type, text }`）。这里把口径钉在块类型上。
+ */
+describe('问答抽取（reasoning 不算答案）', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  it('textOfMessage 丢掉 reasoning / tool-call，只留可见文本', () => {
+    const data = {
+      message: {
+        content: [
+          { type: 'reasoning', text: 'Let me think about this. The user wants…' },
+          { type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' },
+          { type: 'reasoning', text: 'Still thinking.' },
+          { type: 'text', text: '## 结论\n\n就是这样做。' },
+        ],
+      },
+    };
+    assert.equal(kit.textOfMessage(data), '## 结论\n\n就是这样做。');
+  });
+
+  it('认 kind 口径（客户端 UI 词表），也认裸字符串与 text 短路', () => {
+    assert.equal(kit.textOfMessage({ content: [{ kind: 'reasoning', text: 'thinking' }, { kind: 'text', text: '答' }] }), '答');
+    assert.equal(kit.textOfMessage('直接是字符串'), '直接是字符串');
+    assert.equal(kit.textOfMessage({ text: '顶层 text' }), '顶层 text');
+    assert.equal(kit.textOfMessage({ message: { content: '数组以外的字符串形式' } }), '数组以外的字符串形式');
+  });
+
+  it('不认识的块类型仍然照读（保持宽容，别把上游形状变化变成静默丢内容）', () => {
+    assert.equal(kit.textOfMessage({ content: [{ type: 'quote', text: '未来才有的块' }] }), '未来才有的块');
+    assert.equal(kit.textOfMessage({ content: [{ text: '没有 type 的块' }] }), '没有 type 的块');
+  });
+
+  it('extractQAPair 的答案里不能混进推理', () => {
+    const qa = kit.extractQAPair({
+      sessionId: 's-1',
+      turn: 7,
+      events: [
+        { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: '这个怎么修？' }], source: { kind: 'user' } } },
+        {
+          type: 'assistant/message',
+          seq: 2,
+          data: {
+            message: {
+              content: [
+                { type: 'reasoning', text: 'Step 1: grep. Step 2: fix the join.' },
+                { type: 'text', text: '改 `util/fs.ts`：rename 失败就退回直接写。' },
+              ],
+            },
+          },
+        },
+      ],
+    });
+    assert.equal(qa.question, '这个怎么修？');
+    assert.equal(qa.answer, '改 `util/fs.ts`：rename 失败就退回直接写。');
+    assert.ok(!qa.answer.includes('Step 1'), '推理碎片漏进答案了：' + qa.answer);
+  });
+});
+
+/**
  * 笔记改名 / 打标签（`oblivion_retitle`）。
  *
  * 所有者 2026-10-06：「让模型用 oblivion_digest 那种方式顺手给最近的笔记改名打标签」——
@@ -892,5 +958,204 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
     } finally {
       rmSync(f.tmp, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * 共现图裁剪：图是「辅助面」，但不能无限长 —— 本机实测 23,253 条边 / 3.64 MB，
+ * 每轮捕获都要整份读盘 + JSON.parse。这里钉住裁剪口径：**留强边，且丢了多少要留痕**。
+ */
+describe('共现图裁剪（graph/prune）', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  const NO_DECAY = { base: 1, periodDays: 30 };
+  const edge = (a, b, weight, at = 1_000, count = 0) => ({
+    source_id: a,
+    target_id: b,
+    weight,
+    last_reinforced_at: at,
+    reinforce_count: count,
+  });
+
+  it('超出边上限时按有效权重留强边，并报出丢了多少', () => {
+    const edges = [edge('a', 'b', 0.3), edge('b', 'c', 0.9), edge('c', 'd', 0.6)];
+    const out = kit.pruneGraph(edges, { maxEdges: 2, maxNodes: 0 }, NO_DECAY, 1_000);
+    assert.deepEqual(out.kept.map((e) => [e.source_id, e.target_id]), [['b', 'c'], ['c', 'd']]);
+    assert.equal(out.droppedEdges, 1);
+    assert.equal(out.droppedNodes, 0);
+    assert.equal(out.nodes, 3);
+  });
+
+  it('同权重时按「最近强化」再按强化次数排（不是先进先出）', () => {
+    const edges = [edge('a', 'b', 0.5, 100, 0), edge('c', 'd', 0.5, 900, 0), edge('e', 'f', 0.5, 900, 3)];
+    const out = kit.pruneGraph(edges, { maxEdges: 2, maxNodes: 0 }, NO_DECAY, 1_000);
+    assert.deepEqual(out.kept.map((e) => e.source_id + e.target_id), ['ef', 'cd']);
+  });
+
+  it('超出节点上限时先丢「节点强度」最低的节点及其边', () => {
+    // 中心 hub 与三个叶子相连：叶子各只有一条弱边 ⇒ 节点上限 2 时只留最强的那条边。
+    const edges = [
+      edge('hub', 'weak1', 0.3),
+      edge('hub', 'weak2', 0.3),
+      edge('hub', 'strong', 1.0),
+    ];
+    const out = kit.pruneGraph(edges, { maxEdges: 0, maxNodes: 2 }, NO_DECAY, 1_000);
+    assert.deepEqual(out.kept.map((e) => e.target_id), ['strong']);
+    assert.equal(out.droppedEdges, 2);
+    assert.equal(out.droppedNodes, 2);
+    assert.equal(out.nodes, 2);
+  });
+
+  it('上限 <= 0 表示不限制（原样返回、一条不丢）', () => {
+    const edges = [edge('a', 'b', 0.3), edge('b', 'c', 0.9)];
+    const out = kit.pruneGraph(edges, { maxEdges: 0, maxNodes: 0 }, NO_DECAY, 1_000);
+    assert.equal(out.kept.length, 2);
+    assert.equal(out.droppedEdges, 0);
+    assert.equal(out.droppedNodes, 0);
+  });
+
+  it('不改入参（调用方决定何时落盘）', () => {
+    const edges = [edge('a', 'b', 0.3), edge('b', 'c', 0.9)];
+    const before = JSON.stringify(edges);
+    kit.pruneGraph(edges, { maxEdges: 1, maxNodes: 0 }, NO_DECAY, 1_000);
+    assert.equal(JSON.stringify(edges), before);
+  });
+});
+
+/**
+ * 条目文件名的形状闸门。
+ *
+ * `loadAll()` 现在**按文件名**先过滤（不解析就跳过 graph.json / status.json 这些非条目状态文件）。
+ * 这条测试把 `newId()` 的产物钉在该形状上 —— 哪天改了 id 格式却忘了同步 `ENTRY_FILE_RE`，
+ * 这里会红，而不是在真实知识库里静默丢掉所有条目。
+ */
+describe('条目文件名形状（store/ENTRY_FILE_RE）', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  it('newId() + .json 必须匹配（真实样例也对得上）', () => {
+    for (let i = 0; i < 50; i += 1) {
+      assert.ok(kit.ENTRY_FILE_RE.test(kit.newId() + '.json'), 'newId 形状漂了：' + kit.newId());
+    }
+    assert.ok(kit.ENTRY_FILE_RE.test('ts-muwsocwo-yk.json'));
+    assert.ok(kit.ENTRY_FILE_RE.test('ts-1a2b3c-0z.json'));
+  });
+
+  it('dataRoot 里的非条目状态文件一律不匹配（省掉每轮 3.6 MB 的白读）', () => {
+    for (const name of [
+      'graph.json',
+      'graph-events.json',
+      'status.json',
+      'mount-diag.json',
+      'panel-client-diag.json',
+      'index.json',
+      'state.json',
+      'profile.json',
+      'perspective.json',
+      'decisions.jsonl',
+      'ts-muwsocwo-yk.md',
+      'ts-muwsocwo-yk.json.bak',
+    ]) {
+      assert.ok(!kit.ENTRY_FILE_RE.test(name), '不该被当成条目：' + name);
+    }
+  });
+});
+
+/**
+ * topic 口径（0.2.10）：整句归一化，不再是「问句里第一个词串」。
+ *
+ * 旧实现的 topic 实测长成 `Windows` / `key` / `针对C` / `只做体检` 这类碎片，
+ * 既不能当归类线索，也让 `supersedeOlder()` 按错误口径降级旧条目。
+ */
+describe('主题（topic）口径', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  it('保留整句，剥开头水词，去掉结尾标点', () => {
+    assert.equal(
+      kit.topicFromQuestion('如何把 Windows 上的 rename 失败改成退回直接写？'),
+      'Windows 上的 rename 失败改成退回直接写',
+    );
+  });
+
+  it('不再是第一个词串：多词问句整句留下', () => {
+    const topic = kit.topicFromQuestion('面板自己从 decisions.jsonl 现算（不动 core）');
+    assert.ok(topic.includes('decisions.jsonl'), 'topic 丢了问句主体：' + topic);
+    assert.ok(topic.length > 10, 'topic 还是碎片：' + topic);
+    // 括号落在句子末尾 ⇒ 与旧的 `EDGE_PUNCT` 收尾规则一致地去掉括号，但**内容全留**。
+    assert.equal(topic, '面板自己从 decisions.jsonl 现算不动 core');
+  });
+
+  it('deriveTopic 走同一口径，空问句退回 untitled', () => {
+    assert.equal(
+      kit.deriveTopic({ question: '怎么让 bridge 支持直接给 token', answer: 'x' }),
+      '让 bridge 支持直接给 token',
+    );
+    assert.equal(kit.deriveTopic({ question: '   ', answer: 'x' }), 'untitled');
+  });
+
+  it('显式 topicHint 仍然优先（模型给的主题不被改写）', () => {
+    assert.equal(kit.deriveTopic({ question: '随便', answer: 'x', topicHint: '运行时装载' }), '运行时装载');
+  });
+
+  it('topic 超长按上限截断，不切出半截括号', () => {
+    const long = '这是一个特别特别长的问句' + '补'.repeat(80);
+    const topic = kit.topicFromQuestion(long);
+    assert.ok(topic.length <= kit.TOPIC_MAX, `topic 超长：${topic.length}`);
+    assert.ok(topic.endsWith('…'));
+  });
+
+  it('URL 不进 topic（那是路径，不是主题）', () => {
+    const topic = kit.topicFromQuestion('参考 https://github.com/foo/bar 这个插件的做法');
+    assert.ok(!topic.includes('http'), 'topic 里带了 URL：' + topic);
+  });
+});
+
+/**
+ * 半截括号（0.2.10）。
+ *
+ * 起因（所有者 2026-10-07）：知识库里 7 篇笔记的名字带着半截括号 ——
+ * `我提交_推送的（ 3f41a9d`、`不显示：最近判定 （窗口 10 条，显示最近 6 条`、
+ * `改代码，更稳）：让 bridge 支持「直接给 token`。它们都是「问句被在第一个标点处切开」的残留。
+ */
+describe('名字里的半截括号', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  it('没闭合的开括号去掉', () => {
+    const title = kit.titleFromQA('我提交、推送的（ 3f41a9d', '');
+    assert.ok(!title.includes('（'), '还留着半截开括号：' + title);
+    assert.ok(title.includes('3f41a9d'), '把内容也切掉了：' + title);
+  });
+
+  it('孤立的收括号去掉', () => {
+    const title = kit.titleFromQA('改代码，更稳）：让 bridge 支持直接给 token', '');
+    assert.ok(!title.includes('）'), '还留着孤立收括号：' + title);
+    assert.ok(title.includes('bridge'), '把内容也切掉了：' + title);
+  });
+
+  it('配对完好的括号原样保留（不误伤）', () => {
+    assert.equal(kit.titleFromQA('改一下（顺便）标签', ''), '改一下（顺便）标签');
+    // 括号落在**句子两端**时本来就会被 `EDGE_PUNCT` 当装饰性标点去掉（0.1.x 起的规矩），
+    // 这里钉住的是「去掉两端标点后不留半截括号」。
+    assert.equal(kit.titleFromQA('「插件激活」怎么查', ''), '插件激活怎么查');
+  });
+
+  it('topic 与标题同一口径（两处都清）', () => {
+    assert.ok(!kit.topicFromQuestion('不显示：最近判定 （窗口 10 条，显示最近 6 条').includes('（'));
+    assert.ok(!kit.topicFromQuestion('改代码，更稳）：让 bridge 支持「直接给 token').includes('）'));
   });
 });

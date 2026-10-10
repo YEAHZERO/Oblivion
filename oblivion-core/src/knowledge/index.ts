@@ -5,7 +5,7 @@ import { normalizeForHash, sha1 } from '../util/hash.js';
 import { expandHome } from '../util/paths.js';
 import { newId, now } from '../util/time.js';
 import { compareByOverlap, fourLayerFilter, type SimilarVerdict } from './filter.js';
-import { tagsFromQA, titleFromQA } from './naming.js';
+import { tagsFromQA, titleFromQA, topicFromQuestion } from './naming.js';
 import { KnowledgeIndex } from './search.js';
 import { KnowledgeStore } from './store.js';
 
@@ -272,11 +272,17 @@ export function deriveTitle(qa: QAPair): string {
   return titleFromQA(qa.question, qa.answer);
 }
 
-/** 主题桶：显式 hint 优先，否则取问句里第一个实词串。 */
+/**
+ * 主题桶：显式 hint 优先，否则把**整句问句归一化**当主题（0.2.10 起）。
+ *
+ * 旧实现取问句里第一个实词串，实测 topic 长成 `Windows` / `key` / `针对C` 这种碎片；
+ * 碎片既不能当归类线索，也让 `supersedeOlder()` 按错误的口径降级旧条目。口径与代价见
+ * `naming.ts` 的 `topicFromQuestion()`。
+ */
 export function deriveTopic(qa: QAPair): string {
   if (qa.topicHint) return qa.topicHint;
-  const m = qa.question.match(/[\p{L}\p{N}_-]{3,20}/gu);
-  return m?.[0] ?? 'untitled';
+  const topic = topicFromQuestion(qa.question);
+  return topic === '' ? 'untitled' : topic;
 }
 
 function mergeSources(existing: KnowledgeItem['sources'], qa: QAPair, fp: string) {

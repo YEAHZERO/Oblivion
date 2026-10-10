@@ -12,7 +12,99 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/core` v0.2.9 + `@oblivion/daily-life` v0.0.1 + `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.14 + v0.0.13：标签噪声治理（格式词 / 路径碎片 / 纯数字不再成标签）、14 篇散篇笔记归并进已有主题页、MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写、知识库每篇文档下方显示「相关主题 / 关键词 / 日期」
+## [未发布] — `@oblivion/core` v0.2.10 + v0.2.9 + `@oblivion/daily-life` v0.0.1 + `@oblivion/core` v0.2.8 + v0.2.7 + v0.2.6 + v0.2.5 + v0.2.4 + v0.2.3 + `@oblivion/http-bridge` v0.1.1 + `@oblivion/brand` v0.1.3 + `@oblivion/panel` v0.0.14 + v0.0.13：推理块不再被当成答案沉淀（含 44 篇存量笔记回填）、主题（topic）改为整句归一化、笔记名字不再留半截括号、共现图加上限（装载即瘦身）+ 条目扫描跳过非条目文件、标签噪声治理（格式词 / 路径碎片 / 纯数字不再成标签）、14 篇散篇笔记归并进已有主题页、MCP 端点搬进 core（浏览器扩展那条路）、桥接插件改成纯传输（修掉从未激活的根因）、主题页 `oblivion_wiki`（模型判簇、插件落盘回链）、双链只指向真实存在的笔记文件、关联知识单段化、沉淀件按内容命名 + 打标签、存量回填与模型面改名工具、删掉「最近判定」区域、挂载层判定修正、知识库「仅入库」折叠、rename EPERM 退回直接写、知识库每篇文档下方显示「相关主题 / 关键词 / 日期」
+
+### `@oblivion/core` v0.2.10 —— 推理不算答案 / topic 整句 / 名字不留半截括号 / 共现图封顶
+
+所有者 2026-10-07 的五项修改（②③④ 属 core；①⑤ 属 profile 与本 bundle，见各自小节）。
+
+**② 推理块不再被当成答案**（`src/qa-loop/extract.ts`）
+
+旧 `textOfMessage()` 把所有带 `text` 的块拼成答案，而推理块与可见文本块**形状相同**（都是
+`{ type, text }`），只有 `type` 不同 ⇒ 英文 CoT 跟着结论一起被沉淀。实测某会话 2,507 条
+`assistant/message` 的块类型计数：`tool-call` 3264 / `reasoning` 2489 / `text` 356，且**没有一条
+消息带两个 text 块**（所以继续用「拼接所有可见块」而非「取最后一个」）。
+
+新增 `NON_VISIBLE_BLOCK_TYPES`（reasoning / thinking / analysis / redacted-reasoning / tool-call /
+tool-result / tool-addition / tool-removal / image / file）与 `blockKind()`（先看 `type` 再看 `kind`
+—— 持久日志用 `type`、客户端 UI 用 `kind`，两边都认），命中即跳过。
+
+**② 存量回填**（`scripts/repair-reasoning-notes.mjs`，一次性、默认 dry-run）
+
+按条目 JSON 的 `sources[0].ref`（`<sessionId>#turn-<n>`）回到
+`~/.dsh/sessions/*/<sessionId>/session.v4.jsonl.zstd`，重算可见答案并替换 `## 内容` 与 `>Note：`。
+
+三个必须记住的实现约束：
+
+| 约束 | 原因 |
+| --- | --- |
+| 日志是**多帧 zstd**，要按魔数 `28 B5 2F FD` 切片逐帧解 | Node 的 `zstdDecompressSync` 一次只解第一帧 |
+| 轮次归属靠 `turn/start` 边界，**不是**每条消息的 `data.turn` | `user/message` 载荷里没有 `data.turn`，按它过滤会让 78 篇全部 `no-qa` |
+| 内容段边界是**最后一个** `<!-- oblivion:id=… -->`，不是「下一个 `## ` 标题」 | 答案自己就带 `##` 小标题，弱边界会只换第一段、把旧推理留成两份 |
+
+另需廉价预过滤（`INTERESTING` 正则）后 `JSON.parse` —— 否则为读一个 `type` 要解析 MB 级
+`tool/result` 行，脚本会 OOM（`--max-old-space-size=4096`）。
+
+**实测执行**：备份 174 文件 / 1,198,405 B → `--apply --dirs 01_问答沉淀` ⇒ **改写 44 篇 /
+本来干净 32 / 无问答对 2**（78 篇、13 个会话）。对照备份校验：`## 关联知识（自动）` 段数变化
+**0**、最后一个标记之后的内容被改 **0**、英文 `>Note：` 由 59 篇降到 **35** 篇。
+
+**③ topic 改为整句归一化**（`src/knowledge/naming.ts`、`src/knowledge/index.ts`）
+
+旧 `deriveTopic()` 取问句里第一个实词串，实测长成 `Windows` / `key` / `针对C` 这类碎片 ——
+topic 是给人看的归类线索、又是索引页与冲突页的分组键，碎片等于没有信息。
+
+新增 `topicFromQuestion()`（首行 → 去 URL/markdown → 最多两轮剥开头水词 → 配平括号 →
+按 `TOPIC_MAX = 48` 截断，**先配平再去尾标点、最后才补 `…`** —— `EDGE_PUNCT` 会把 `…` 当尾标点吃掉）。
+`deriveTopic()` 改为 `topicHint ?? topicFromQuestion(question) ?? 'untitled'`。
+
+> 副作用（刻意接受）：topic 变精确 ⇒ `supersedeOlder(topic)` 撞车变少 ⇒ **autoSupersede 更少触发**。
+> 以前那批自动降级里，有一部分只是「两篇问句都以同一个词开头」。
+
+**③ 名字不再留半截括号**：新增 `BRACKET_PAIRS` 与 `balanceBrackets()` —— **孤立的收括号丢掉、
+未闭合的开括号也丢掉，不做自动补全**（补出来的是编的字）。`cleanTitle()` 在截断前后各配平一次
+（截断本身会切出新的半截括号）。现场 7 篇带半截括号的标题由此收敛。
+
+**④ 共现图封顶**（`src/graph/prune.ts` 新增、`src/graph/index.ts`、`src/config.ts`、`src/types.ts`）
+
+现场 `graph.json` 已长到 **23,253 条边 / 1,437 个节点 / 3.64 MB**，且权重中位数就是初始值 0.3
+（绝大多数是「只共现过一次」的弱边），而**每一轮捕获都要整份读盘 + `JSON.parse`**。
+
+`pruneGraph(edges, {maxEdges, maxNodes}, decay, at)`：按有效权重降序（同权重再比最近强化时间、
+强化次数）留前 `maxEdges`；节点超限时按「节点强度 = 其保留边有效权重之和」丢掉最弱节点及其边。
+默认 **`graphMaxEdges: 8000` / `graphMaxNodes: 600`**（`<= 0` 表示不限制）。
+
+`trim()` 在 `persist()` 开头跑，并**在装载后也跑一次**（老库不能等下一次正好有新共现才瘦身）；
+内存与磁盘必须一起裁，否则刚裁掉的边会在下一轮 `recordCooccurrence()` 里被重新建回来。
+裁剪是唯一会**删数据**的图操作，因此每次往事件表推一条 `prune` 账（`dropped_edges` /
+`dropped_nodes`，`edge_id` 为空串）并记 info 日志。
+
+**④ `loadAll()` 跳过非条目文件**（`src/knowledge/store.ts`）：新增
+`ENTRY_FILE_RE = /^ts-[0-9a-z]+-[0-9a-z]{2}\.json$/`（= `newId() + '.json'`），旧实现把每个
+`.json` 都 `JSON.parse` 一遍再靠 `typeof parsed.id === 'string'` 丢掉 —— 也就是每轮白读白解
+3.6 MB 只为得出「它不是条目」。代价已写进注释并用测试钉住：改 `newId()` 格式而不同步这条正则，
+会**静默漏掉全部条目**。
+
+**闸门**：`tsc -p tsconfig.json` **exit 0**；`node --test` **73/73**（原 52 + 新增 21：问答抽取 /
+共现图裁剪 / 条目文件名形状 / topic 口径 / 半截括号）；`node scripts/selfcheck.mjs` **33 项失败 0**；
+`build` ⇒ `lib/index.js` **147,931 B**；`check:version` **0.2.10**。
+
+### `@oblivion/bundle` —— 解散 `oblivion-stack`（core 与 http-bridge 退回两条同级 insert 行）
+
+所有者 2026-10-10 裁定。原 `cordis:group` 的唯一作用是「把认知栈当作一个可整体引用 / 替换的
+单元」，而它**不承载任何功能**：桥接 `inject: []`、端点走进程级全局键
+`globalThis[Symbol.for('@oblivion/core/mcp')]`，两者之间没有 Cordis 服务依赖 ⇒ 同不同作用域都无所谓。
+
+> 【已作废的旧结论】本包注释曾写「core 与 http-bridge 必须在同一个作用域，否则 `ctx.get('oblivion')`
+> 恒为 undefined」。那条对**旧版桥接**成立（`inject: ['oblivion']` + 走 Cordis 服务解析取端点），
+> 端点搬进 core、桥接改成 `inject: []` 之后不再成立。仍然通用的一条是：服务解析走 `ctx[isolate][name]`，
+> 不同 fiber 的 isolate 映射不同 ⇒ 靠 Cordis 服务互相取用的插件必须同作用域。
+
+`scripts/selfcheck.mjs` 的两条断言**反向**钉住新契约：不再出现 `cordis:group` / `group: true`，
+core 与 http-bridge 必须是缩进 4 空格的同级 insert 行，且 patch 里**一条 `config:` 都不许有**
+（patch 会替换整段 config 而非合并；真要改配置请写进 profile 用户层补丁）。
+
+**闸门**：`node scripts/selfcheck.mjs` **15 项失败 0**；YAML 解析 ⇒ insert 恰好 3 行、无 `group`、无 `config`。
 
 ### `@oblivion/core` v0.2.9 —— 标签噪声治理 + 主题页归并（存量清洗）
 

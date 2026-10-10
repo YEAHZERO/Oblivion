@@ -1,0 +1,45 @@
+{
+  "name": "@oblivion/http-bridge",
+  "version": "0.1.1",
+  "description": "Oblivion HTTP 桥接：把 @oblivion/core 的认知能力暴露成本机 MCP 端点，供浏览器扩展（DeepSeek++）以 streamable_http 传输接入。自带 node:http 服务器，不依赖 webServer 服务。",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "compat": {
+      "host": ">=0.2.0-rc.2 <0.3.0"
+    }
+  },
+  "files": [
+    "lib",
+    "dshx.yml",
+    "cordis.patch.yml",
+    "README.md",
+    "VERSION"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test",
+    "selfcheck": "node scripts/selfcheck.mjs",
+    "version:bump": "node scripts/bump-version.mjs",
+    "check:version": "node scripts/bump-version.mjs --check"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.6.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  }
+}

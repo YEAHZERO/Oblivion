@@ -180,6 +180,62 @@ function squeeze(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+/** 成对符号：名字里只有开（或只有收）的那一半，一律当我们切坏了。 */
+const BRACKET_PAIRS: Array<[string, string]> = [
+  ['（', '）'],
+  ['(', ')'],
+  ['「', '」'],
+  ['『', '』'],
+  ['《', '》'],
+  ['【', '】'],
+  ['[', ']'],
+  ['{', '}'],
+];
+
+/**
+ * 丢掉**没配对**的括号（0.2.10）。
+ *
+ * 起因（所有者 2026-10-07）：知识库里 7 篇笔记的名字带着半截括号 ——
+ * `我提交_推送的（ 3f41a9d`、`不显示：最近判定 （窗口 10 条，显示最近 6 条`、
+ * `改代码，更稳）：让 bridge 支持「直接给 token`。
+ * 它们全是「问句被 `PUNCT` 在第一个标点处切开」的残留：只留下开括号那一半。
+ *
+ * 规则只有两条：**收括号找不到开括号就丢；开括号到结尾都没闭合也丢。**
+ * 不做「自动补另一半」—— 补出来的字是编的。
+ */
+function balanceBrackets(text: string): string {
+  let out = '';
+  const stack: Array<{ ch: string; index: number }> = [];
+  for (const ch of text) {
+    if (BRACKET_PAIRS.some(([open]) => open === ch)) {
+      stack.push({ ch, index: out.length });
+      out += ch;
+      continue;
+    }
+    const closeIdx = BRACKET_PAIRS.findIndex(([, close]) => close === ch);
+    if (closeIdx < 0) {
+      out += ch;
+      continue;
+    }
+    const open = BRACKET_PAIRS[closeIdx][0];
+    let found = -1;
+    for (let i = stack.length - 1; i >= 0; i -= 1) {
+      if (stack[i].ch === open) {
+        found = i;
+        break;
+      }
+    }
+    if (found < 0) continue; // 孤立的收括号 ⇒ 丢
+    stack.splice(found, 1);
+    out += ch;
+  }
+  // 剩下的都是没闭合的开括号；从后往前删，前面的下标才不会失效。
+  for (const { index } of [...stack].sort((a, b) => b.index - a.index)) {
+    out = out.slice(0, index) + out.slice(index + 1);
+  }
+  return out;
+}
+
 /** 去掉 markdown 装饰、结尾标点；过长则截断（文件名与索引都要短）。 */
 function cleanTitle(raw: string): string {
   let text = squeeze(raw.replace(/[#*`>~]/g, ' '));
@@ -194,9 +250,11 @@ function cleanTitle(raw: string): string {
       break;
     }
   }
+  text = balanceBrackets(text);
   if (text.length > MAX_TITLE) text = text.slice(0, MAX_TITLE - 1) + '…';
-  // 截断会切出新的尾标点（`…（窗口 10 条，显示最近 6 条` 这种），所以收尾要再来一次。
-  return squeeze(text.replace(EDGE_PUNCT, ''));
+  // 截断会切出新的尾标点（`…（窗口 10 条，显示最近 6 条` 这种），所以收尾要再来一次：
+  // 先去标点，再去掉这一刀切出来的半截括号。
+  return balanceBrackets(squeeze(text.replace(EDGE_PUNCT, '')));
 }
 
 /**
@@ -262,6 +320,48 @@ export function titleFromQA(question: string, answer: string): string {
   const fromQuestion = titleFromQuestion(question ?? '');
   if (fromQuestion !== '') return fromQuestion;
   return 'untitled';
+}
+
+/** topic 最长多少字（它是索引页的分组键、也会在标题弱时变成文件名）。 */
+export const TOPIC_MAX = 48;
+
+/**
+ * topic（0.2.10 起）：**整句归一化**，不再取「问句里第一个词串」。
+ *
+ * 起因（所有者 2026-10-07，审计结论）：旧实现是
+ * `qa.question.match(/[\p{L}\p{N}_-]{3,20}/gu)?.[0] ?? 'untitled'` —— 也就是问句的第一个词，
+ * 实测长成 `Windows` / `key` / `针对C` / `知识库` / `只做体检` 这类碎片（`src/tools.ts` 里
+ * 自己也写着 "that field is only the first word of the question"）。topic 是给人看的归类线索、
+ * 又是 `00-Index/索引.md` 与 `50-Conflicts` 的分组键，碎片等于没有信息。
+ *
+ * 与标题的分工不变：**标题是结论（来自答案），topic 是问句本身**。所以这里保留整句，
+ * 只做四件事：折叠空白、去 URL/markdown、剥开头水词（最多两轮）、去掉没配对的括号，
+ * 最后按 `TOPIC_MAX` 截断。
+ *
+ * 副作用要说清楚：topic 变长变精确之后，`supersedeOlder(topic)` 的「同 topic 即同主题」
+ * 撞车变少 ⇒ **autoSupersede 会更少触发**。这是拿回真话的代价：以前那批自动降级里，
+ * 有一部分只是「两篇问句都以同一个词开头」。
+ */
+export function topicFromQuestion(question: string): string {
+  const first = String(question ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line !== '');
+  if (first === undefined) return '';
+  let text = squeeze(first.replace(/[#*`>~]/g, ' '));
+  text = squeeze(text.replace(/https?:\/\/\S+/gi, ' ').replace(/\bwww\.\S+/gi, ' '));
+  for (let round = 0; round < 2; round += 1) {
+    const next = text.replace(LEAD_NOISE, '').trim();
+    if (next === text || next === '') break;
+    text = next;
+  }
+  text = balanceBrackets(squeeze(text.replace(EDGE_PUNCT, '')));
+  text = text.replace(/[。.，,；;：:、!！?？…]+$/g, '');
+  if (text.length <= TOPIC_MAX) return balanceBrackets(text);
+  // 截断可能正好切开一对括号；先配平再去掉切出来的尾标点，最后才补省略号
+  // （`EDGE_PUNCT` 会把 `…` 当尾标点吃掉，所以顺序不能反）。
+  const cut = balanceBrackets(text.slice(0, TOPIC_MAX - 1)).replace(EDGE_PUNCT, '').trim();
+  return cut + '…';
 }
 
 /**

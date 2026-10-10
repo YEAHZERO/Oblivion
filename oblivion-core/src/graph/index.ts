@@ -7,6 +7,7 @@ import type { CooccurrenceEdge, EdgeEvent, QAPair } from '../types.js';
 import { expandHome } from '../util/paths.js';
 import { now } from '../util/time.js';
 import { effectiveWeight, reinforce } from './decay.js';
+import { pruneGraph } from './prune.js';
 
 export interface GraphService {
   recordCooccurrence(qa: QAPair): Promise<number>;
@@ -59,7 +60,58 @@ export function registerGraph(ctx: AppContext, config: Config): GraphService {
     }
   })();
 
+  /**
+   * 装载即瘦身：老库可能早就超限（本机实测 23,253 条边 / 3.64 MB），
+   * 不能等到「下一次正好有新共现」才裁。失败只记日志 —— 图是辅助面，绝不能因此挡住装载。
+   */
+  void loaded
+    .then(async () => {
+      const trimmed = trim(now());
+      if (trimmed.droppedEdges > 0 || trimmed.droppedNodes > 0) await persist();
+    })
+    .catch((error: unknown) => {
+      ctx.logger?.warn?.(config.logPrefix + ' 装载时裁剪共现图失败（不影响使用）：%o', error);
+    });
+
+  /**
+   * 把图裁到上限内。**内存与磁盘必须一起裁**：只裁磁盘的话，刚裁掉的边会在下一次
+   * `recordCooccurrence()` 的循环里被重新建回来（等于白裁）。
+   *
+   * 裁剪是唯一会删数据的图操作，所以每次都往事件表推一条 `prune` 账（丢了几条边/几个节点）。
+   */
+  function trim(at: number): { droppedEdges: number; droppedNodes: number; nodes: number } {
+    const outcome = pruneGraph(
+      edges.values(),
+      { maxEdges: config.graphMaxEdges, maxNodes: config.graphMaxNodes },
+      { base: config.graphDecayBase, periodDays: config.graphDecayPeriodDays },
+      at,
+    );
+    if (outcome.droppedEdges === 0 && outcome.droppedNodes === 0) {
+      return { droppedEdges: 0, droppedNodes: 0, nodes: outcome.nodes };
+    }
+    edges = new Map(outcome.kept.map((e) => [edgeKey(e.source_id, e.target_id), e]));
+    log.push({
+      edge_id: '',
+      event_type: 'prune',
+      weight_delta: 0,
+      created_at: at,
+      dropped_edges: outcome.droppedEdges,
+      dropped_nodes: outcome.droppedNodes,
+    });
+    ctx.logger?.info?.(
+      config.logPrefix + ' 共现图超上限：按有效权重裁掉 %d 条边 / %d 个节点（现存 %d 条边 / %d 个节点，上限 %d / %d）',
+      outcome.droppedEdges,
+      outcome.droppedNodes,
+      edges.size,
+      outcome.nodes,
+      config.graphMaxEdges,
+      config.graphMaxNodes,
+    );
+    return { droppedEdges: outcome.droppedEdges, droppedNodes: outcome.droppedNodes, nodes: outcome.nodes };
+  }
+
   async function persist(): Promise<void> {
+    trim(now());
     await mkdir(root, { recursive: true });
     await writeFile(statePath, JSON.stringify([...edges.values()], null, 2) + '\n', 'utf8');
     await writeFile(eventPath, JSON.stringify(log.slice(-2000), null, 2) + '\n', 'utf8');

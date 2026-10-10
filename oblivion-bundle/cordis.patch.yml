@@ -31,8 +31,51 @@
 # ============================================================
 
 - insert:
+    # ── 认知栈：core + http-bridge（两条同级行，**不是** group）──────
+    #
+    # 2026-10-10 所有者裁定解散原来的 `oblivion-stack`（一个 `cordis:group`）。
+    # 理由（实测 + 源码）：group 在这里**不承载任何功能**。
+    #
+    # 两者之间没有 Cordis 服务依赖 —— 桥接不从 `ctx.get('oblivion')` 取端点，
+    # 端点走**进程级全局键**：core 的 `publishMcp()` 往
+    # `globalThis[Symbol.for('@oblivion/core/mcp')]` 上的 `Map<owner, slot>` 放槽
+    # （oblivion-core/src/mcp/channel.ts:17-18,33,79）；桥接按同一字面量只读同一张表
+    # （oblivion-http-bridge/src/channel.ts:18-20,69-71），且不 import core 的任何模块。
+    # 通道键与契约版本两侧各写一次字面量，由
+    # `oblivion-http-bridge/scripts/selfcheck.mjs:124-127` 同时读两侧源码逐字比对，
+    # 改一处忘一处当场红。`Symbol.for` 是跨 realm / 跨模块副本的全局注册表键，
+    # 跨不跨 fiber 拿到的都是同一张表 ⇒ 同不同作用域都无所谓。
+    #
+    # 桥接自身是 `inject: []`（oblivion-http-bridge/src/index.ts:62）：不声明任何服务
+    # 依赖 ⇒ 「取不到服务 → Cordis 把 epoch 置 INACTIVE → 插件一次都不激活」这条
+    # 曾经的真实故障不会再发生（oblivion-http-bridge/src/index.ts:18-32 记了根因与实测
+    # 证据：心跳文件不存在、42081 从未监听、日志里没有 bridge 记录）。端点没就绪时
+    # 它照常激活，只是如实回 503 并写明原因。
+    #
+    # 【已作废的旧结论】曾写「core 与 http-bridge 必须在同一个作用域，否则
+    # ctx.get('oblivion') 恒为 undefined」。那条对**旧版桥接**成立（`inject =
+    # ['oblivion']` + 走 Cordis 服务解析取端点），端点搬进 core、桥接改成
+    # `inject: []` 之后不再成立。仍然通用的一条是：服务解析走 `ctx[isolate][name]`，
+    # 不同 fiber 的 isolate 映射不同 ⇒ 靠 Cordis 服务互相取用的插件必须同作用域。
+    #
+    # 将来真需要共享作用域时，按官方 preset（`@deepseek-ai/dsh-web-app/presets/`）
+    # 的形态加回来即可：
+    #   - id: <组名>
+    #     name: cordis:group
+    #     group: true
+    #     config:
+    #       - id: '@oblivion/core'
+    #         name: '@oblivion/core'
+    #       - id: '@oblivion/http-bridge'
+    #         name: '@oblivion/http-bridge'
+    #
+    # ⚠️ 留在 bundle 层的代价是「改它的配置要重启」—— 那是**分层位置**的代价，
+    #    与作用域无关。
     - id: '@oblivion/core'
       name: '@oblivion/core'
+
+    - id: '@oblivion/http-bridge'
+      name: '@oblivion/http-bridge'
 
     - id: '@oblivion/panel'
       name: '@oblivion/panel'

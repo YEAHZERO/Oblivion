@@ -14,10 +14,48 @@ export interface RawTurn {
 }
 
 /**
- * 从消息事件里取纯文本。
+ * 模型的工作笔记（推理/思考）与工具调用**不是回答**，绝不能被拼进答案。
+ *
+ * 为什么单列一张表：推理块与可见文本块的形状**一模一样**（都是 `{ type, text }`），
+ * 只有 `type` 不同 —— 旧实现「把所有带 text 的块拼起来」，于是英文 CoT 跟着答案一起
+ * 被沉淀（2026-10-06 清库时 76 篇里有 40 篇的 `>Note：` 是推理碎片）。
+ *
+ * 实测（2026-10-07，本机 `~/.dsh/sessions/…/session.v4.jsonl.zstd`，2507 条 `assistant/message`）：
+ * 块的 `type` 取值 `tool-call`(3264) / `reasoning`(2489) / `text`(356)，键形状只有
+ * `{arguments,id,name,type}` 与 `{text,type}` 两种；**没有任何一条消息带两个 text 块**
+ * ⇒ 「取最后一个 text 块」与「拼所有 text 块」在真实数据上等价，这里继续用拼接（更宽容）。
+ */
+const NON_VISIBLE_BLOCK_TYPES = new Set([
+  'reasoning',
+  'thinking',
+  'analysis',
+  'redacted-reasoning',
+  'tool-call',
+  'tool-result',
+  'tool-addition',
+  'tool-removal',
+  'image',
+  'file',
+]);
+
+/**
+ * 块的种类：DSH 的**持久日志**用 `type`（`dsh-llm` 的 `ContentBlockMap`），
+ * 客户端 UI 的节点用 `kind`（`assistant-content.ts` 过滤 `kind === 'reasoning'`）——
+ * 两边都认，免得换一条通道推理就漏出来。
+ */
+function blockKind(block: object): string {
+  const b = block as { type?: unknown; kind?: unknown };
+  if (typeof b.type === 'string') return b.type.toLowerCase();
+  if (typeof b.kind === 'string') return b.kind.toLowerCase();
+  return '';
+}
+
+/**
+ * 从消息事件里取**可见文本**。
  *
  * 形状刻意写得宽容：DSH 的 assistant/message 带 content blocks，user/message
- * 可能是字符串或带 text 的对象；这里只做「取文本」一件事，不解析附件。
+ * 可能是字符串或带 text 的对象；这里只做「取文本」一件事，不解析附件 ——
+ * 但推理块一律丢掉（见 `NON_VISIBLE_BLOCK_TYPES`）。
  */
 export function textOfMessage(data: unknown): string {
   if (typeof data === 'string') return data;
@@ -35,6 +73,7 @@ export function textOfMessage(data: unknown): string {
       .map((block) => {
         if (typeof block === 'string') return block;
         if (!block || typeof block !== 'object') return '';
+        if (NON_VISIBLE_BLOCK_TYPES.has(blockKind(block))) return '';
         const b = block as { text?: unknown; content?: unknown };
         if (typeof b.text === 'string') return b.text;
         if (typeof b.content === 'string') return b.content;
