@@ -12,7 +12,7 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/brand` v0.1.5 + v0.1.4 + `@oblivion/panel` v0.0.15：孤儿进程清扫（web-login 遗留的无头 Edge）+ 面板「清理孤儿进程」按钮 + 向指定会话注入一条用户消息
+## [未发布] — `@oblivion/brand` v0.1.6 + v0.1.5 + v0.1.4 + `@oblivion/panel` v0.0.15：孤儿进程清扫（web-login 遗留的无头 Edge）+ 面板「清理孤儿进程」按钮 + 向指定会话注入一条用户消息
 
 起因是现场：面板上几个账号**全部校验失败**，而账号本身没有问题。根因不在本仓库 —— 第三方
 `dsh-deepseek-web-login`（`cv-superding`）的无头 Edge 传输进程在 DSH 被**硬杀**（brand 的重启按钮 /
@@ -103,6 +103,31 @@ POST /obl-brand/session/message
 > 为什么不放在 `@oblivion/panel`：那边是刻意**只读**的数据面（没有任何写路径、不接受用户输入拼路径，
 > 自检里有对应不变量）。本路由与「重启」「孤儿清扫」是同一类动作 —— 宿主侧、有副作用、由面板或外部工具
 > 触发 —— 所以长在 brand 的路由表里，共用同一套安全口径。
+
+### `@oblivion/brand` v0.1.6 —— 修 v0.1.5 的**上线故障**：路由在挂载期被 Cordis 守卫炸掉
+
+v0.1.5 装载后 `GET /obl-brand/session/message` 是 **404**（POST 405），而同一份产物里
+`/obl-brand/plugins`（200）、`/obl-brand/orphans`（405 = 已注册）都正常。根因是一行**看起来最无害**的代码：
+
+```ts
+let cached = isControllerLike(scope.sessionController) ? scope.sessionController : undefined;
+```
+
+`scope` 是 `inject(['webServer'])` 交给插件的作用域。Cordis 给每个 ctx 都装了**服务访问守卫**：读一个
+**本作用域没 inject 过**的服务，拿到的是**异常**而不是 `undefined` ——
+`vendor/cordis/src/reflect.ts:144`，`cannot get property "sessionController" without inject`。
+于是 `apply` 在那一步中断：前三条路由已挂、最后一条没有，外部看到 404，**与「这个版本没装」完全同形**
+（排查为此多走了一段弯路：先怀疑 profile 里是 junction 副本没更新、再怀疑进程没换成新产物 —— 都排除了才回到代码）。
+
+| 改动 | 说明 |
+| --- | --- |
+| 作用域里只读 inject 声明过的服务 | 会话服务改由 `ctx.inject(['sessionController'], …)`（主路径，就绪即缓存）与 `ctx.get('sessionController')`（不参与响应式取用，`reflect.ts:233`，逐请求兜底）获取，两条都不触发守卫 |
+| `apply` 兜一层 `try/catch` → warn | 「挂载期抛错 = 路由静默消失」，以后谁再加一行危险读取，日志里至少留一条 warn，而不是无声缺一条路由 |
+| 自检的桩改成**忠实**实现 | ① 作用域换成带守卫的 `Proxy`（未声明读取会抛）；② 依赖没就绪时**不回调**（Cordis 是让 fiber 挂着等，不是拿 `undefined` 调一次）。桩比真机宽松 = 把这类故障永久遮住 |
+| 新增一条自检做**反向验证** | 未声明会抛 / 未就绪不回调 / 声明后可读 —— 三条互为反例，否则「桩什么都不给」也能让上面那些断言假通过 |
+| `apply` 的断言加「期间零 warn」 | 挂载失败在桩里只表现为「少一条路由 + 一条 warn」，两条一起断言才抓得住 |
+
+自检 17 → **18 项**（全绿），版本按 patch 递增 `0.1.5 → 0.1.6`（**这条路要重启 DSH 才会装载**）。
 
 ### 顺带修掉：`@oblivion/core` 测试的两处**假失败**（不是新行为）
 

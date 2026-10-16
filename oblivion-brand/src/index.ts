@@ -362,6 +362,12 @@ interface HostScope {
       handler: (request: HostRequest, response: HostResponse) => void | Promise<void>;
     }): () => void;
   };
+  /**
+   * 只在 `inject(['sessionController'], …)` 的作用域里可读。
+   *
+   * 在只声明了 `webServer` 的作用域里读它会**抛错**（Cordis 服务访问守卫，
+   * `vendor/cordis/src/reflect.ts:144`）—— 不是给 `undefined`，是抛异常。
+   */
   sessionController?: SessionControllerLike;
 }
 
@@ -735,6 +741,16 @@ function installPluginsRoute(ctx: HostCtx, warn: (message: string) => void): voi
  * 挂上** —— 外部看到的是 404「路由不存在」，与「服务没就绪」无法区分，也没法重试。
  * 所以路由无条件挂载，服务在**收到请求时**再解析；拿不到就回 503 并说清楚。
  *
+ * ## 落地时的坑：Cordis 的服务访问守卫（0.1.5 上线即踩）
+ *
+ * 「延迟绑定」的第一版在 webServer 作用域里顺手读了一次 `scope.sessionController`
+ * 当作「已经在作用域里」的快路径 —— 真机上一次都没走到 register：Cordis 对**未声明 inject
+ * 的服务属性读取**是**抛错**，不是给 `undefined`（`vendor/cordis/src/reflect.ts:144`）。
+ * 于是 apply 半途炸掉，前面三条路由都在、只有这条没有，外部看到的是 404。
+ * 教训：① 作用域里**只读 inject 声明过的东西**；② 挂载期任何异常都要变成一条 warn，
+ * 因为「路由静默消失」这种故障，从外部看和「没装这个版本」一模一样。
+ * 自检的桩也因此改成**忠实**实现（未声明的服务读取会抛，服务没就绪就不回调）。
+ *
  * ## 安全口径
  *
  * 这条路由能把指令投喂给一个拥有完整工具权限的 agent，因此：
@@ -754,18 +770,25 @@ function installSessionMessageRoute(ctx: HostCtx, warn: (message: string) => voi
     const isControllerLike = (value: unknown): value is SessionControllerLike =>
       typeof value === 'object' && value !== null && typeof (value as { prompt?: unknown }).prompt === 'function';
 
-    let cached: SessionControllerLike | undefined = isControllerLike(scope.sessionController)
-      ? scope.sessionController
-      : undefined;
-    if (cached !== undefined) {
-      logger?.info('会话服务已在作用域内，外部消息注入可用');
-    } else {
-      // 会话服务可能比 webServer 晚就绪：单独挂一次注入，就绪即缓存。
+    // ⚠️ 绝不能在这里读 `scope.sessionController`：Cordis 给每个 ctx 都装了**服务访问守卫**，
+    // 读一个「本作用域没 inject 过」的服务会**抛错**（`vendor/cordis/src/reflect.ts:144`
+    // 的 `cannot get property "x" without inject`）。本作用域只声明了 webServer，那一读会让
+    // 整条路由在 register 之前就炸掉 —— 现场表现是「其余三条路由都在，只有这条 404」
+    // （0.1.5 上线时的真实故障：外部无从分辨「没装这个版本」与「路由挂了」）。
+    //
+    // 会话服务只走两条**合法**通道：
+    //   ① `ctx.inject(['sessionController'], …)`：声明过的依赖，就绪即回调（主路径，顺带缓存）；
+    //   ② `ctx.get('sessionController')`：不参与响应式的原始取用（`reflect.ts:233`），逐请求兜底。
+    // 于是「路由先挂上、服务后到」成立：没就绪就回 503 说清楚，而不是整条路由消失。
+    let cached: SessionControllerLike | undefined;
+    try {
       ctx.inject?.(['sessionController'], (inner) => {
         if (!isControllerLike(inner.sessionController)) return;
         cached = inner.sessionController;
         logger?.info('会话服务已就绪，外部消息注入可用');
       });
+    } catch (error) {
+      warn(`订阅会话服务失败（改为逐请求 ctx.get 兜底）：${error instanceof Error ? error.message : String(error)}`);
     }
 
     /** 每次请求时解析：晚到的服务也能用上，且不依赖注入回调一定触发。 */
@@ -963,5 +986,12 @@ export function apply(ctx: HostCtx): void {
   installRestartRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
-  installSessionMessageRoute(ctx, warn);
+  // 挂载期抛错 = 这条路由**静默消失**（外部只见 404，与「这个版本没装」无法区分）。
+  // `installSessionMessageRoute` 自己已经不再碰未声明的服务，这里再兜一层：
+  // 万一以后有人加了一行危险读取，至少日志里会留下一条 warn，而不是无声缺一条路由。
+  try {
+    installSessionMessageRoute(ctx, warn);
+  } catch (error) {
+    warn(`会话消息路由挂载失败：${error instanceof Error ? error.message : String(error)}`);
+  }
 }

@@ -195,6 +195,24 @@ POST /obl-brand/session/message
 本路由与它的两个近亲 —— 重启、孤儿清扫 —— 是同一类动作：宿主侧、有副作用、由面板或外部
 工具触发，所以长在本插件的路由表里，共用同一套安全口径。
 
+### ⚠️ 服务从哪来：Cordis 的**服务访问守卫**
+
+`sessionController` 由 api 层提供，与本插件不在同一个注入批次里。取它只有两条**合法**通道：
+
+| 通道 | 语义 |
+| --- | --- |
+| `ctx.inject(['sessionController'], (scope) => …)` | 声明过的依赖；就绪才回调（没就绪就一直挂着等），在回调里读 `scope.sessionController` 才合法 |
+| `ctx.get('sessionController')` | 不参与响应式的原始取用；拿不到返回 `undefined`，因此适合**逐请求**兜底 |
+
+**不要**在 `inject(['webServer'])` 的作用域里读 `scope.sessionController`：Cordis 对「未声明 inject
+的服务属性读取」是**抛错**（`vendor/cordis/src/reflect.ts:144`，`cannot get property "x" without
+inject`），不是给 `undefined`。v0.1.5 正是栽在这一行上 —— 路由在 `register` 之前就炸了，
+表现是**这条路径 404、其余三条正常**，且异常不会出现在任何看得见的地方。
+
+由此两条规矩：① 作用域里只读 `inject` 声明过的东西；② 挂载期任何动作都要能把异常降级成一条
+`warn`（`apply` 里已经兜了一层）——「路由静默消失」从外部看和「这个版本没装」一模一样。
+自检的桩现在也按真机实现（作用域带守卫、依赖没就绪就不回调），这类写法会直接判红。
+
 ## 槽位
 
 | 槽位 | 组件 | 何时注册 |

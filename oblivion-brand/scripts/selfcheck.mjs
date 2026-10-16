@@ -7,7 +7,11 @@
  *   1. 产物存在、可被真实 import（证明没有裸导入解析问题）
  *   2. 导出形状符合本包的约定
  *   3. apply 真的把四条路由挂上去（桩 webServer 必须收到 RESTART_PATH / ORPHANS_PATH /
- *      PLUGINS_PATH / SESSION_MESSAGE_PATH）
+ *      PLUGINS_PATH / SESSION_MESSAGE_PATH），且期间**一条 warn 都没有**。作用域桩带
+ *      Cordis 的服务访问守卫（读未声明的服务会抛），因此「在 webServer 作用域里读
+ *      sessionController」这类写法会在这里直接失败 —— 它曾在真机上让整条路由消失。
+ *      守卫本身还有一条**反向验证**（未声明会抛 / 未就绪不回调 / 声明后可读），
+ *      否则「桩什么都不给」也能让上面那些断言假通过。
  *   4. 已装插件清单：临时 profile 上读出规格 / 启用态 / 版本 / 恢复命令
  *   5. 清单路由真跑：GET 200（返回体还得能被客户端校验器接受）、POST 405、外来 Origin 403
  *   6. profile 定位：DSH_PROFILE_DIR 优先，否则按 DSH_HOME 拼，都没有则 null
@@ -85,11 +89,32 @@ async function withEnv(value, fn, name = ENV) {
 }
 
 /**
+ * 忠实还原 Cordis 的**服务访问守卫**。
+ *
+ * 出处：`vendor/cordis/src/reflect.ts:144` —— 读一个**本作用域没 inject 过**的服务，
+ * 拿到的是**异常**（`cannot get property "x" without inject`），不是 `undefined`。
+ *
+ * 这道守卫必须留在自检里：0.1.5 上线时就是桩太宽松（scope 里什么都给）漏掉了
+ * 「在 webServer 作用域里读 sessionController」那一行，真机上整条路由在 register 之前
+ * 炸掉，外部只看到 404。桩比真机宽松，等于把这类故障永久遮住。
+ */
+function guardedScope(available) {
+  return new Proxy(available, {
+    get(target, prop) {
+      if (typeof prop === 'symbol' || Reflect.has(target, prop)) return Reflect.get(target, prop);
+      throw new Error(`cannot get property "${String(prop)}" without inject`);
+    },
+  });
+}
+
+/**
  * 只记录、不做磁盘动作的桩 ctx。
  *
- * `inject` 收到几个依赖就只给那几个服务 —— 与真实 Cordis 一致（`inject(['webServer'])`
- * 拿到的 scope 里**没有** sessionController）。于是「先挂路由、再单独 inject 会话服务」
- * 这条延迟绑定路径在自检里会被真正走到，而不是被桩喂成捷径。
+ * `inject` 与真实 Cordis 一致地守两条规矩：
+ *   ① 收到几个依赖就只给那几个服务，且 scope 带**服务访问守卫**（读未声明的服务会抛）；
+ *   ② 依赖没就绪（`options.sessionController: null`）时**根本不回调** —— Cordis 对
+ *      不可用的依赖是让 fiber 挂着等，而不是拿 `undefined` 回调一次。
+ * 于是「先挂路由、再单独 inject 会话服务」这条延迟绑定路径会被真正走到。
  *
  * `options.sessionController` 给 `null` 可造出「宿主里没有会话服务」的现场（验 503）。
  */
@@ -120,10 +145,13 @@ function makeCtx(options = {}) {
       get: (name) => (name === 'sessionController' ? controller : undefined),
       inject: (deps, callback) => {
         for (const dep of deps) if (!reg.injected.includes(dep)) reg.injected.push(dep);
-        const scope = {};
-        if (deps.includes('webServer')) scope.webServer = webServer;
-        if (deps.includes('sessionController')) scope.sessionController = controller;
-        callback(scope);
+        const available = {};
+        if (deps.includes('webServer')) available.webServer = webServer;
+        if (deps.includes('sessionController')) {
+          if (controller === undefined) return;
+          available.sessionController = controller;
+        }
+        callback(guardedScope(available));
       },
       effect: (fn, label) => reg.effects.push(label),
     },
@@ -289,7 +317,42 @@ await check('apply 挂载四条路由；三条只要 webServer，会话注入额
     assert.equal(route.kind, 'exact');
     assert.equal(typeof route.handler, 'function');
   }
+  // 挂载失败在桩里只表现为「少一条路由 + 一条 warn」；warn 一起断言，
+  // 否则将来有人把危险读取加回来，只会在真机上表现为 404（0.1.5 的真实故障）。
+  const warns = reg.logs.filter(([level]) => level === 'warn');
+  assert.deepEqual(warns, [], 'apply 期间不得有 warn（挂载异常会在这里留痕）');
   return reg.routes.map((route) => route.path).join(' + ');
+});
+
+await check('桩的守卫本身可信：未声明的服务读取会抛、未就绪的依赖不回调', () => {
+  const { ctx, reg } = makeCtx();
+  let undeclared = null;
+  ctx.inject(['webServer'], (scope) => {
+    try {
+      void scope.sessionController;
+    } catch (error) {
+      undeclared = error;
+    }
+  });
+  assert.ok(undeclared, '在只声明 webServer 的作用域里读 sessionController 必须抛');
+  assert.match(undeclared.message, /without inject/, '错误口径要与 Cordis 一致');
+
+  const missing = makeCtx({ sessionController: null });
+  let called = false;
+  missing.ctx.inject(['sessionController'], () => {
+    called = true;
+  });
+  assert.equal(called, false, '依赖没就绪时 Cordis 不回调，桩也不许回调');
+  assert.deepEqual(missing.reg.injected, ['sessionController'], '未回调也要记账（调用方声明过它）');
+
+  // 反过来：声明过就真的能读到（否则上面两条会因为「桩什么都不给」而假通过）
+  let seen = null;
+  ctx.inject(['sessionController'], (scope) => {
+    seen = scope.sessionController;
+  });
+  assert.equal(typeof seen?.prompt, 'function', '声明过的依赖必须真的可读');
+  assert.deepEqual(reg.injected, ['webServer', 'sessionController']);
+  return '未声明会抛 / 未就绪不回调 / 声明后可读 —— 三条互为反例';
 });
 
 await check('已装插件清单：临时 profile 上读出规格 / 启用态 / 挂载层 / 版本', () => {

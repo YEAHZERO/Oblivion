@@ -977,15 +977,15 @@ function installSessionMessageRoute(ctx, warn) {
     }
     const logger = ctx.logger?.("@oblivion/brand");
     const isControllerLike = (value) => typeof value === "object" && value !== null && typeof value.prompt === "function";
-    let cached = isControllerLike(scope.sessionController) ? scope.sessionController : void 0;
-    if (cached !== void 0) {
-      logger?.info("\u4F1A\u8BDD\u670D\u52A1\u5DF2\u5728\u4F5C\u7528\u57DF\u5185\uFF0C\u5916\u90E8\u6D88\u606F\u6CE8\u5165\u53EF\u7528");
-    } else {
+    let cached;
+    try {
       ctx.inject?.(["sessionController"], (inner) => {
         if (!isControllerLike(inner.sessionController)) return;
         cached = inner.sessionController;
         logger?.info("\u4F1A\u8BDD\u670D\u52A1\u5DF2\u5C31\u7EEA\uFF0C\u5916\u90E8\u6D88\u606F\u6CE8\u5165\u53EF\u7528");
       });
+    } catch (error) {
+      warn(`\u8BA2\u9605\u4F1A\u8BDD\u670D\u52A1\u5931\u8D25\uFF08\u6539\u4E3A\u9010\u8BF7\u6C42 ctx.get \u515C\u5E95\uFF09\uFF1A${error instanceof Error ? error.message : String(error)}`);
     }
     const controller = () => {
       if (cached !== void 0) return cached;
@@ -1105,7 +1105,11 @@ function apply(ctx) {
   installRestartRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
-  installSessionMessageRoute(ctx, warn);
+  try {
+    installSessionMessageRoute(ctx, warn);
+  } catch (error) {
+    warn(`\u4F1A\u8BDD\u6D88\u606F\u8DEF\u7531\u6302\u8F7D\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 export {
   MARKET_REGISTRY_ENV,

@@ -118,7 +118,8 @@ corepack pnpm key-search -Query '关键词' -Provider all -N 5
 
 ### 向运行中的 DSH 会话发一条消息：`POST /obl-brand/session/message`
 
-`@oblivion/brand` v0.1.5 起，宿主半边多了一条本地路由：把一条消息写进**指定会话**并立刻驱动一轮 agent。
+`@oblivion/brand` **v0.1.6** 起（v0.1.5 的这条路由在挂载期就被 Cordis 守卫炸掉了 —— 见已知限制 6），
+宿主半边多了一条本地路由：把一条消息写进**指定会话**并立刻驱动一轮 agent。
 它走 App 自己的 `sessionController.prompt`（UI 的「发送」按钮、DSH 给 agent 注入审批通知用的都是同一条链），
 所以消息会**实时**出现在 DSH 里 —— 这是「在别的工具里继续这条会话」的正路；**不要**去改
 `session.v4.jsonl.zstd`（运行中的 DSH 用内存状态渲染、不重读日志，追加帧既不会实时显示还会撞 seq、
@@ -145,6 +146,9 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/obl-brand/session/me
 - 状态码：`400` 参数不合法 · `403` 外来 Origin 或开关关闭 · `404` 会话不存在 · `502` 会话接口拒绝
   （带远端 `code`）· `503` 宿主里取不到会话服务。
 - 只回本机调用方；`OBLIVION_BRAND_SESSION_INJECT=off|0|false|no` 可整条关掉。
+- **它到底挂上了没有**：`GET` 这条路径。`405` = 已注册（handler 只收 POST，其余方法回 405）；
+  `404` = 没注册成 —— 磁盘上的版本没被装载（node 半边要**重启 DSH** 才换），或挂载期抛了异常
+  （后者会在 `%TEMP%\obl-brand-restart.log` 与宿主日志里留下一条 warn）。
 
 ## 检查：四层闸门
 
@@ -295,6 +299,30 @@ profile 目录，于是下一次探活 `rmSync` 抛 EPERM，**面板上几个账
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\obl-brand-orphans.ps1" `
   -Mode orphans -ProfileDir "$env:USERPROFILE\.dsh\web-login\transport-profile"
 ```
+
+### 6. Cordis「服务访问守卫」：读**未声明的服务**会**抛错**（挂载期的隐形杀手）
+
+插件 `apply` 里拿到的 `ctx` 是带**服务访问守卫**的代理：读一个**没在本作用域 `inject` 过**的服务，
+得到的是**异常**而不是 `undefined` ——
+
+```
+vendor/cordis/src/reflect.ts:144   cannot get property "x" without inject
+```
+
+`@oblivion/brand` v0.1.5 就栽在这上面：它在 `inject(['webServer'])` 的作用域里顺手读了一次
+`scope.sessionController`（想当快路径）。结果是 `apply` 在那一步中断 —— 前三条路由已挂上、
+会话注入那条没有，而外部表现是 **404**：与「这个版本根本没装」完全同形，且 **Cordis 不会把这条异常
+冒到任何看得见的地方**（宿主日志、面板都没有痕迹）。v0.1.6 修掉，并把判据钉进自检。
+
+跨插件的服务（如 api 层提供的 `sessionController`）只有两条**合法**通道：
+
+| 通道 | 语义 | 出处 |
+| --- | --- | --- |
+| `ctx.inject(['sessionController'], (scope) => …)` | 声明过的依赖；就绪才回调（没就绪就一直挂着等） | `registry.ts:300` |
+| `ctx.get('sessionController')` | 不参与响应式的原始取用，拿不到返回 `undefined`（作用域无关） | `reflect.ts:233` |
+
+两条规矩由此而来：**① 作用域里只读 `inject` 声明过的东西**；**② 挂载期任何动作都要能把异常变成一条 warn**
+——「路由静默消失」这种故障从外部看和「没装」一模一样，不留下痕迹就只能靠重启 + 猜测排查。
 
 ## 应用图标：只能改快捷方式，改不了窗口/任务栏
 
