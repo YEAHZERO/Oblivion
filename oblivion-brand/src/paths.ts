@@ -19,3 +19,16 @@ export const PLUGINS_PATH = '/obl-brand/plugins';
  * 目录解开 —— 现场「三个账号全红」时，用户要的是后者。
  */
 export const ORPHANS_PATH = '/obl-brand/orphans';
+
+/**
+ * 向指定 DSH 会话注入一条用户消息（POST，宿主半边）。
+ *
+ * 这是本仓库唯一一条**写** DSH 会话的路由，走的是 App 自己的会话接口
+ * （`sessionController.prompt` —— UI「发送」与审批通知用的是同一条），
+ * 因此注入的消息会像真人输入一样出现在会话里，并立即驱动一轮 agent。
+ *
+ * 之所以不走「往 `session.v4.jsonl.zstd` 追加一帧」那条路：运行中的 DSH 用内存
+ * 状态渲染、不重读日志，追加的消息既不会实时显示，seq 还会与宿主自己的计数器冲突，
+ * 更有让整条会话读不出来的风险（读取器对完整帧的格式校验是硬失败）。
+ */
+export const SESSION_MESSAGE_PATH = '/obl-brand/session/message';

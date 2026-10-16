@@ -154,6 +154,47 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\obl-brand-restart
 
 设置存在浏览器 `localStorage`（键 `oblivion-brand:settings:v1`）。0.1.0 的裸字符串键 `oblivion-brand:name` 会在首次读取时自动迁移。
 
+## 向指定会话注入一条用户消息
+
+```
+POST /obl-brand/session/message
+{ "sessionId": "session-10837d9b-…", "text": "继续", "mode": "queue" }
+```
+
+把一条消息写进**某一个 DSH 会话**并立刻驱动一轮 agent，用于「在别的工具里继续这条会话」。
+走的是 App 自己的会话接口 `sessionController.prompt`（UI 的「发送」按钮、DSH 给 agent 注入
+审批通知，用的都是同一条），所以消息会像真人输入一样**实时**出现在会话里。
+
+| 字段 | 说明 |
+| --- | --- |
+| `sessionId` | 会话目录名（`~/.dsh/sessions/<工作区>/session-…/` 里面那一段） |
+| `text` | 消息正文，上限 20000 字符；只支持纯文本 |
+| `mode` | `queue`（默认，排到下一轮）或 `steer`（插入正在跑的这一轮） |
+| `requestId` | **可选**幂等键。给了就按它幂等（脚本重试安全），不给则由服务端 `randomUUID()` 铸造 |
+
+响应 `200 {"ok":true,"accepted":true,"requestId":…,"sessionId":…,"mode":…}`；
+错误码：`400` 请求体/字段不合法、`403` 外来 Origin 或开关关闭、`404` 会话不存在、
+`502` 会话接口拒绝（响应里带远端 `code`）、`503` 宿主里取不到 `sessionController`。
+
+### 为什么不直接往会话日志追加一帧
+
+运行中的 DSH 用**内存状态**渲染、不重读 `session.v4.jsonl.zstd`：追加的帧既不会实时显示
+（只有重启/重新加载会话才可能读到），宿主的 seq 计数器还会与它冲突。更糟的是读取器对
+完整帧做严格校验（坏 JSONL / 坏帧结构 → 整个会话 `open()` 失败），**写坏一帧可能让整条
+会话读不出来**。走 `prompt` 这三条全都没有。
+
+### 运营者开关：`OBLIVION_BRAND_SESSION_INJECT`
+
+设成 `off` / `0` / `false` / `no` 时整条路由回 403。这条路由能把指令投喂给一个**拥有完整
+工具权限**的 agent，所以与孤儿清扫同样留一个开关；另外它与其它三条路由一样只回**本机调用方**
+（`isTrustedCaller`）。
+
+### 为什么这条路由在家（而不是 `@oblivion/panel`）
+
+`panel` 是刻意**只读**的数据面（没有写路径、不接受用户输入拼路径，自检里有对应不变量）。
+本路由与它的两个近亲 —— 重启、孤儿清扫 —— 是同一类动作：宿主侧、有副作用、由面板或外部
+工具触发，所以长在本插件的路由表里，共用同一套安全口径。
+
 ## 槽位
 
 | 槽位 | 组件 | 何时注册 |
@@ -262,9 +303,15 @@ oblivion-brand/
 ├── package.json           # dsh.bundle + dsh.client 声明
 ├── cordis.patch.yml       # Bundle 层：把本插件的行插进组合树
 ├── tsconfig.json
-├── scripts/build.mjs      # esbuild 双产物构建
+├── scripts/
+│   ├── build.mjs          # esbuild 双产物构建
+│   └── selfcheck.mjs      # 不依赖 DSHX 的自检（判据全在纯函数上）
 └── src/
-    ├── index.ts           # Node 半边：重启路由 + 游离 helper 派生
+    ├── index.ts           # Node 半边：四条宿主路由 + 游离 helper 派生
+    ├── paths.ts           # 路由路径（宿主半边与浏览器半边共用，只放常量）
+    ├── orphans.ts         # 孤儿传输进程清扫：脚本正文 + 判据 + 三时机
+    ├── session-inject.ts  # 会话消息注入：请求解析 + 开关 + 失败归类
+    ├── profile-plugins.ts # 读取 profile 目录，列出已装插件与恢复命令
     └── client/
         ├── index.ts       # 槽位注册 + 设置驱动的 register/dispose 对账
         ├── Brand.tsx      # OblivionBrandMark({size}) + OblivionBrandName()

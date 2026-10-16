@@ -116,6 +116,36 @@ corepack pnpm key-search -Query '关键词' -Provider all -N 5
 
 退出码 `0` 有结果 / `1` 引擎失败或零结果 / `2` 用法错误。两个坑别踩：5.1 的 `-File` **不能绑定名为 `-Engine` 的参数**（exit `-1`、零输出），所以参数叫 `-Provider`；`opencode` 引擎在 5.1 下要转义 JSON 里的引号（脚本内已按版本处理）。
 
+### 向运行中的 DSH 会话发一条消息：`POST /obl-brand/session/message`
+
+`@oblivion/brand` v0.1.5 起，宿主半边多了一条本地路由：把一条消息写进**指定会话**并立刻驱动一轮 agent。
+它走 App 自己的 `sessionController.prompt`（UI 的「发送」按钮、DSH 给 agent 注入审批通知用的都是同一条链），
+所以消息会**实时**出现在 DSH 里 —— 这是「在别的工具里继续这条会话」的正路；**不要**去改
+`session.v4.jsonl.zstd`（运行中的 DSH 用内存状态渲染、不重读日志，追加帧既不会实时显示还会撞 seq、
+更有让整条会话读不出来的风险。理由见 [`CHANGELOG.md`](CHANGELOG.md) 与
+[`oblivion-brand/README.md`](oblivion-brand/README.md)）。
+
+宿主 webserver 的端口每次启动都可能变（本机实测同时监听两个端口，另一个是 CDP），用
+`/obl-brand/plugins` 探出对的那个：
+
+```powershell
+$host_pids = (Get-Process | Where-Object ProcessName -like '*Harness*').Id
+$port = (Get-NetTCPConnection -State Listen |
+  Where-Object { $host_pids -contains $_.OwningProcess } | ForEach-Object {
+    try { if ((Invoke-WebRequest "http://127.0.0.1:$($_.LocalPort)/obl-brand/plugins" -UseBasicParsing -TimeoutSec 3).StatusCode -eq 200) { $_.LocalPort } } catch { }
+  }) | Select-Object -First 1
+
+$body = @{ sessionId = 'session-…'; text = '继续'; mode = 'queue' } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/obl-brand/session/message" `
+  -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body))
+```
+
+- `mode`：`queue`（默认，排到下一轮）/ `steer`（插入正在跑的这一轮）；`text` 上限 20000 字符。
+- `requestId` 可选幂等键：重试用同一个 id 才不会重复投递。
+- 状态码：`400` 参数不合法 · `403` 外来 Origin 或开关关闭 · `404` 会话不存在 · `502` 会话接口拒绝
+  （带远端 `code`）· `503` 宿主里取不到会话服务。
+- 只回本机调用方；`OBLIVION_BRAND_SESSION_INJECT=off|0|false|no` 可整条关掉。
+
 ## 检查：四层闸门
 
 工作区的检查规范在 **[`docs/检查方法.md`](docs/检查方法.md)**。要点：

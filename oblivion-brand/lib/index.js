@@ -1,5 +1,6 @@
 // src/index.ts
 import { spawn as spawn2 } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
 import { join as join3 } from "node:path";
@@ -258,6 +259,7 @@ function describeSweep(report) {
 var RESTART_PATH = "/obl-brand/restart";
 var PLUGINS_PATH = "/obl-brand/plugins";
 var ORPHANS_PATH = "/obl-brand/orphans";
+var SESSION_MESSAGE_PATH = "/obl-brand/session/message";
 
 // src/profile-plugins.ts
 import { existsSync, readFileSync } from "node:fs";
@@ -471,6 +473,83 @@ function readInstalledPlugins(location, at = Date.now()) {
     entries,
     problems
   };
+}
+
+// src/session-inject.ts
+var SESSION_INJECT_ENV = "OBLIVION_BRAND_SESSION_INJECT";
+var MAX_SESSION_MESSAGE_CHARS = 2e4;
+var MAX_SESSION_MESSAGE_BYTES = 256 * 1024;
+function sessionInjectDisabled(env = process.env) {
+  const raw = (env[SESSION_INJECT_ENV] ?? "").trim().toLowerCase();
+  return raw === "off" || raw === "0" || raw === "false" || raw === "no";
+}
+function parseSessionMessageRequest(raw, fallbackRequestId) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { ok: false, error: "\u8BF7\u6C42\u4F53\u5FC5\u987B\u662F\u4E00\u4E2A JSON \u5BF9\u8C61" };
+  }
+  const record = raw;
+  const sessionId = typeof record["sessionId"] === "string" ? record["sessionId"].trim() : "";
+  if (sessionId === "") {
+    return { ok: false, error: "sessionId \u5FC5\u987B\u662F\u975E\u7A7A\u5B57\u7B26\u4E32" };
+  }
+  const text2 = typeof record["text"] === "string" ? record["text"] : "";
+  if (text2.trim() === "") {
+    return { ok: false, error: "text \u5FC5\u987B\u5305\u542B\u975E\u7A7A\u767D\u5B57\u7B26" };
+  }
+  if (text2.length > MAX_SESSION_MESSAGE_CHARS) {
+    return { ok: false, error: `text \u8D85\u8FC7 ${String(MAX_SESSION_MESSAGE_CHARS)} \u5B57\u7B26\u4E0A\u9650` };
+  }
+  const mode = record["mode"] === void 0 ? "queue" : record["mode"];
+  if (mode !== "queue" && mode !== "steer") {
+    return { ok: false, error: "mode \u53EA\u80FD\u662F 'queue' \u6216 'steer'" };
+  }
+  const provided = typeof record["requestId"] === "string" ? record["requestId"].trim() : "";
+  const requestId = provided === "" ? fallbackRequestId : provided;
+  return { ok: true, value: { requestId, sessionId, mode, content: [{ type: "text", text: text2 }] } };
+}
+function readRequestBody(source, maxBytes = MAX_SESSION_MESSAGE_BYTES) {
+  return new Promise((resolve2, reject) => {
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    source.on("data", (chunk) => {
+      if (settled) return;
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      size += buf.length;
+      if (size > maxBytes) {
+        fail(new Error(`\u8BF7\u6C42\u4F53\u8D85\u8FC7 ${String(maxBytes)} \u5B57\u8282\u4E0A\u9650`));
+        return;
+      }
+      chunks.push(buf);
+    });
+    source.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolve2(Buffer.concat(chunks).toString("utf8"));
+    });
+    source.on("error", (error) => {
+      fail(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
+}
+function describePromptFailure(error) {
+  if (typeof error === "object" && error !== null) {
+    const record = error;
+    const code = typeof record["code"] === "string" && record["code"] !== "" ? record["code"] : void 0;
+    const message = typeof record["message"] === "string" && record["message"] !== "" ? record["message"] : String(error);
+    return code === void 0 ? { error: message } : { error: message, code };
+  }
+  return { error: String(error) };
+}
+function httpStatusForPromptFailure(code) {
+  if (code === "session/not-found") return 404;
+  if (code === "gateway/bad-request" || code === "session/invalid-time-zone") return 400;
+  return 502;
 }
 
 // src/index.ts
@@ -889,6 +968,103 @@ function installPluginsRoute(ctx, warn) {
     ctx.logger?.("@oblivion/brand").info(`\u5DF2\u5B89\u88C5\u63D2\u4EF6\u6E05\u5355\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1AGET ${PLUGINS_PATH}`);
   });
 }
+function installSessionMessageRoute(ctx, warn) {
+  ctx.inject?.(["webServer"], (scope) => {
+    const server = scope.webServer;
+    if (server === void 0 || typeof server.register !== "function") {
+      warn("webServer \u4E0D\u53EF\u7528\uFF0C\u4F1A\u8BDD\u6D88\u606F\u8DEF\u7531\u672A\u6302\u8F7D");
+      return;
+    }
+    const logger = ctx.logger?.("@oblivion/brand");
+    const isControllerLike = (value) => typeof value === "object" && value !== null && typeof value.prompt === "function";
+    let cached = isControllerLike(scope.sessionController) ? scope.sessionController : void 0;
+    if (cached !== void 0) {
+      logger?.info("\u4F1A\u8BDD\u670D\u52A1\u5DF2\u5728\u4F5C\u7528\u57DF\u5185\uFF0C\u5916\u90E8\u6D88\u606F\u6CE8\u5165\u53EF\u7528");
+    } else {
+      ctx.inject?.(["sessionController"], (inner) => {
+        if (!isControllerLike(inner.sessionController)) return;
+        cached = inner.sessionController;
+        logger?.info("\u4F1A\u8BDD\u670D\u52A1\u5DF2\u5C31\u7EEA\uFF0C\u5916\u90E8\u6D88\u606F\u6CE8\u5165\u53EF\u7528");
+      });
+    }
+    const controller = () => {
+      if (cached !== void 0) return cached;
+      try {
+        const fromCtx = ctx.get?.("sessionController");
+        if (isControllerLike(fromCtx)) {
+          cached = fromCtx;
+          return cached;
+        }
+      } catch {
+      }
+      return void 0;
+    };
+    const dispose = server.register({
+      kind: "exact",
+      path: SESSION_MESSAGE_PATH,
+      handler: async (request, response) => {
+        const json = (status, body, extra) => {
+          response.writeHead(status, { "content-type": "application/json", ...extra });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== "POST") {
+          json(405, { ok: false, error: "method not allowed" }, { allow: "POST" });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: "untrusted origin" });
+          return;
+        }
+        if (sessionInjectDisabled()) {
+          json(403, { ok: false, error: `${SESSION_INJECT_ENV} \u5DF2\u6307\u5B9A\u4E3A\u5173\u95ED` });
+          return;
+        }
+        let raw;
+        try {
+          raw = JSON.parse(await readRequestBody(request));
+        } catch (error) {
+          json(400, {
+            ok: false,
+            error: `\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5 JSON\uFF1A${error instanceof Error ? error.message : String(error)}`
+          });
+          return;
+        }
+        const requestId = randomUUID();
+        const parsed = parseSessionMessageRequest(raw, requestId);
+        if (!parsed.ok) {
+          json(400, { ok: false, error: parsed.error });
+          return;
+        }
+        const service = controller();
+        if (service === void 0) {
+          json(503, { ok: false, error: "\u5BBF\u4E3B\u91CC\u53D6\u4E0D\u5230 sessionController\uFF0C\u6D88\u606F\u672A\u6CE8\u5165" });
+          return;
+        }
+        try {
+          await service.prompt(parsed.value, new AbortController().signal);
+        } catch (error) {
+          const failure = describePromptFailure(error);
+          const status = httpStatusForPromptFailure(failure.code);
+          appendLog(`session message refused (${String(status)}): ${failure.code ?? "-"} ${failure.error}`);
+          json(status, { ok: false, ...failure });
+          return;
+        }
+        appendLog(
+          `session message admitted: session=${parsed.value.sessionId} mode=${parsed.value.mode} chars=${String(parsed.value.content[0].text.length)}`
+        );
+        json(200, {
+          ok: true,
+          accepted: true,
+          requestId: parsed.value.requestId,
+          sessionId: parsed.value.sessionId,
+          mode: parsed.value.mode
+        });
+      }
+    });
+    ctx.effect?.(() => dispose, "oblivion-brand: session message route");
+    ctx.logger?.("@oblivion/brand").info(`\u4F1A\u8BDD\u6D88\u606F\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${SESSION_MESSAGE_PATH}`);
+  });
+}
 function installMarketRegistryOverride(ctx) {
   const logger = ctx.logger?.("@oblivion/brand");
   const current = process.env[MARKET_REGISTRY_ENV];
@@ -929,10 +1105,13 @@ function apply(ctx) {
   installRestartRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
+  installSessionMessageRoute(ctx, warn);
 }
 export {
   MARKET_REGISTRY_ENV,
   MARKET_REGISTRY_MIRROR,
+  MAX_SESSION_MESSAGE_BYTES,
+  MAX_SESSION_MESSAGE_CHARS,
   MOUNT_SWEEP_ENV,
   ORPHANS_PATH,
   ORPHAN_SCRIPT,
@@ -940,18 +1119,25 @@ export {
   PLUGINS_PATH,
   RESTART_PATH,
   RESTART_SCRIPT,
+  SESSION_INJECT_ENV,
+  SESSION_MESSAGE_PATH,
   apply,
+  describePromptFailure,
   describeSweep,
+  httpStatusForPromptFailure,
   installMarketRegistryOverride,
   layerLabel,
   mountSweepDisabled,
   normalizePluginList,
+  parseSessionMessageRequest,
   parseSweepOutput,
   quoteArg,
   readInstalledPlugins,
+  readRequestBody,
   resolveProfile,
   resolveTransportProfileDir,
   restoreCommand,
+  sessionInjectDisabled,
   statusLabel,
   sweepOnMount,
   sweepTransportOrphans,

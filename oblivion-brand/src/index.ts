@@ -1,9 +1,20 @@
 /**
  * @oblivion/brand — Node 半边。
  *
- * 除了给 Loader 留座，这里只做一件浏览器半边做不到的事：**重启 DSH 桌面应用**。
+ * 除了给 Loader 留座，这里放的**全部是浏览器半边做不到的事** —— 四类「宿主侧动作」：
  *
- * ## 为什么需要宿主半边
+ *   ① **重启 DSH 桌面应用**（`POST /obl-brand/restart`）
+ *   ② **清理 web-login 遗留的孤儿传输进程**（`POST /obl-brand/orphans`，见 `orphans.ts`）
+ *   ③ **列出个人已安装插件**（`GET /obl-brand/plugins`，只读）
+ *   ④ **向指定会话注入一条用户消息**（`POST /obl-brand/session/message`，见 `session-inject.ts`）
+ *
+ * 再加一条与路由无关的：把插件市场的 npm 镜像指到 npmmirror。
+ *
+ * 四条路由共用同一套安全口径 —— **只回本机调用方**（拒绝存在且非本机的 `Origin`，
+ * 挡浏览器 CSRF）。理由见 `isTrustedCaller` 的长注释：桌面窗口来源是 `dsh-app://app`，
+ * 且转发层会**删掉** `origin` 头，所以「必须等于回环来源」这种判据会把自己挡在门外。
+ *
+ * ## 为什么需要宿主半边（以重启为例）
  *
  * 客户端半边跑在渲染进程里，而 DSH 的 `contextBridge` **没有暴露任何重启接口**
  * —— 实测 `lib/preload-app.cjs` 的 `createProductApi()` 只有
@@ -29,6 +40,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,8 +53,17 @@ import {
   sweepTransportOrphans,
   writeOrphanScript,
 } from './orphans.js';
-import { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH } from './paths.js';
+import { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH } from './paths.js';
 import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
+import {
+  SESSION_INJECT_ENV,
+  describePromptFailure,
+  httpStatusForPromptFailure,
+  parseSessionMessageRequest,
+  readRequestBody,
+  sessionInjectDisabled,
+  type SessionMessageRequest,
+} from './session-inject.js';
 
 /** Cordis 插件入口（空 apply 的占位语义保留在下方 `apply`）。 */
 
@@ -54,7 +75,7 @@ import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
  * ESM，Node 里 import 不了）。宿主半边与浏览器半边共用 `paths.ts` / `plugin-list.ts`，
  * 所以这里导出的是同一份实现，不是副本。
  */
-export { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH };
+export { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH };
 export { layerLabel, normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
 export type { InstalledPlugin, PluginLayer, PluginListPayload } from './plugin-list.js';
 export { readInstalledPlugins, resolveProfile };
@@ -76,6 +97,23 @@ export {
   writeOrphanScript,
 } from './orphans.js';
 export type { SweepMode, SweepOutcome, SweepReport } from './orphans.js';
+/**
+ * 会话消息注入的逻辑面（路由路径、开关、请求解析、失败归类）。
+ *
+ * 导出给 `scripts/selfcheck.mjs`：与孤儿清扫同理 —— `prompt()` 只能对着一个**真实的
+ * 会话服务**才有意义，自检不许往用户真实会话里塞消息，所以可判定性全部做在纯函数上。
+ */
+export {
+  MAX_SESSION_MESSAGE_BYTES,
+  MAX_SESSION_MESSAGE_CHARS,
+  SESSION_INJECT_ENV,
+  describePromptFailure,
+  httpStatusForPromptFailure,
+  parseSessionMessageRequest,
+  readRequestBody,
+  sessionInjectDisabled,
+} from './session-inject.js';
+export type { SessionMessageRequest, SessionPromptMode } from './session-inject.js';
 
 /** helper 脚本与日志落在临时目录。 */
 const SCRIPT_PATH = join(tmpdir(), 'obl-brand-restart.ps1');
@@ -296,6 +334,24 @@ interface HostCtx {
   inject?(deps: string[], callback: (scope: HostScope) => unknown): void;
   effect?(callback: () => unknown, label?: string): void;
   logger?(name: string): { info(message: string): void; warn(message: string): void };
+  /**
+   * 非响应式取服务（Cordis 的 `ctx.get`）。
+   *
+   * 只在 `inject('sessionController')` 没触发时作兜底：路由**必须先挂上**，这样它才能
+   * 明确回答「会话服务不可用」（503），而不是整条路由消失（面板上表现为 404，
+   * 无法区分「没装」与「服务没就绪」）。
+   */
+  get?(name: string): unknown;
+}
+
+/**
+ * 会话服务的最小面（`@deepseek-ai/dsh-session-controller` 的 `sessionController`）。
+ *
+ * 只依赖 `prompt` / `resolveAgent` 两个方法，不引 harness 类型：本包要能被
+ * Cordis Loader 直接加载，不该把 DSH 内部包放进依赖图。
+ */
+interface SessionControllerLike {
+  prompt(request: SessionMessageRequest, signal: AbortSignal): Promise<unknown>;
 }
 
 interface HostScope {
@@ -306,6 +362,7 @@ interface HostScope {
       handler: (request: HostRequest, response: HostResponse) => void | Promise<void>;
     }): () => void;
   };
+  sessionController?: SessionControllerLike;
 }
 
 interface HostRequest {
@@ -662,6 +719,146 @@ function installPluginsRoute(ctx: HostCtx, warn: (message: string) => void): voi
 }
 
 /**
+ * 注册「向指定会话注入一条用户消息」路由（POST）。
+ *
+ * ## 为什么这条路由在家（而不是别的插件）
+ *
+ * 它的两个近亲 —— **重启**与**孤儿进程清扫** —— 都长在本插件的路由表里，共享同一套
+ * 「只回本机调用方」的判据与同一套运营者开关风格。这是它们的同一类动作：**宿主侧、
+ * 有副作用、面板/外部工具触发**。（`@oblivion/panel` 是刻意**只读**的数据面，
+ * 在它那里加写路径会破坏它自己的不变量与自检。）
+ *
+ * ## 为什么用「延迟绑定 + 明确 503」而不是「注入不到就不挂载」
+ *
+ * `sessionController` 由 api 层提供，与本插件不在同一个注入批次里。若把
+ * `sessionController` 直接列进本路由的 `inject` 依赖，一旦服务未就绪，**整条路由都不会
+ * 挂上** —— 外部看到的是 404「路由不存在」，与「服务没就绪」无法区分，也没法重试。
+ * 所以路由无条件挂载，服务在**收到请求时**再解析；拿不到就回 503 并说清楚。
+ *
+ * ## 安全口径
+ *
+ * 这条路由能把指令投喂给一个拥有完整工具权限的 agent，因此：
+ *   ① `isTrustedCaller`（拒绝存在且非本机的 Origin —— 挡浏览器 CSRF）；
+ *   ② `OBLIVION_BRAND_SESSION_INJECT` 置关闭值即 403；
+ *   ③ 只接受 `text`，不接附件 / 不接 model / 不接任何路径参数（少一个面就少一类洞）。
+ */
+function installSessionMessageRoute(ctx: HostCtx, warn: (message: string) => void): void {
+  ctx.inject?.(['webServer'], (scope) => {
+    const server = scope.webServer;
+    if (server === undefined || typeof server.register !== 'function') {
+      warn('webServer 不可用，会话消息路由未挂载');
+      return;
+    }
+
+    const logger = ctx.logger?.('@oblivion/brand');
+    const isControllerLike = (value: unknown): value is SessionControllerLike =>
+      typeof value === 'object' && value !== null && typeof (value as { prompt?: unknown }).prompt === 'function';
+
+    let cached: SessionControllerLike | undefined = isControllerLike(scope.sessionController)
+      ? scope.sessionController
+      : undefined;
+    if (cached !== undefined) {
+      logger?.info('会话服务已在作用域内，外部消息注入可用');
+    } else {
+      // 会话服务可能比 webServer 晚就绪：单独挂一次注入，就绪即缓存。
+      ctx.inject?.(['sessionController'], (inner) => {
+        if (!isControllerLike(inner.sessionController)) return;
+        cached = inner.sessionController;
+        logger?.info('会话服务已就绪，外部消息注入可用');
+      });
+    }
+
+    /** 每次请求时解析：晚到的服务也能用上，且不依赖注入回调一定触发。 */
+    const controller = (): SessionControllerLike | undefined => {
+      if (cached !== undefined) return cached;
+      try {
+        const fromCtx = ctx.get?.('sessionController');
+        if (isControllerLike(fromCtx)) {
+          cached = fromCtx;
+          return cached;
+        }
+      } catch {
+        /* ctx.get 在某些作用域会拒绝访问，视同取不到 */
+      }
+      return undefined;
+    };
+
+    const dispose = server.register({
+      kind: 'exact',
+      path: SESSION_MESSAGE_PATH,
+      handler: async (request, response) => {
+        const json = (status: number, body: unknown, extra?: Record<string, string>): void => {
+          response.writeHead(status, { 'content-type': 'application/json', ...extra });
+          response.end(JSON.stringify(body));
+        };
+
+        if (request.method !== 'POST') {
+          json(405, { ok: false, error: 'method not allowed' }, { allow: 'POST' });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: 'untrusted origin' });
+          return;
+        }
+        if (sessionInjectDisabled()) {
+          json(403, { ok: false, error: `${SESSION_INJECT_ENV} 已指定为关闭` });
+          return;
+        }
+
+        let raw: unknown;
+        try {
+          raw = JSON.parse(await readRequestBody(request));
+        } catch (error) {
+          json(400, {
+            ok: false,
+            error: `请求体不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
+          });
+          return;
+        }
+
+        const requestId = randomUUID();
+        const parsed = parseSessionMessageRequest(raw, requestId);
+        if (!parsed.ok) {
+          json(400, { ok: false, error: parsed.error });
+          return;
+        }
+
+        const service = controller();
+        if (service === undefined) {
+          json(503, { ok: false, error: '宿主里取不到 sessionController，消息未注入' });
+          return;
+        }
+
+        try {
+          // 幂等键 = requestId（调用方未给则由上面铸造）：重复提交同一条只会被接受一次。
+          await service.prompt(parsed.value, new AbortController().signal);
+        } catch (error) {
+          const failure = describePromptFailure(error);
+          const status = httpStatusForPromptFailure(failure.code);
+          appendLog(`session message refused (${String(status)}): ${failure.code ?? '-'} ${failure.error}`);
+          json(status, { ok: false, ...failure });
+          return;
+        }
+
+        appendLog(
+          `session message admitted: session=${parsed.value.sessionId} mode=${parsed.value.mode} chars=${String(parsed.value.content[0].text.length)}`,
+        );
+        json(200, {
+          ok: true,
+          accepted: true,
+          requestId: parsed.value.requestId,
+          sessionId: parsed.value.sessionId,
+          mode: parsed.value.mode,
+        });
+      },
+    });
+
+    ctx.effect?.(() => dispose, 'oblivion-brand: session message route');
+    ctx.logger?.('@oblivion/brand').info(`会话消息路由已挂载：POST ${SESSION_MESSAGE_PATH}`);
+  });
+}
+
+/**
  * 把插件市场（`dshmarket`）的 npm registry 指到 npmmirror。
  *
  * ## 为什么需要这一手
@@ -766,4 +963,5 @@ export function apply(ctx: HostCtx): void {
   installRestartRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
+  installSessionMessageRoute(ctx, warn);
 }

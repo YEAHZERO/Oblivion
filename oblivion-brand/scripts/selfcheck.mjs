@@ -6,7 +6,8 @@
  * 验证的是「本机能验证的全部」：
  *   1. 产物存在、可被真实 import（证明没有裸导入解析问题）
  *   2. 导出形状符合本包的约定
- *   3. apply 真的把两条路由挂上去（桩 webServer 必须收到 RESTART_PATH 与 PLUGINS_PATH）
+ *   3. apply 真的把四条路由挂上去（桩 webServer 必须收到 RESTART_PATH / ORPHANS_PATH /
+ *      PLUGINS_PATH / SESSION_MESSAGE_PATH）
  *   4. 已装插件清单：临时 profile 上读出规格 / 启用态 / 版本 / 恢复命令
  *   5. 清单路由真跑：GET 200（返回体还得能被客户端校验器接受）、POST 405、外来 Origin 403
  *   6. profile 定位：DSH_PROFILE_DIR 优先，否则按 DSH_HOME 拼，都没有则 null
@@ -21,6 +22,12 @@
  *   13. 装载期清扫的两道门：开关关掉、传输目录不存在 —— 都不派生 PowerShell。
  *      这一条刻意只能这么验：真跑清扫会在开发机上**真的杀进程**，自检不许有这种副作用。
  *   14. 清扫路由真跑：POST 200（非 Windows 上 501），返回体带 `report` 形状。
+ *   15. 会话消息的**判据面**（纯函数）：请求解析（含各类坏输入）/ 开关真值表 /
+ *      错误码 → HTTP 状态。
+ *   16. 会话注入路由真跑：405 / 403（外来 Origin、开关关闭）/ 400（坏 JSON、缺字段）/
+ *      200（**真的**把消息交给了会话服务，形状与 `SessionPromptRequest` 对齐）/
+ *      503（宿主里没有会话服务）/ 404（会话不存在，远端 code 透传）。
+ *      桩服务只记录、不发送 —— 自检不许往用户真实会话里塞消息。
  *
  * 第 11 条是这组里唯一「跨包」的断言，也是 registry 改动的实质：它证明的不是
  * 「我们写了个环境变量」，而是「市场读了它、并按它换了镜像」。
@@ -62,14 +69,14 @@ const ENV = 'DSHM_NPM_MIRROR';
 const MIRROR = 'https://registry.npmmirror.com';
 
 /** 在指定的环境变量值下跑一段，跑完恢复原值（含「原本不存在」这一态）。 */
-async function withEnv(value, fn) {
-  const saved = process.env[ENV];
+async function withEnv(value, fn, name = ENV) {
+  const saved = process.env[name];
   const restore = () => {
-    if (saved === undefined) delete process.env[ENV];
-    else process.env[ENV] = saved;
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
   };
-  if (value === undefined) delete process.env[ENV];
-  else process.env[ENV] = value;
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
   try {
     return await fn();
   } finally {
@@ -77,9 +84,32 @@ async function withEnv(value, fn) {
   }
 }
 
-/** 只记录、不做磁盘动作的桩 ctx。 */
-function makeCtx() {
-  const reg = { routes: [], effects: [], logs: [] };
+/**
+ * 只记录、不做磁盘动作的桩 ctx。
+ *
+ * `inject` 收到几个依赖就只给那几个服务 —— 与真实 Cordis 一致（`inject(['webServer'])`
+ * 拿到的 scope 里**没有** sessionController）。于是「先挂路由、再单独 inject 会话服务」
+ * 这条延迟绑定路径在自检里会被真正走到，而不是被桩喂成捷径。
+ *
+ * `options.sessionController` 给 `null` 可造出「宿主里没有会话服务」的现场（验 503）。
+ */
+function makeCtx(options = {}) {
+  const reg = { routes: [], effects: [], logs: [], injected: [], prompts: [] };
+  const controller =
+    options.sessionController === null
+      ? undefined
+      : options.sessionController ?? {
+          prompt: async (request) => {
+            reg.prompts.push(request);
+            return { accepted: true };
+          },
+        };
+  const webServer = {
+    register: (route) => {
+      reg.routes.push(route);
+      return () => {};
+    },
+  };
   return {
     reg,
     ctx: {
@@ -87,16 +117,13 @@ function makeCtx() {
         info: (message) => reg.logs.push(['info', message]),
         warn: (message) => reg.logs.push(['warn', message]),
       }),
+      get: (name) => (name === 'sessionController' ? controller : undefined),
       inject: (deps, callback) => {
-        reg.injected = deps;
-        callback({
-          webServer: {
-            register: (route) => {
-              reg.routes.push(route);
-              return () => {};
-            },
-          },
-        });
+        for (const dep of deps) if (!reg.injected.includes(dep)) reg.injected.push(dep);
+        const scope = {};
+        if (deps.includes('webServer')) scope.webServer = webServer;
+        if (deps.includes('sessionController')) scope.sessionController = controller;
+        callback(scope);
       },
       effect: (fn, label) => reg.effects.push(label),
     },
@@ -116,6 +143,33 @@ function fakeResponse() {
     },
   };
   return { captured, response };
+}
+
+/**
+ * 假 POST 请求：请求体由 `flush()` 推给已经注册的监听者。
+ *
+ * 用法必须是「先起 handler（它同步注册监听），再 flush，最后 await」：
+ * ```
+ * const pending = route.handler(request, response);
+ * request.flush();
+ * await pending;
+ * ```
+ * handler 在第一个 `await` 之前就把 `on('data'|'end')` 挂好了，所以 `flush()` 不会丢事件。
+ */
+function fakeRequest(body, headers = {}) {
+  const listeners = { data: [], end: [], error: [] };
+  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  return {
+    method: 'POST',
+    headers,
+    on(event, listener) {
+      (listeners[event] ??= []).push(listener);
+    },
+    flush() {
+      for (const listener of listeners.data) listener(Buffer.from(text, 'utf8'));
+      for (const listener of listeners.end) listener();
+    },
+  };
 }
 
 function writeJson(file, value) {
@@ -192,7 +246,9 @@ await check('导出形状符合本包约定', () => {
   assert.equal(mod.RESTART_PATH, '/obl-brand/restart');
   assert.equal(mod.PLUGINS_PATH, '/obl-brand/plugins');
   assert.equal(mod.ORPHANS_PATH, '/obl-brand/orphans');
+  assert.equal(mod.SESSION_MESSAGE_PATH, '/obl-brand/session/message');
   assert.equal(mod.MOUNT_SWEEP_ENV, 'OBLIVION_BRAND_ORPHAN_SWEEP');
+  assert.equal(mod.SESSION_INJECT_ENV, 'OBLIVION_BRAND_SESSION_INJECT');
   assert.equal(mod.MARKET_REGISTRY_ENV, ENV);
   assert.equal(mod.MARKET_REGISTRY_MIRROR, MIRROR);
   assert.equal(typeof mod.apply, 'function');
@@ -204,21 +260,32 @@ await check('导出形状符合本包约定', () => {
   assert.equal(typeof mod.sweepOnMount, 'function');
   assert.equal(typeof mod.parseSweepOutput, 'function');
   assert.equal(typeof mod.resolveTransportProfileDir, 'function');
-  return 'RESTART_PATH / PLUGINS_PATH / ORPHANS_PATH / MARKET_* / 恢复命令 / 清单校验 / 清扫面 / apply 齐备';
+  assert.equal(typeof mod.parseSessionMessageRequest, 'function');
+  assert.equal(typeof mod.sessionInjectDisabled, 'function');
+  assert.equal(typeof mod.describePromptFailure, 'function');
+  assert.equal(typeof mod.httpStatusForPromptFailure, 'function');
+  assert.equal(typeof mod.readRequestBody, 'function');
+  return '四条路径 / 两个开关常量 / 恢复命令 / 清单校验 / 清扫面 / 会话注入面 / apply 齐备';
 });
 
-await check('apply 挂载三条路由且都注入 webServer', async () => {
+await check('apply 挂载四条路由；三条只要 webServer，会话注入额外绑 sessionController', async () => {
   const { ctx, reg } = makeCtx();
   await withEnv(undefined, () => mod.apply(ctx));
-  assert.deepEqual(reg.injected, ['webServer'], 'inject 依赖应为 [webServer]');
-  assert.equal(reg.routes.length, 3, '应注册三条路由（重启 + 孤儿清扫 + 已装插件清单）');
+  assert.deepEqual(
+    reg.injected,
+    ['webServer', 'sessionController'],
+    '会话服务要单独 inject（先挂路由、后绑服务），其余三条只依赖 webServer',
+  );
+  assert.equal(reg.routes.length, 4, '应注册四条路由（重启 + 孤儿清扫 + 已装插件清单 + 会话消息）');
   const restart = reg.routes.find((route) => route.path === mod.RESTART_PATH);
   const orphans = reg.routes.find((route) => route.path === mod.ORPHANS_PATH);
   const plugins = reg.routes.find((route) => route.path === mod.PLUGINS_PATH);
+  const session = reg.routes.find((route) => route.path === mod.SESSION_MESSAGE_PATH);
   assert.ok(restart, '缺少重启路由');
   assert.ok(orphans, '缺少孤儿进程清扫路由');
   assert.ok(plugins, '缺少已装插件清单路由');
-  for (const route of [restart, orphans, plugins]) {
+  assert.ok(session, '缺少会话消息路由');
+  for (const route of [restart, orphans, plugins, session]) {
     assert.equal(route.kind, 'exact');
     assert.equal(typeof route.handler, 'function');
   }
@@ -559,6 +626,152 @@ await check('清扫路由真跑：405 / 外来 Origin 403 / POST 200（只杀孤
   assert.ok(Array.isArray(payload.report.killed), '报告要带 killed 列表');
   assert.equal(typeof payload.summary, 'string');
   return payload.summary;
+});
+
+await check('会话消息：请求解析（纯函数）、开关真值表、失败归类', () => {
+  assert.equal(mod.SESSION_MESSAGE_PATH, '/obl-brand/session/message');
+  assert.equal(mod.SESSION_INJECT_ENV, 'OBLIVION_BRAND_SESSION_INJECT');
+  assert.equal(mod.MAX_SESSION_MESSAGE_CHARS, 20000);
+
+  assert.deepEqual(
+    mod.parseSessionMessageRequest({ sessionId: ' s1 ', text: 'hello', mode: 'steer' }, 'uuid-fallback'),
+    {
+      ok: true,
+      value: {
+        requestId: 'uuid-fallback',
+        sessionId: 's1',
+        mode: 'steer',
+        content: [{ type: 'text', text: 'hello' }],
+      },
+    },
+    'sessionId 去空白 / 未给 requestId 用兜底值',
+  );
+  // 调用方自带幂等键必须优先（脚本重试才真的幂等）
+  assert.equal(
+    mod.parseSessionMessageRequest({ sessionId: 's1', text: 'hi', requestId: ' mine ' }, 'fallback').value
+      .requestId,
+    'mine',
+  );
+  // mode 缺省 = queue
+  assert.equal(mod.parseSessionMessageRequest({ sessionId: 's1', text: 'hi' }, 'f').value.mode, 'queue');
+
+  for (const bad of [null, undefined, [], 'x', 42, true]) {
+    assert.equal(mod.parseSessionMessageRequest(bad, 'f').ok, false, '非对象必须拒绝');
+  }
+  assert.match(mod.parseSessionMessageRequest({ text: 'hi' }, 'f').error, /sessionId/);
+  assert.match(mod.parseSessionMessageRequest({ sessionId: 's1' }, 'f').error, /text/);
+  assert.match(mod.parseSessionMessageRequest({ sessionId: 's1', text: '   ' }, 'f').error, /text/);
+  assert.match(mod.parseSessionMessageRequest({ sessionId: 's1', text: 'hi', mode: 'now' }, 'f').error, /mode/);
+  assert.equal(
+    mod.parseSessionMessageRequest({ sessionId: 's1', text: 'a'.repeat(20001) }, 'f').ok,
+    false,
+    '超长文本必须拒绝',
+  );
+
+  // 开关真值表：与孤儿清扫同一套口径
+  for (const off of ['off', '0', 'false', 'no', ' OFF ']) {
+    assert.equal(mod.sessionInjectDisabled({ [mod.SESSION_INJECT_ENV]: off }), true, off);
+  }
+  for (const on of [undefined, '', 'on', '1', 'yes']) {
+    assert.equal(mod.sessionInjectDisabled({ [mod.SESSION_INJECT_ENV]: on }), false, String(on));
+  }
+
+  assert.equal(mod.httpStatusForPromptFailure('session/not-found'), 404);
+  assert.equal(mod.httpStatusForPromptFailure('gateway/bad-request'), 400);
+  assert.equal(mod.httpStatusForPromptFailure('session/invalid-time-zone'), 400);
+  assert.equal(mod.httpStatusForPromptFailure('session/busy'), 502);
+  assert.equal(mod.httpStatusForPromptFailure(undefined), 502);
+  assert.deepEqual(
+    mod.describePromptFailure(Object.assign(new Error('boom'), { code: 'session/not-found' })),
+    { error: 'boom', code: 'session/not-found' },
+  );
+  assert.deepEqual(mod.describePromptFailure('plain'), { error: 'plain' });
+  return '解析 12 例 / 开关真值表 10 值 / 状态映射 5 例 / 失败摊平 2 例';
+});
+
+await check('会话注入路由真跑：405 / 403×2 / 400×2 / 200 / 503 / 404', async () => {
+  // 起一次 handler：它会在第一个 await 之前同步挂好 data/end 监听，所以 flush 不会丢
+  const call = async (route, request, response) => {
+    const pending = route.handler(request, response);
+    request.flush();
+    await pending;
+  };
+
+  const { ctx, reg } = makeCtx();
+  await withEnv(undefined, () => mod.apply(ctx));
+  const route = reg.routes.find((item) => item.path === mod.SESSION_MESSAGE_PATH);
+  assert.ok(route, '会话消息路由未注册');
+
+  const wrongMethod = fakeResponse();
+  await route.handler({ method: 'GET', headers: {} }, wrongMethod.response);
+  assert.equal(wrongMethod.captured.status, 405);
+
+  const foreign = fakeResponse();
+  await call(route, fakeRequest({ sessionId: 's1', text: 'hi' }, { origin: 'https://evil.example' }), foreign.response);
+  assert.equal(foreign.captured.status, 403, '能驱动 agent 的接口不能对外来页面开放');
+
+  const badJson = fakeResponse();
+  await call(route, fakeRequest('{not json'), badJson.response);
+  assert.equal(badJson.captured.status, 400);
+
+  const noSession = fakeResponse();
+  await call(route, fakeRequest({ text: 'hi' }), noSession.response);
+  assert.equal(noSession.captured.status, 400);
+
+  const ok = fakeResponse();
+  await call(route, fakeRequest({ sessionId: 'session-x', text: '继续', mode: 'steer' }), ok.response);
+  assert.equal(ok.captured.status, 200, ok.captured.body);
+  const body = JSON.parse(ok.captured.body);
+  assert.equal(body.ok, true);
+  assert.equal(body.accepted, true);
+  assert.equal(body.sessionId, 'session-x');
+  assert.equal(body.mode, 'steer');
+  assert.match(
+    body.requestId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    '未给 requestId 时应由服务端铸造 UUID',
+  );
+  // 真的把这条消息交给了会话服务，且形状与 SessionPromptRequest 对齐
+  assert.equal(reg.prompts.length, 1);
+  assert.deepEqual(reg.prompts[0], {
+    requestId: body.requestId,
+    sessionId: 'session-x',
+    mode: 'steer',
+    content: [{ type: 'text', text: '继续' }],
+  });
+
+  // 运营者开关关掉 → 403，且一个字都不发给会话
+  const off = fakeResponse();
+  const offRequest = fakeRequest({ sessionId: 'session-x', text: '继续' });
+  await withEnv('off', () => call(route, offRequest, off.response), mod.SESSION_INJECT_ENV);
+  assert.equal(off.captured.status, 403);
+  assert.equal(reg.prompts.length, 1, '开关关闭时不该再发消息');
+
+  // 宿主里没有会话服务 → 503（路由仍然挂着，能说清原因，而不是 404）
+  const bare = makeCtx({ sessionController: null });
+  await withEnv(undefined, () => mod.apply(bare.ctx));
+  const bareRoute = bare.reg.routes.find((item) => item.path === mod.SESSION_MESSAGE_PATH);
+  assert.ok(bareRoute, '拿不到会话服务时路由也必须挂上');
+  const noService = fakeResponse();
+  await call(bareRoute, fakeRequest({ sessionId: 'session-x', text: '继续' }), noService.response);
+  assert.equal(noService.captured.status, 503);
+
+  // 会话不存在 → 404，且远端 code 透传给调用方
+  const notFound = makeCtx({
+    sessionController: {
+      prompt: async () => {
+        throw Object.assign(new Error('unknown session'), { code: 'session/not-found' });
+      },
+    },
+  });
+  await withEnv(undefined, () => mod.apply(notFound.ctx));
+  const notFoundRoute = notFound.reg.routes.find((item) => item.path === mod.SESSION_MESSAGE_PATH);
+  const missing = fakeResponse();
+  await call(notFoundRoute, fakeRequest({ sessionId: 'nope', text: '继续' }), missing.response);
+  assert.equal(missing.captured.status, 404);
+  assert.equal(JSON.parse(missing.captured.body).code, 'session/not-found');
+
+  return '405 / 403(外来/开关) / 400(坏 JSON/缺字段) / 200 / 503 / 404 全部符合预期';
 });
 
 await check('重启 helper 正文：ASCII / 参数齐全 / 清扫排在 dry-run 之后 / 5.1 真解析', async () => {
