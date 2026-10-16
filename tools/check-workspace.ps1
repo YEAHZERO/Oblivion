@@ -15,13 +15,14 @@
     DSH_PNPM          pnpm.mjs 路径
 
 .EXAMPLE
-  powershell -File tools/check-workspace.ps1              # = 契约 + install + typecheck + test + build + 版本一致性
-  powershell -File tools/check-workspace.ps1 -Task test   # 只跑测试
-  powershell -File tools/check-workspace.ps1 -Task compat # 只跑 DSH 宿主契约校验
+  powershell -File tools/check-workspace.ps1                # = 契约 + install + typecheck + test + build + 版本 + selfcheck
+  powershell -File tools/check-workspace.ps1 -Task test     # 只跑测试
+  powershell -File tools/check-workspace.ps1 -Task compat   # 只跑 DSH 宿主契约校验
+  powershell -File tools/check-workspace.ps1 -Task selfcheck# 只跑每包端到端自检
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('check', 'compat', 'install', 'typecheck', 'test', 'build', 'version')]
+  [ValidateSet('check', 'compat', 'install', 'typecheck', 'test', 'build', 'version', 'selfcheck')]
   [string]$Task = 'check'
 )
 
@@ -124,6 +125,9 @@ try {
   elseif ($Task -eq 'version') {
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'check:version') -Label 'VERSION 与 package.json 一致性'
   }
+  elseif ($Task -eq 'selfcheck') {
+    Invoke-Pnpm -TaskArgs @('-r', '--if-present', 'run', 'selfcheck') -Label '每包端到端自检（装载形状 / 契约 / 副作用）'
+  }
   else {
     Invoke-Compat
     Invoke-Pnpm -TaskArgs @('install') -Label '安装工作区依赖（依赖只存一份）'
@@ -131,6 +135,9 @@ try {
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'test') -Label '全部插件测试'
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'build') -Label '全部插件构建'
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'check:version') -Label 'VERSION 与 package.json 一致性'
+    # selfcheck 必须在 build 之后：它 import 的是 lib/ 产物，不是源码。
+    # 顺序错了会在「刚 clone 还没构建」时报 ERR_MODULE_NOT_FOUND，看起来像插件坏了。
+    Invoke-Pnpm -TaskArgs @('-r', '--if-present', 'run', 'selfcheck') -Label '每包端到端自检（装载形状 / 契约 / 副作用）'
   }
 
   Write-Host ("全部通过（task=" + $Task + "）") -ForegroundColor Green

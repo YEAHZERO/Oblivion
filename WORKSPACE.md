@@ -95,6 +95,52 @@ node --import "file:///$($dshx -replace '\\','/')/node_modules/tsx/dist/esm/inde
 > 注意 `--import` 必须接收 `file://` URL：裸 Windows 路径会被当成 `c:` 协议而报
 > `ERR_UNSUPPORTED_ESM_URL_SCHEME`。
 
+### 搜索链路的密钥自检：`tools/key-search.ps1`
+
+`dsh-free-search` / `dsh-web-search-pro` 重装、换引擎，或改了 profile 补丁之后，用它**绕过插件路由**直连带密钥的搜索 API，把"key 还在"和"网络通"分开验证：
+
+```powershell
+powershell -NoProfile -File tools\key-search.ps1 -KeyStatus                        # key 有没有、来自哪一层
+powershell -NoProfile -File tools\key-search.ps1 -Query '关键词' -Provider all -N 5  # exa + tavily + firecrawl 并发合并
+powershell -NoProfile -File tools\key-search.ps1 -Query '关键词' -Text -MaxChars 4000 # 取正文
+```
+
+也可以走工作区脚本别名（参数直接追加，不需要 `--`；本机 `pnpm` 不在 PATH 上，用 `corepack` 带着走）：
+
+```powershell
+corepack pnpm key-search -KeyStatus
+corepack pnpm key-search -Query '关键词' -Provider all -N 5
+```
+
+引擎用的环境变量名与 `dsh-free-search/lib/index.js:2903-2921` 的映射一致（`EXA_API_KEY` / `TAVILY_API_KEY` / `FIRECRAWL_API_KEY`）。**读 key 顺序 = 显式参数 > User 注册表 > Machine > Process**：DSH 给 agent shell 做了脱敏，会话里 `$env:EXA_API_KEY` 是空的，只有 User 层注册表拿得到，所以 User 排最前。
+
+退出码 `0` 有结果 / `1` 引擎失败或零结果 / `2` 用法错误。两个坑别踩：5.1 的 `-File` **不能绑定名为 `-Engine` 的参数**（exit `-1`、零输出），所以参数叫 `-Provider`；`opencode` 引擎在 5.1 下要转义 JSON 里的引号（脚本内已按版本处理）。
+
+## 检查：四层闸门
+
+工作区的检查规范在 **[`docs/检查方法.md`](docs/检查方法.md)**。要点：
+
+| 层 | 抓什么 | 脚本 |
+| --- | --- | --- |
+| ① 版本一致性 | `VERSION` 与 `package.json` 漂移 | `scripts/bump-version.mjs --check` |
+| ② 类型 | 类型错误、接口不匹配 | `tsc -p tsconfig.json --noEmit` |
+| ③ 单元测试 | 纯逻辑、边界值、异常输入 | `node --test`（`test/*.test.mjs`） |
+| ④ **端到端自检** | **产物能否被真实装载**、契约形状、装载副作用 | `scripts/selfcheck.mjs` |
+
+```powershell
+powershell -File tools/check-workspace.ps1                # 全部四层
+powershell -File tools/check-workspace.ps1 -Task selfcheck# 只跑第 ④ 层
+```
+
+**第 ④ 层不可省**：前三层验源码，它验产物 + 装载行为。2026-10-06 的 App 崩溃、
+路由数变化、缺失导入，全是它抓出来的。典型只有它能抓的故障：`inject` 声明了宿主
+没有的服务（不报错，静默 pending）、`lib/` 裸导入解析失败、`effect` 没返回 disposer
+导致 HMR 重载泄漏端口。
+
+> ⚠️ **`pnpm -r --if-present` 对缺 script 的包静默跳过** —— 新建插件时若不补
+> `scripts.selfcheck`，`check` 会显示全绿而实际没检查它。当前哪些包缺哪一层，
+> 见 `docs/检查方法.md` 第六节的台账。
+
 ## 红线
 
 DSH 官方源码、内置包、官方构建产物一律**只读**，临时副本和 worktree 也不例外。
@@ -200,6 +246,25 @@ pwsh -File tools\patch-dshmarket-hot-id.ps1 -DryRun    # 只看不做
 不打补丁的症状：经市场热挂**任何 `@` 作用域插件**都会失败（它写回的热点 YAML 被拼坏），
 表现为「退化成重启」，功能不受损但每次都要重启。补丁在 App 重启后生效。
 细节与实证见 [`HANDOFF.md`](HANDOFF.md) 坑 12 与 [`CHANGELOG.md`](CHANGELOG.md)。
+
+### 5. `dsh-deepseek-web-login` 的子进程不随宿主退出（不补丁，改由 `@oblivion/brand` 清扫）
+
+`~/.dsh/profiles/desktop/node_modules/dsh-deepseek-web-login`（第三方，`cv-superding`）
+用无头 Edge 跑传输，profile 在 `~/.dsh/web-login/transport-profile`。它在 DSH **被硬杀**
+（brand 的重启按钮 / 任务管理器 / 崩溃）时来不及关子进程，那些 msedge 变成孤儿并继续占着
+profile 目录，于是下一次探活 `rmSync` 抛 EPERM，**面板上几个账号全部校验失败**（`lastCheckError` 被写脏）。
+
+这里**不打第三方补丁**：拉起方式改不动（升级即覆盖），清扫放在外面更稳。归属与判据在
+[`oblivion-brand/README.md`](oblivion-brand/README.md) 的「孤儿进程清扫」一节（`src/orphans.ts`）：
+装载时、重启前、重启 helper 内三处清扫，面板另有「清理孤儿进程」按钮（`POST /obl-brand/orphans`，不重启）。
+装载期清扫可用 `OBLIVION_BRAND_ORPHAN_SWEEP=off` 关掉。
+
+手工核对命令（把 profile 目录换成任何一次性目录即可安全试）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\obl-brand-orphans.ps1" `
+  -Mode orphans -ProfileDir "$env:USERPROFILE\.dsh\web-login\transport-profile"
+```
 
 ## 应用图标：只能改快捷方式，改不了窗口/任务栏
 

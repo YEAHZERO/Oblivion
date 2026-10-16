@@ -16,6 +16,7 @@
     "build": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task build",
     "check:version": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task version",
     "verify:dsh": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-dsh-compat.ps1",
-    "compat": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task compat"
+    "compat": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task compat",
+    "key-search": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/key-search.ps1"
   }
 }

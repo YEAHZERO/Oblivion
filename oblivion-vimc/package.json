@@ -50,6 +50,7 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test",
+    "selfcheck": "node scripts/selfcheck.mjs",
     "version:bump": "node scripts/bump-version.mjs",
     "check:version": "node scripts/bump-version.mjs --check"
   },

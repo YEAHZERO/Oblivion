@@ -146,6 +146,23 @@ $pluginDirs = Get-ChildItem $repoRoot -Directory |
   Where-Object { $_.Name -like 'oblivion-*' -and (Test-Path (Join-Path $_.FullName 'package.json')) }
 if ($Plugin) { $pluginDirs = $pluginDirs | Where-Object { $_.Name -eq $Plugin } }
 
+# ---- 全工作区的 provides 汇总 ----
+#
+# 包间依赖（例：http-bridge 依赖 core 的 `oblivion` 服务）不能用 `requires.services`：
+# 那个字段的语义是「这个服务名必须在 **DSH 宿主源码**里存在」，用于对宿主取证。
+# 工作区内部的依赖走 `requires.workspaceServices`，在这里先收集所有包的 `provides`，
+# 再逐个比对 —— 这样「谁提供了什么、谁依赖了它」在升级/重构时会被当场抓出来。
+$workspaceProvides = @{}
+foreach ($dir in (Get-ChildItem $repoRoot -Directory | Where-Object { $_.Name -like 'oblivion-*' -and (Test-Path (Join-Path $_.FullName 'package.json')) })) {
+  try {
+    $p = Read-Json (Join-Path $dir.FullName 'package.json')
+    $services = $p.dsh.compat.provides.services
+    if ($services) {
+      foreach ($s in $services) { $workspaceProvides[$s] = $p.name }
+    }
+  } catch { }
+}
+
 $totalFail = 0
 $index = 0
 foreach ($dir in $pluginDirs) {
@@ -228,6 +245,19 @@ foreach ($dir in $pluginDirs) {
     foreach ($svc in $req.services) {
       $ev = Find-InHarness ("'" + $svc + "'") 'packages' @('*.ts')
       Add-Check 'service' $svc ([bool]$ev) $(if ($ev) { $ev + '（仅证明名字出现）' } else { '源码里找不到该服务名' })
+    }
+  }
+
+  # ⑤b 工作区内服务（包间依赖：http-bridge 依赖 core 的 `oblivion`）
+  #
+  # 与 ⑤ 的区别：⑤ 对**宿主源码**取证（tools / systemPrompt 这类 DSH 内置服务），
+  # 本条对**同工作区其他包的 provides** 取证。用错字段的后果：⑤ 会永远 FAIL
+  # （宿主源码里当然找不到 `oblivion`），而那条 FAIL 看起来像「DSH 升级破坏了契约」，
+  # 实际只是字段用错了 —— 误导性极强，所以单独一类。
+  if ($req.workspaceServices) {
+    foreach ($svc in $req.workspaceServices) {
+      $provider = $workspaceProvides[$svc]
+      Add-Check 'wsService' $svc ([bool]$provider) $(if ($provider) { '由 ' + $provider + ' provides' } else { '工作区里没有任何包 provides 该服务' })
     }
   }
 

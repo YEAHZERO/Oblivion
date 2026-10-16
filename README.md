@@ -183,10 +183,16 @@ Oblivion/
 **一条命令（推荐）**：`tools/check-workspace.ps1` 在**运行时解析** DSH 运行时位置，因此不依赖 `pnpm` 在 PATH 上：
 
 ```powershell
-powershell -File tools/check-workspace.ps1              # = 契约校验 + install + typecheck + test + build + 版本一致性
-powershell -File tools/check-workspace.ps1 -Task test   # 只跑测试（compat/install/typecheck/test/build/version）
-powershell -File tools/check-workspace.ps1 -Task compat # 只跑 DSH 宿主契约校验（升级后最该跑的一条）
+powershell -File tools/check-workspace.ps1                # = 契约 + install + typecheck + test + build + 版本 + selfcheck
+powershell -File tools/check-workspace.ps1 -Task test     # 只跑测试（compat/install/typecheck/test/build/version/selfcheck）
+powershell -File tools/check-workspace.ps1 -Task compat   # 只跑 DSH 宿主契约校验（升级后最该跑的一条）
+powershell -File tools/check-workspace.ps1 -Task selfcheck# 只跑每包端到端自检
 ```
+
+> **完整的检查规范见 [`docs/检查方法.md`](docs/检查方法.md)** —— 四层检查各抓什么故障、
+> 新建插件要凑齐哪些脚本、selfcheck 怎么写、当前检查台账与已知缺口。
+> 新增插件或改动 `scripts` 时**务必回看那份文档**：`pnpm -r --if-present` 对缺 script 的包
+> **静默跳过**，缺检查不会报错，只会让人误以为「全绿」。
 
 > **`check` 的第一步是 DSH 宿主契约校验** —— 它回答「DSH 升级后我的插件还活着吗」。
 > 机制、升级 SOP 与台账见 [`.design/DSH-COMPAT.md`](.design/DSH-COMPAT.md)。

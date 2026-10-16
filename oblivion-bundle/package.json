@@ -16,6 +16,7 @@
           "@oblivion/brand",
           "@oblivion/vimc",
           "@oblivion/core",
+          "@oblivion/http-bridge",
           "@oblivion/panel"
         ]
       }
@@ -28,6 +29,7 @@
     "VERSION"
   ],
   "scripts": {
+    "selfcheck": "node scripts/selfcheck.mjs",
     "version:bump": "node scripts/bump-version.mjs",
     "check:version": "node scripts/bump-version.mjs --check"
   },
@@ -35,6 +37,7 @@
     "@oblivion/brand": "link:../oblivion-brand",
     "@oblivion/vimc": "link:../oblivion-vimc",
     "@oblivion/core": "link:../oblivion-core",
+    "@oblivion/http-bridge": "link:../oblivion-http-bridge",
     "@oblivion/panel": "link:../oblivion-panel"
   }
 }
