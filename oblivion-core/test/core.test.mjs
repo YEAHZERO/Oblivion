@@ -25,6 +25,28 @@ function readdirNames(dir) {
     .sort();
 }
 
+/** 同步小睡（不引 async，好在 `finally` 里直接用）。 */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * 删临时目录：Windows 上 `rmSync` 会抛**瞬时** EPERM —— 文件句柄刚被异步写放开、
+ * 或杀毒在扫刚写的文件。退避重试几次；仍然失败就**放过**：临时目录留在 %TEMP% 不是
+ * 用例失败，而拿它把整条闸门判红就是假失败（2026-10-16 在 `pnpm -r run test` 下真撞到一次）。
+ */
+function cleanupDir(dir) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      if (attempt === 4) return;
+      sleepSync(40 * (attempt + 1));
+    }
+  }
+}
+
 const mod = await import(new URL('file://' + LIB.replace(/\\/g, '/')).href);
 
 describe('产物形状', () => {
@@ -122,7 +144,7 @@ describe('装配（apply）', () => {
         'oblivion_wiki',
       ]);
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      cleanupDir(tmp);
     }
   });
 
@@ -168,16 +190,23 @@ describe('装配（apply）', () => {
       const { ctx } = fakeCtx();
       // 刻意用一个与默认值完全不同的自定义知识库位置
       mod.apply(ctx, { dataRoot: join(root, 'data'), mdRoot: join(root, '自定义知识库') });
-      // 目录创建是非阻塞链路（失败只记日志），给它一点时间
-      await new Promise((r) => setTimeout(r, 300));
       const expected = ['01_问答沉淀', '00_导入文件', '02_Wiki页面', '03_创作产物', '04_会话整理', '99_其他'];
-      const missing = expected.filter((dir) => !existsSync(join(root, '自定义知识库', dir)));
+      const missingNow = () =>
+        expected.filter((dir) => !existsSync(join(root, '自定义知识库', dir)));
+      // 目录创建**是非阻塞链路**（fire-and-forget，失败只记日志），所以这里轮询到齐，
+      // 而不是睡一个固定时长：`pnpm -r run test` 下四个包并发跑，固定 300ms 会在大负载
+      // 下偶发「只差最后建的那个目录」，把可靠的闸门变成运气（2026-10-16 复现过一次）。
+      const deadline = Date.now() + 5_000;
+      while (missingNow().length > 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const missing = missingNow();
       assert.deepEqual(missing, [], '应自动创建全部分类目录，缺：' + missing.join('、'));
       // 消毒：配置里的分类目录不得逃出 mdRoot
       assert.equal(kit.safeDirName('../../etc'), 'etc');
       assert.equal(kit.safeDirName('C:\\Windows\\System32'), 'Windows/System32');
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      cleanupDir(root);
     }
   });
 
@@ -458,7 +487,7 @@ related_wiki: []
       assert.equal(list[0].ask, '给出实施的具体方案', '旧 title 就是原问句，要能读出来给模型看');
       assert.ok(list[0].excerpt.includes('第一步先装 bundle'), '要有答案摘要：' + list[0].excerpt);
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 
@@ -505,7 +534,7 @@ related_wiki: []
       assert.ok(index && existsSync(index.path), '要重建 00-Index/索引.md：' + JSON.stringify(index));
       assert.equal(index.count, self.items.length);
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 
@@ -521,7 +550,7 @@ related_wiki: []
       assert.ok(!note.includes('ask: "Oblivion 具体实施计划"'), '不能把上一次的新名字当成原问句');
       assert.equal((note.match(/>Ask：/g) ?? []).length, 1, '>Ask 行只写一次');
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 
@@ -546,7 +575,7 @@ related_wiki: []
       assert.ok(moved.includes('named_by: "model"'), '标记要保住');
       assert.equal((moved.match(/named_by:/g) ?? []).length, 1, 'named_by 行只写一次');
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 
@@ -585,7 +614,7 @@ related_wiki: []
       kit.registerTools(ctx2, { knowledge: {}, profile: {}, feedback: null, graph: {}, retitle: null });
       assert.equal((await none.get('oblivion_retitle').execute({}, {})).skipped, true);
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 });
@@ -650,7 +679,7 @@ describe('关联知识双链：单段合并、去重、丢弱标题（md-writer�
       assert.equal(await kit.appendRelatedLinks(path, ['新的双链']), false);
       assert.equal(readFileSync(path, 'utf8'), after);
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      cleanupDir(tmp);
     }
   });
 
@@ -683,7 +712,7 @@ describe('关联知识双链：单段合并、去重、丢弱标题（md-writer�
       assert.ok(!empty.includes(kit.RELATED_HEADER), '没有链接就不该留空段：' + empty);
       assert.ok(empty.includes('正文不能被双链改写。'), '正文还在');
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      cleanupDir(tmp);
     }
   });
 
@@ -700,7 +729,7 @@ describe('关联知识双链：单段合并、去重、丢弱标题（md-writer�
       assert.equal(await kit.appendRelatedLinks(path, ['OK', '继续']), false, '全是弱标题就不写');
       assert.equal(readFileSync(path, 'utf8'), CLUTTERED);
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      cleanupDir(tmp);
     }
   });
 });
@@ -850,7 +879,7 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
       assert.ok(list.notes.every((n) => n.wiki.includes(CLUSTER.title)), '候选里要能看到「已归页」');
       assert.equal(list.notes.find((n) => n.id === 'ts-w-1').ask, '插件的 session/event 收不到，为什么');
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 
@@ -867,7 +896,7 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
       assert.equal(readFileSync(join(wikiDir, CLUSTER.title + '.md'), 'utf8'), mine, '用户自己的文件一个字都不改');
       assert.ok(readFileSync(join(wikiDir, results[0].file), 'utf8').includes('oblivion:wiki'));
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 
@@ -910,7 +939,7 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
       kit.registerTools(ctx2, { knowledge: {}, profile: {}, feedback: null, graph: {}, wiki: null });
       assert.equal((await none.get('oblivion_wiki').execute({}, {})).skipped, true);
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 
@@ -943,7 +972,7 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
       const fixed = readFileSync(related, 'utf8');
       assert.ok(fixed.includes('- [[清理死进程残留 + cordis_group 形状核对]]'), '关联知识也要按文件名：' + fixed);
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 
@@ -956,7 +985,7 @@ describe('主题页（oblivion_wiki）：模型判簇，插件落盘 + 回链', 
       assert.deepEqual(results.map((r) => r.error), ['empty-title', 'no-known-members']);
       assert.deepEqual(readdirNames(join(f.mdRoot, '02_Wiki页面')), []);
     } finally {
-      rmSync(f.tmp, { recursive: true, force: true });
+      cleanupDir(f.tmp);
     }
   });
 });
