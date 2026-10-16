@@ -1,16 +1,267 @@
 // src/index.ts
+import { spawn as spawn2 } from "node:child_process";
+import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
+import { join as join3 } from "node:path";
+
+// src/orphans.ts
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join as join2 } from "node:path";
+import { join } from "node:path";
+var ORPHAN_SCRIPT_PATH = join(tmpdir(), "obl-brand-orphans.ps1");
+var MOUNT_SWEEP_ENV = "OBLIVION_BRAND_ORPHAN_SWEEP";
+function mountSweepDisabled(env = process.env) {
+  const raw = (env[MOUNT_SWEEP_ENV] ?? "").trim().toLowerCase();
+  return raw === "off" || raw === "0" || raw === "false" || raw === "no";
+}
+function resolveTransportProfileDir(env = process.env, homeDir = homedir()) {
+  const configured = (env["DSH_HOME"] ?? "").trim();
+  const home = configured === "" ? join(homeDir, ".dsh") : configured;
+  return join(home, "web-login", "transport-profile");
+}
+var ORPHAN_SCRIPT = String.raw`
+param(
+  [ValidateSet('orphans', 'all')][string]$Mode = 'orphans',
+  [Parameter(Mandatory = $true)][string]$ProfileDir,
+  [string]$LogPath = ''
+)
+$ErrorActionPreference = 'Continue'
+
+function Write-Line([string]$message) {
+  if ($LogPath -eq '') { return }
+  try {
+    '{0} orphan-sweep {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $message |
+      Out-File -LiteralPath $LogPath -Append -Encoding utf8
+  } catch { }
+}
+
+function Write-Report([string]$mode, [int]$scanned, [int]$matched, [object[]]$killed, [object[]]$failed, [bool]$ok) {
+  $killList = @($killed | ForEach-Object { [int]$_ }) -join ','
+  $failList = @($failed | ForEach-Object { [int]$_ }) -join ','
+  $flag = 'false'
+  if ($ok) { $flag = 'true' }
+  [Console]::Out.WriteLine(
+    '{"ok":' + $flag + ',"mode":"' + $mode + '","scanned":' + $scanned +
+    ',"matched":' + $matched + ',"killed":[' + $killList + '],"failed":[' + $failList + ']}'
+  )
+}
+
+$scanned = 0
+$matched = 0
+$killed = @()
+$failed = @()
+$ok = $true
+
+try {
+  $procs = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CommandLine, ExecutablePath
+  $live = @{}
+  foreach ($p in $procs) { $live[[int]$p.ProcessId] = $true }
+
+  $needleLower = $ProfileDir.ToLowerInvariant()
+  $needleAlt = $needleLower -replace '\\', '/'
+
+  $matchedMap = @{}
+  foreach ($p in $procs) {
+    $scanned++
+    $cmd = $p.CommandLine
+    if (-not $cmd) { continue }
+    $exe = ''
+    if ($p.ExecutablePath) { $exe = Split-Path $p.ExecutablePath -Leaf }
+    if ($exe -notmatch '^msedge(w)?(\.exe)?$') { continue }
+    $cmdLower = $cmd.ToLowerInvariant()
+    if (-not ($cmdLower.Contains($needleLower) -or $cmdLower.Contains($needleAlt))) { continue }
+    $matchedMap[[int]$p.ProcessId] = [int]$p.ParentProcessId
+  }
+
+  # Seed: which matched processes are doomed?
+  #   all     -> every match (the caller is about to hard-kill the host anyway)
+  #   orphans -> only the ones whose parent is already gone
+  $doomed = @{}
+  foreach ($key in @($matchedMap.Keys)) {
+    $child = [int]$key
+    if ($Mode -eq 'all') { $doomed[$child] = $true; continue }
+    $parent = [int]$matchedMap[$child]
+    if ($parent -le 0) { continue }
+    if (-not $live.ContainsKey($parent)) { $doomed[$child] = $true }
+  }
+
+  # Grow the set over ALL processes, not just the matched ones: msedge children
+  # hang off the browser process (not off DSH), and a child that does not carry
+  # the --user-data-dir flag would otherwise be left behind as a NEW orphan by
+  # the very kill we just did. Killing a parent without its children is how you
+  # manufacture the bug this script exists to remove.
+  $changed = $true
+  while ($changed) {
+    $changed = $false
+    foreach ($p in $procs) {
+      $child = [int]$p.ProcessId
+      if ($doomed.ContainsKey($child)) { continue }
+      $parent = [int]$p.ParentProcessId
+      if ($parent -le 0) { continue }
+      if ($doomed.ContainsKey($parent)) { $doomed[$child] = $true; $changed = $true }
+    }
+  }
+
+  $matched = $matchedMap.Count
+  foreach ($key in @($doomed.Keys)) {
+    $target = [int]$key
+    # Already gone? Then it is not a failure. Killing the browser makes its
+    # renderers exit on their own, so a strict "Stop-Process threw => failed"
+    # would report a pile of fake failures for the very processes we killed.
+    if (-not (Get-Process -Id $target -ErrorAction SilentlyContinue)) {
+      $killed += $target
+      continue
+    }
+    try {
+      Stop-Process -Id $target -Force -ErrorAction Stop
+      $killed += $target
+    } catch {
+      # Race: it exited between the check and the kill.
+      if (Get-Process -Id $target -ErrorAction SilentlyContinue) {
+        $failed += $target
+      } else {
+        $killed += $target
+      }
+    }
+  }
+
+  Write-Line ("mode={0} scanned={1} matched={2} killed={3} failed={4}" -f $Mode, $scanned, $matched, $killed.Count, $failed.Count)
+} catch {
+  $ok = $false
+  Write-Line ("query failed: {0}" -f $_.Exception.Message)
+  [Console]::Error.WriteLine($_.Exception.Message)
+}
+
+Write-Report $Mode $scanned $matched $killed $failed $ok
+`;
+function writeOrphanScript() {
+  try {
+    writeFileSync(ORPHAN_SCRIPT_PATH, `\uFEFF${ORPHAN_SCRIPT}`, "utf8");
+    return ORPHAN_SCRIPT_PATH;
+  } catch {
+    return null;
+  }
+}
+function parseSweepOutput(stdout) {
+  const lines = stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
+  if (lines.length === 0) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(lines[lines.length - 1]);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const raw = parsed;
+  if (raw["ok"] !== true) return null;
+  if (raw["mode"] !== "orphans" && raw["mode"] !== "all") return null;
+  const numbers = (value) => {
+    if (!Array.isArray(value)) return null;
+    const out = [];
+    for (const item of value) {
+      if (typeof item !== "number" || !Number.isInteger(item)) return null;
+      out.push(item);
+    }
+    return out;
+  };
+  const killed = numbers(raw["killed"]);
+  const failed = numbers(raw["failed"]);
+  if (killed === null || failed === null) return null;
+  if (typeof raw["scanned"] !== "number" || typeof raw["matched"] !== "number") return null;
+  return {
+    mode: raw["mode"],
+    scanned: raw["scanned"],
+    matched: raw["matched"],
+    killed,
+    failed
+  };
+}
+var SWEEP_TIMEOUT_MS = 15e3;
+async function sweepTransportOrphans(options) {
+  const mode = options.mode ?? "orphans";
+  const profileDir = resolveTransportProfileDir(
+    options.env ?? process.env,
+    options.homeDir ?? homedir()
+  );
+  const scriptPath = writeOrphanScript();
+  if (scriptPath === null) {
+    return { ok: false, error: "\u6E05\u626B\u811A\u672C\u5199\u5165\u5931\u8D25" };
+  }
+  const timeoutMs = options.timeoutMs ?? SWEEP_TIMEOUT_MS;
+  return await new Promise((resolve2) => {
+    let settled = false;
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      resolve2(outcome);
+    };
+    try {
+      const child = spawn(
+        options.shell,
+        [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-WindowStyle",
+          "Hidden",
+          "-File",
+          scriptPath,
+          "-Mode",
+          mode,
+          "-ProfileDir",
+          profileDir
+        ],
+        // 与重启 helper 同一条实测结论：detached 必须为 false（5.1 需要控制台）。
+        { detached: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }
+      );
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.on("data", (chunk) => {
+        stdout += String(chunk);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      const timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+        }
+        finish({ ok: false, error: `\u6E05\u626B\u811A\u672C\u8D85\u65F6\uFF08${String(timeoutMs)}ms\uFF09` });
+      }, timeoutMs);
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        finish({ ok: false, error: error.message });
+      });
+      child.on("close", () => {
+        clearTimeout(timer);
+        const report = parseSweepOutput(stdout);
+        if (report === null) {
+          finish({ ok: false, error: stderr.trim() || "\u6E05\u626B\u811A\u672C\u6CA1\u6709\u8F93\u51FA\u53EF\u89E3\u6790\u7684\u62A5\u544A" });
+          return;
+        }
+        finish({ ok: true, report });
+      });
+    } catch (error) {
+      finish({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+}
+function describeSweep(report) {
+  const cleaned = report.killed.length === 0 ? "\u65E0\u5B64\u513F\u8FDB\u7A0B" : `\u6E05\u7406 ${String(report.killed.length)} \u4E2A\u5B64\u513F\u8FDB\u7A0B`;
+  const failed = report.failed.length > 0 ? `\uFF0C${String(report.failed.length)} \u4E2A\u7ED3\u675F\u5931\u8D25` : "";
+  return `${cleaned}\uFF08\u626B\u63CF ${String(report.scanned)} \u4E2A\u8FDB\u7A0B\uFF0C\u547D\u4E2D ${String(report.matched)} \u4E2A\u4F20\u8F93\u8FDB\u7A0B${failed}\uFF09`;
+}
 
 // src/paths.ts
 var RESTART_PATH = "/obl-brand/restart";
 var PLUGINS_PATH = "/obl-brand/plugins";
+var ORPHANS_PATH = "/obl-brand/orphans";
 
 // src/profile-plugins.ts
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join as join2, resolve } from "node:path";
 
 // src/plugin-list.ts
 var SAFE_ARG = /^[A-Za-z0-9@._/+^~-]+$/;
@@ -96,10 +347,10 @@ function resolveProfile(env, homeDir) {
     return { profile: explicitProfile !== "" ? explicitProfile : basename(explicitDir), dir: explicitDir };
   }
   const home = text(env["DSH_HOME"]);
-  const base = home !== "" ? home : homeDir !== "" ? join(homeDir, ".dsh") : "";
+  const base = home !== "" ? home : homeDir !== "" ? join2(homeDir, ".dsh") : "";
   if (base === "") return null;
   const profile = explicitProfile !== "" ? explicitProfile : "desktop";
-  return { profile, dir: join(base, "profiles", profile) };
+  return { profile, dir: join2(base, "profiles", profile) };
 }
 function readJson(file) {
   return JSON.parse(readFileSync(file, "utf8"));
@@ -132,8 +383,8 @@ function bundleNameOf(item) {
   return at > 0 ? item.slice(0, at) : item;
 }
 function bundlePatchOf(dir, name) {
-  const pkgDir = join(dir, "node_modules", name);
-  const pkgFile = join(pkgDir, "package.json");
+  const pkgDir = join2(dir, "node_modules", name);
+  const pkgFile = join2(pkgDir, "package.json");
   if (!existsSync(pkgFile)) return "";
   try {
     const parsed = readJson(pkgFile);
@@ -154,7 +405,7 @@ function bundleLayerPatch(dir, bundles) {
   return bundles.map((item) => bundlePatchOf(dir, bundleNameOf(item))).join("\n");
 }
 function installedVersion(dir, name) {
-  const file = join(dir, "node_modules", name, "package.json");
+  const file = join2(dir, "node_modules", name, "package.json");
   if (!existsSync(file)) return null;
   try {
     const parsed = readJson(file);
@@ -171,7 +422,7 @@ function kindOf(spec) {
 }
 function readInstalledPlugins(location, at = Date.now()) {
   const problems = [];
-  const profileFile = join(location.dir, "package.json");
+  const profileFile = join2(location.dir, "package.json");
   let dependencies = [];
   let bundles = [];
   if (!existsSync(profileFile)) {
@@ -185,7 +436,7 @@ function readInstalledPlugins(location, at = Date.now()) {
       problems.push(`package.json \u89E3\u6790\u5931\u8D25\uFF1A${describe(error)}`);
     }
   }
-  const patchFile = join(location.dir, "cordis.patch.yml");
+  const patchFile = join2(location.dir, "cordis.patch.yml");
   let userPatch = "";
   if (existsSync(patchFile)) {
     try {
@@ -223,8 +474,8 @@ function readInstalledPlugins(location, at = Date.now()) {
 }
 
 // src/index.ts
-var SCRIPT_PATH = join2(tmpdir(), "obl-brand-restart.ps1");
-var LOG_PATH = join2(tmpdir(), "obl-brand-restart.log");
+var SCRIPT_PATH = join3(tmpdir2(), "obl-brand-restart.ps1");
+var LOG_PATH = join3(tmpdir2(), "obl-brand-restart.log");
 var MARKET_REGISTRY_ENV = "DSHM_NPM_MIRROR";
 var MARKET_REGISTRY_MIRROR = "https://registry.npmmirror.com";
 var RESTART_SCRIPT = String.raw`
@@ -232,6 +483,8 @@ param(
   [Parameter(Mandatory = $true)][int]$HostPid,
   [Parameter(Mandatory = $true)][string]$LogPath,
   [string]$Version = 'unknown',
+  [string]$SweepScript = '',
+  [string]$ProfileDir = '',
   [switch]$DryRun
 )
 $ErrorActionPreference = 'Continue'
@@ -339,9 +592,40 @@ try {
 
   # Verify-only mode: report the target and stop. Used to prove identification
   # without ending the running application.
+  #
+  # This gate comes BEFORE the sweep on purpose: a dry run must not destroy
+  # anything either -- the sweep kills processes, it is not a read-only step.
   if ($DryRun) {
-    Write-Log 'dry run: target identified, batch written, nothing stopped or armed'
+    Write-Log 'dry run: target identified, batch written, sweep skipped, nothing stopped or armed'
     exit 0
+  }
+
+  # -------------------------------------------------------------------- orphan cleanup
+  # Sweep EVERY web-login transport process before the app goes down.
+  #
+  # Not the same rule as the on-demand sweep (panel button): the app is about to
+  # be hard-killed (Stop-Process -Force further down), so the transport processes
+  # spawned by the *current* host are healthy this second but are guaranteed to
+  # become orphans the moment that lands. Selecting only already-orphaned ones
+  # here would leave exactly those behind -- which is the bug this block exists
+  # for.
+  #
+  # The heuristic itself lives in the shared script (obl-brand-orphans.ps1,
+  # written by the plugin next to this one) so there is exactly ONE
+  # implementation of it. That script must not call exit: it runs inside THIS
+  # session, and exit would end the helper before the relauncher is armed.
+  if ($SweepScript -ne '' -and $ProfileDir -ne '' -and (Test-Path -LiteralPath $SweepScript -PathType Leaf)) {
+    try {
+      & $SweepScript -Mode all -ProfileDir $ProfileDir -LogPath $LogPath | Out-Null
+      Write-Log 'transport sweep: done (mode=all)'
+    } catch {
+      Write-Log ("transport sweep failed: {0}" -f $_.Exception.Message)
+    }
+    # Wait a beat for the OS to release the profile directory before the
+    # relauncher brings the app back up.
+    Start-Sleep -Milliseconds 500
+  } else {
+    Write-Log 'transport sweep: script missing, skipped'
   }
 
   # Arm the relauncher BEFORE killing anything.
@@ -411,15 +695,20 @@ function appendLog(line) {
 function resolvePowerShell() {
   if (process.platform !== "win32") return null;
   const root = process.env["SystemRoot"] ?? process.env["windir"] ?? "C:\\Windows";
-  const absolute = join2(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const absolute = join3(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   return existsSync2(absolute) ? absolute : "powershell.exe";
 }
 function spawnRestartHelper() {
   try {
-    writeFileSync(SCRIPT_PATH, `\uFEFF${RESTART_SCRIPT}`, "utf8");
+    writeFileSync2(SCRIPT_PATH, `\uFEFF${RESTART_SCRIPT}`, "utf8");
   } catch (error) {
     appendLog(`script write failed: ${error instanceof Error ? error.message : String(error)}`);
     return null;
+  }
+  const sweepScript = writeOrphanScript();
+  const profileDir = resolveTransportProfileDir();
+  if (sweepScript === null) {
+    appendLog("orphan sweep script write failed; helper will skip the sweep");
   }
   const shell = resolvePowerShell();
   if (shell === null) {
@@ -428,7 +717,7 @@ function spawnRestartHelper() {
   }
   appendLog(`spawning helper: shell=${shell} hostPid=${String(process.pid)} script=${SCRIPT_PATH}`);
   try {
-    const child = spawn(
+    const child = spawn2(
       shell,
       [
         "-NoProfile",
@@ -443,7 +732,11 @@ function spawnRestartHelper() {
         "-LogPath",
         LOG_PATH,
         "-Version",
-        pluginVersion()
+        pluginVersion(),
+        "-SweepScript",
+        sweepScript ?? "",
+        "-ProfileDir",
+        profileDir
       ],
       // ⚠️ `detached` 必须是 **false**，这是实测隔离出来的结论：
       //
@@ -483,7 +776,7 @@ function installRestartRoute(ctx, warn) {
     const dispose = server.register({
       kind: "exact",
       path: RESTART_PATH,
-      handler: (request, response) => {
+      handler: async (request, response) => {
         if (request.method !== "POST") {
           response.writeHead(405, { allow: "POST" });
           response.end();
@@ -494,6 +787,13 @@ function installRestartRoute(ctx, warn) {
           response.end(JSON.stringify({ ok: false, error: "untrusted origin" }));
           return;
         }
+        const shell = resolvePowerShell();
+        const sweep = shell === null ? { ok: false, error: "no PowerShell on this platform" } : await sweepTransportOrphans({ shell, mode: "orphans" });
+        if (sweep.ok) {
+          appendLog(`pre-restart sweep: ${describeSweep(sweep.report)}`);
+        } else {
+          appendLog(`pre-restart sweep failed: ${sweep.error}`);
+        }
         const logPath = spawnRestartHelper();
         if (logPath === null) {
           response.writeHead(500, { "content-type": "application/json" });
@@ -501,11 +801,53 @@ function installRestartRoute(ctx, warn) {
           return;
         }
         response.writeHead(202, { "content-type": "application/json" });
-        response.end(JSON.stringify({ ok: true, logPath }));
+        response.end(JSON.stringify({ ok: true, logPath, sweep }));
       }
     });
     ctx.effect?.(() => dispose, "oblivion-brand: restart route");
     ctx.logger?.("@oblivion/brand").info(`\u91CD\u542F\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${RESTART_PATH}`);
+  });
+}
+function installOrphanRoute(ctx, warn) {
+  ctx.inject?.(["webServer"], (scope) => {
+    const server = scope.webServer;
+    if (server === void 0 || typeof server.register !== "function") {
+      warn("webServer \u4E0D\u53EF\u7528\uFF0C\u5B64\u513F\u8FDB\u7A0B\u6E05\u626B\u8DEF\u7531\u672A\u6302\u8F7D");
+      return;
+    }
+    const dispose = server.register({
+      kind: "exact",
+      path: ORPHANS_PATH,
+      handler: async (request, response) => {
+        const json = (status, body, extra) => {
+          response.writeHead(status, { "content-type": "application/json", ...extra });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== "POST") {
+          json(405, { ok: false, error: "method not allowed" }, { allow: "POST" });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: "untrusted origin" });
+          return;
+        }
+        const shell = resolvePowerShell();
+        if (shell === null) {
+          json(501, { ok: false, error: "\u672C\u673A\u6CA1\u6709 PowerShell\uFF0C\u65E0\u6CD5\u6E05\u626B" });
+          return;
+        }
+        const outcome = await sweepTransportOrphans({ shell, mode: "orphans" });
+        if (!outcome.ok) {
+          appendLog(`orphan sweep failed: ${outcome.error}`);
+          json(500, { ok: false, error: outcome.error });
+          return;
+        }
+        appendLog(`orphan sweep: ${describeSweep(outcome.report)}`);
+        json(200, { ok: true, report: outcome.report, summary: describeSweep(outcome.report) });
+      }
+    });
+    ctx.effect?.(() => dispose, "oblivion-brand: orphans route");
+    ctx.logger?.("@oblivion/brand").info(`\u5B64\u513F\u8FDB\u7A0B\u6E05\u626B\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${ORPHANS_PATH}`);
   });
 }
 function installPluginsRoute(ctx, warn) {
@@ -531,7 +873,7 @@ function installPluginsRoute(ctx, warn) {
           json(403, { ok: false, error: "untrusted origin" });
           return;
         }
-        const location = resolveProfile(process.env, homedir());
+        const location = resolveProfile(process.env, homedir2());
         if (location === null) {
           json(500, { ok: false, error: "DSH_PROFILE_DIR \u4E0E DSH_HOME \u90FD\u6CA1\u6709\uFF0C\u8BFB\u4E0D\u5230 profile \u76EE\u5F55" });
           return;
@@ -559,28 +901,60 @@ function installMarketRegistryOverride(ctx) {
   process.env[MARKET_REGISTRY_ENV] = MARKET_REGISTRY_MIRROR;
   logger?.info(`\u63D2\u4EF6\u5E02\u573A registry \u5DF2\u6307\u5411 ${MARKET_REGISTRY_MIRROR}`);
 }
+function sweepOnMount(logger, env = process.env, homeDir = homedir2()) {
+  if (process.platform !== "win32") return;
+  if (mountSweepDisabled(env)) {
+    logger?.info(`${MOUNT_SWEEP_ENV} \u5DF2\u6307\u5B9A\u4E3A\u5173\u95ED\uFF0C\u88C5\u8F7D\u65F6\u4E0D\u6E05\u7406\u5B64\u513F\u8FDB\u7A0B`);
+    return;
+  }
+  const profileDir = resolveTransportProfileDir(env, homeDir);
+  if (!existsSync2(profileDir)) return;
+  const shell = resolvePowerShell();
+  if (shell === null) return;
+  void sweepTransportOrphans({ shell, mode: "orphans", env, homeDir }).then((outcome) => {
+    if (!outcome.ok) {
+      logger?.warn(`\u88C5\u8F7D\u65F6\u5B64\u513F\u8FDB\u7A0B\u6E05\u626B\u5931\u8D25\uFF1A${outcome.error}`);
+      return;
+    }
+    logger?.info(`\u88C5\u8F7D\u65F6\u5B64\u513F\u8FDB\u7A0B\u6E05\u626B\uFF1A${describeSweep(outcome.report)}`);
+  });
+}
 function apply(ctx) {
   const logger = ctx.logger?.("@oblivion/brand");
   const warn = (message) => {
     logger?.warn(message);
   };
   installMarketRegistryOverride(ctx);
+  sweepOnMount(logger);
   installRestartRoute(ctx, warn);
+  installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
 }
 export {
   MARKET_REGISTRY_ENV,
   MARKET_REGISTRY_MIRROR,
+  MOUNT_SWEEP_ENV,
+  ORPHANS_PATH,
+  ORPHAN_SCRIPT,
+  ORPHAN_SCRIPT_PATH,
   PLUGINS_PATH,
   RESTART_PATH,
+  RESTART_SCRIPT,
   apply,
+  describeSweep,
   installMarketRegistryOverride,
   layerLabel,
+  mountSweepDisabled,
   normalizePluginList,
+  parseSweepOutput,
   quoteArg,
   readInstalledPlugins,
   resolveProfile,
+  resolveTransportProfileDir,
   restoreCommand,
   statusLabel,
-  totalRestoreScript
+  sweepOnMount,
+  sweepTransportOrphans,
+  totalRestoreScript,
+  writeOrphanScript
 };

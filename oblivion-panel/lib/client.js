@@ -39,6 +39,7 @@ var import_react2 = require("react");
 var import_react = require("react");
 var import_jsx_runtime = require("react/jsx-runtime");
 var RESTART_PATH = "/obl-brand/restart";
+var ORPHANS_PATH = "/obl-brand/orphans";
 var BTN = {
   idle: "\u91CD\u542F DSH",
   confirming: "\u786E\u8BA4\u91CD\u542F",
@@ -46,10 +47,48 @@ var BTN = {
   done: "\u5DF2\u53D1\u51FA\u91CD\u542F",
   error: "\u91CD\u8BD5"
 };
+var SWEEP_BTN = {
+  idle: "\u6E05\u7406\u5B64\u513F\u8FDB\u7A0B",
+  confirming: "\u786E\u8BA4\u6E05\u7406",
+  sending: "\u6B63\u5728\u6E05\u7406\u2026",
+  done: "\u518D\u6E05\u7406\u4E00\u6B21",
+  error: "\u91CD\u8BD5"
+};
+async function readPayload(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+function describeRestartSweep(payload) {
+  const sweep = payload?.sweep;
+  if (sweep === void 0) return null;
+  if (!sweep.ok) {
+    return `DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF08\u91CD\u542F\u524D\u6E05\u626B\u672A\u6267\u884C\uFF1A${sweep.error ?? "\u672A\u77E5\u539F\u56E0"}\uFF09`;
+  }
+  const killed = sweep.report?.killed.length ?? 0;
+  return killed > 0 ? `DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF08\u91CD\u542F\u524D\u6E05\u6389 ${killed} \u4E2A\u5B64\u513F\u8FDB\u7A0B\uFF09` : "DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF0C\u672C\u9875\u4F1A\u65AD\u5F00\u3002";
+}
+function describeSweep(payload, fallback) {
+  if (typeof payload?.summary === "string" && payload.summary !== "") return payload.summary;
+  const report = payload?.report;
+  if (report === void 0) return fallback;
+  return report.killed.length === 0 ? `\u6CA1\u6709\u53D1\u73B0\u5B64\u513F\u8FDB\u7A0B\uFF08\u626B\u63CF ${report.scanned} \u4E2A\u8FDB\u7A0B\uFF09` : `\u5DF2\u6E05\u7406 ${report.killed.length} \u4E2A\u5B64\u513F\u8FDB\u7A0B\uFF08\u626B\u63CF ${report.scanned} \u4E2A\u8FDB\u7A0B\uFF0C\u547D\u4E2D ${report.matched} \u4E2A\u4F20\u8F93\u8FDB\u7A0B\uFF09`;
+}
+var BUTTON_STYLE = {
+  border: "1px solid rgba(127,127,127,0.35)",
+  borderRadius: 5,
+  background: "transparent",
+  cursor: "pointer",
+  padding: "2px 8px",
+  fontSize: 11
+};
 function RestartControl() {
   const [phase, setPhase] = (0, import_react.useState)("idle");
+  const [sweepPhase, setSweepPhase] = (0, import_react.useState)("idle");
   const [message, setMessage] = (0, import_react.useState)("");
-  const send = (0, import_react.useCallback)(async () => {
+  const restart = (0, import_react.useCallback)(async () => {
     setPhase("sending");
     setMessage("");
     try {
@@ -59,33 +98,55 @@ function RestartControl() {
         body: "{}",
         credentials: "same-origin"
       });
+      const payload = await readPayload(response);
       if (!response.ok) {
         setPhase("error");
         setMessage(
-          response.status === 404 ? "\u627E\u4E0D\u5230\u91CD\u542F\u8DEF\u7531 \u2014\u2014 @oblivion/brand \u672A\u88C5\u8F7D\uFF1F\u91CD\u542F\u673A\u5236\u7531\u5B83\u63D0\u4F9B\u3002" : "HTTP " + response.status
+          response.status === 404 ? "\u627E\u4E0D\u5230\u91CD\u542F\u8DEF\u7531 \u2014\u2014 @oblivion/brand \u672A\u88C5\u8F7D\uFF1F\u91CD\u542F\u673A\u5236\u7531\u5B83\u63D0\u4F9B\u3002" : `HTTP ${response.status}${payload?.error ? `\uFF1A${payload.error}` : ""}`
         );
         return;
       }
       setPhase("done");
-      setMessage("DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF0C\u672C\u9875\u4F1A\u65AD\u5F00\u3002");
+      setMessage(describeRestartSweep(payload) ?? "DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF0C\u672C\u9875\u4F1A\u65AD\u5F00\u3002");
     } catch (error) {
       setPhase("error");
       setMessage(error instanceof Error ? error.message : String(error));
     }
   }, []);
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 6 }, children: [
+  const sweep = (0, import_react.useCallback)(async () => {
+    setSweepPhase("sending");
+    setMessage("");
+    try {
+      const response = await fetch(ORPHANS_PATH, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+        credentials: "same-origin"
+      });
+      const payload = await readPayload(response);
+      if (!response.ok) {
+        setSweepPhase("error");
+        setMessage(
+          response.status === 404 ? "\u627E\u4E0D\u5230\u6E05\u626B\u8DEF\u7531 \u2014\u2014 @oblivion/brand \u672A\u88C5\u8F7D\uFF1F\u6E05\u626B\u7531\u5B83\u63D0\u4F9B\u3002" : payload?.error ?? `HTTP ${response.status}`
+        );
+        return;
+      }
+      setSweepPhase("idle");
+      setMessage(describeSweep(payload, "\u6E05\u7406\u5B8C\u6210\u3002"));
+    } catch (error) {
+      setSweepPhase("error");
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
       "button",
       {
         type: "button",
         style: {
-          border: "1px solid rgba(127,127,127,0.35)",
-          borderRadius: 5,
-          background: "transparent",
+          ...BUTTON_STYLE,
           color: phase === "error" ? "#d9534f" : "inherit",
-          cursor: phase === "sending" ? "default" : "pointer",
-          padding: "2px 8px",
-          fontSize: 11
+          cursor: phase === "sending" ? "default" : "pointer"
         },
         disabled: phase === "sending",
         onClick: () => {
@@ -94,9 +155,31 @@ function RestartControl() {
             setMessage("\u91CD\u542F\u4F1A\u5F3A\u5236\u7ED3\u675F\u5F53\u524D DSH \u8FDB\u7A0B\uFF1A\u6B63\u5728\u8DD1\u7684\u4F1A\u8BDD\u4E0E\u4EFB\u52A1\u4F1A\u4E2D\u65AD\u3002");
             return;
           }
-          void send();
+          void restart();
         },
         children: BTN[phase] ?? "\u91CD\u542F DSH"
+      }
+    ),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        style: {
+          ...BUTTON_STYLE,
+          color: sweepPhase === "error" ? "#d9534f" : "inherit",
+          cursor: sweepPhase === "sending" ? "default" : "pointer"
+        },
+        disabled: sweepPhase === "sending",
+        title: "\u7ED3\u675F web-login \u9057\u7559\u7684\u65E0\u5934 Edge \u4F20\u8F93\u8FDB\u7A0B\uFF08\u5B83\u4EEC\u5360\u7740 transport-profile \u76EE\u5F55\uFF0C\u4F1A\u8BA9\u8D26\u53F7\u6821\u9A8C\u5168\u90E8\u62A5\u9519\uFF09\u3002\u4E0D\u91CD\u542F DSH\u3002",
+        onClick: () => {
+          if (sweepPhase === "idle") {
+            setSweepPhase("confirming");
+            setMessage("\u53EA\u7ED3\u675F web-login \u9057\u7559\u7684\u4F20\u8F93\u8FDB\u7A0B\uFF0C\u4E0D\u91CD\u542F DSH\uFF1B\u6B63\u5728\u7528\u7684\u4F20\u8F93\u8FDB\u7A0B\u4E0D\u53D7\u5F71\u54CD\u3002");
+            return;
+          }
+          void sweep();
+        },
+        children: SWEEP_BTN[sweepPhase] ?? "\u6E05\u7406\u5B64\u513F\u8FDB\u7A0B"
       }
     ),
     message ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontSize: 11, opacity: 0.75 }, children: message }) : null

@@ -16,6 +16,11 @@
  *   10. 幂等：连跑两次不抛、值不变
  *   11. 交叉验证：真的 import 市场的 lib/regions.js，确认解析结果被改向 npmmirror，
  *      且 GitHub 代理**不受影响**。市场没装则跳过，不算失败。
+ *   12. 孤儿进程清扫的**判据面**（纯函数）：profile 目录推导、脚本正文（ASCII / 无 exit /
+ *      字段齐全）、脚本输出解析（含各类坏输入）、装载开关真值表。
+ *   13. 装载期清扫的两道门：开关关掉、传输目录不存在 —— 都不派生 PowerShell。
+ *      这一条刻意只能这么验：真跑清扫会在开发机上**真的杀进程**，自检不许有这种副作用。
+ *   14. 清扫路由真跑：POST 200（非 Windows 上 501），返回体带 `report` 形状。
  *
  * 第 11 条是这组里唯一「跨包」的断言，也是 registry 改动的实质：它证明的不是
  * 「我们写了个环境变量」，而是「市场读了它、并按它换了镜像」。
@@ -24,7 +29,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -170,6 +176,12 @@ function makeProfileFixture(root) {
 
 const mod = await import(pathToFileURL(join(ROOT, 'lib', 'index.js')).href);
 
+/**
+ * ⚠️ 装载时会真的去清扫孤儿进程（杀进程），自检不许有这种副作用 —— 先关掉。
+ * 开关本身在第 13 条里单独验。
+ */
+process.env[mod.MOUNT_SWEEP_ENV] = 'off';
+
 await check('产物存在且可 import', () => {
   const lib = join(ROOT, 'lib', 'index.js');
   assert.ok(existsSync(lib), 'lib/index.js 不存在，先运行 build');
@@ -179,6 +191,8 @@ await check('产物存在且可 import', () => {
 await check('导出形状符合本包约定', () => {
   assert.equal(mod.RESTART_PATH, '/obl-brand/restart');
   assert.equal(mod.PLUGINS_PATH, '/obl-brand/plugins');
+  assert.equal(mod.ORPHANS_PATH, '/obl-brand/orphans');
+  assert.equal(mod.MOUNT_SWEEP_ENV, 'OBLIVION_BRAND_ORPHAN_SWEEP');
   assert.equal(mod.MARKET_REGISTRY_ENV, ENV);
   assert.equal(mod.MARKET_REGISTRY_MIRROR, MIRROR);
   assert.equal(typeof mod.apply, 'function');
@@ -186,19 +200,25 @@ await check('导出形状符合本包约定', () => {
   assert.equal(typeof mod.normalizePluginList, 'function');
   assert.equal(typeof mod.readInstalledPlugins, 'function');
   assert.equal(typeof mod.resolveProfile, 'function');
-  return 'RESTART_PATH / PLUGINS_PATH / MARKET_* / 恢复命令 / 清单校验 / apply 齐备';
+  assert.equal(typeof mod.sweepTransportOrphans, 'function');
+  assert.equal(typeof mod.sweepOnMount, 'function');
+  assert.equal(typeof mod.parseSweepOutput, 'function');
+  assert.equal(typeof mod.resolveTransportProfileDir, 'function');
+  return 'RESTART_PATH / PLUGINS_PATH / ORPHANS_PATH / MARKET_* / 恢复命令 / 清单校验 / 清扫面 / apply 齐备';
 });
 
-await check('apply 挂载两条路由且都注入 webServer', async () => {
+await check('apply 挂载三条路由且都注入 webServer', async () => {
   const { ctx, reg } = makeCtx();
   await withEnv(undefined, () => mod.apply(ctx));
   assert.deepEqual(reg.injected, ['webServer'], 'inject 依赖应为 [webServer]');
-  assert.equal(reg.routes.length, 2, '应注册两条路由（重启 + 已装插件清单）');
+  assert.equal(reg.routes.length, 3, '应注册三条路由（重启 + 孤儿清扫 + 已装插件清单）');
   const restart = reg.routes.find((route) => route.path === mod.RESTART_PATH);
+  const orphans = reg.routes.find((route) => route.path === mod.ORPHANS_PATH);
   const plugins = reg.routes.find((route) => route.path === mod.PLUGINS_PATH);
   assert.ok(restart, '缺少重启路由');
+  assert.ok(orphans, '缺少孤儿进程清扫路由');
   assert.ok(plugins, '缺少已装插件清单路由');
-  for (const route of [restart, plugins]) {
+  for (const route of [restart, orphans, plugins]) {
     assert.equal(route.kind, 'exact');
     assert.equal(typeof route.handler, 'function');
   }
@@ -406,6 +426,187 @@ await check('交叉验证：市场真的按这个变量换了镜像（含 GitHub
     '目录源 dsh-plugin-catalog 也应一起改向（否则列表仍从旧镜像拉）',
   );
   return `${before} → ${after.npmRegistry}；GitHub 保持 ${after.githubProxy}`;
+});
+
+await check('孤儿清扫判据：目录推导 / 脚本正文 / 输出解析', () => {
+  // 目录推导必须与 web-login 同源（DSH_HOME 优先；空白视同未设）
+  assert.equal(
+    mod.resolveTransportProfileDir({ DSH_HOME: 'C:\\h' }, 'C:\\home'),
+    join('C:\\h', 'web-login', 'transport-profile'),
+  );
+  assert.equal(
+    mod.resolveTransportProfileDir({ DSH_HOME: '   ' }, 'C:\\home'),
+    join('C:\\home', '.dsh', 'web-login', 'transport-profile'),
+  );
+  assert.equal(
+    mod.resolveTransportProfileDir({}, 'C:\\home'),
+    join('C:\\home', '.dsh', 'web-login', 'transport-profile'),
+  );
+
+  const script = mod.ORPHAN_SCRIPT;
+  // 注释里出现英文 exit 是允许的；这里禁的是**语句** exit（见下）
+  const code = script
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+  // PS 5.1 对无 BOM 的 .ps1 按 ANSI 解码：正文里一旦有非 ASCII 就在解析期炸
+  assert.ok(/^[\x00-\x7F]*$/.test(script), '清扫脚本正文必须全 ASCII');
+  // exit 会把「用 & 调用它的」重启 helper 一起结束（同会话），现象是面板说已受理、应用不重启
+  assert.ok(!/\bexit\b/.test(code), '脚本语句里不得出现 exit');
+  // $PID 是 PS 只读自动变量，`foreach ($pid in ...)` 会直接抛错
+  assert.ok(!/\$pid\b/.test(script), '$pid 只读，不能当循环变量');
+  // -Property 是白名单：漏了 ExecutablePath，过滤器会把所有进程都跳过（实测 347/347 为空）
+  assert.match(script, /Get-CimInstance Win32_Process -Property[^\n]*ExecutablePath/);
+  assert.match(script, /ParentProcessId/);
+  assert.match(script, /ValidateSet\('orphans', 'all'\)/, '两种模式都要能选');
+
+  // 输出解析：外部进程的输出按不可信输入处理
+  assert.deepEqual(
+    mod.parseSweepOutput('noise\n{"ok":true,"mode":"orphans","scanned":347,"matched":8,"killed":[1,2],"failed":[]}'),
+    { mode: 'orphans', scanned: 347, matched: 8, killed: [1, 2], failed: [] },
+    '取最后一行、只看 JSON',
+  );
+  assert.equal(mod.parseSweepOutput(''), null);
+  assert.equal(mod.parseSweepOutput('not json'), null);
+  assert.equal(
+    mod.parseSweepOutput('{"ok":false,"mode":"orphans","scanned":1,"matched":0,"killed":[],"failed":[]}'),
+    null,
+    'ok=false 不算可用报告',
+  );
+  assert.equal(
+    mod.parseSweepOutput('{"ok":true,"mode":"all","scanned":1,"matched":0,"killed":["1"],"failed":[]}'),
+    null,
+    'PID 必须是整数',
+  );
+  assert.equal(
+    mod.parseSweepOutput('{"ok":true,"mode":"nope","scanned":1,"matched":0,"killed":[],"failed":[]}'),
+    null,
+    '未知模式拒绝',
+  );
+
+  assert.match(
+    mod.describeSweep({ mode: 'orphans', scanned: 10, matched: 0, killed: [], failed: [] }),
+    /无孤儿进程/,
+  );
+  assert.match(
+    mod.describeSweep({ mode: 'orphans', scanned: 10, matched: 3, killed: [1, 2], failed: [3] }),
+    /清理 2 个孤儿进程（扫描 10 个进程，命中 3 个传输进程，1 个结束失败）/,
+  );
+  return '目录推导 3 / 正文 6 项 / 解析 6 例 / 摘要 2 例';
+});
+
+await check('装载期清扫的两道门都不派生 PowerShell', async () => {
+  const gate = mkdtempSync(join(tmpdir(), 'obl-brand-sweep-gate-'));
+  const empty = mkdtempSync(join(tmpdir(), 'obl-brand-sweep-empty-'));
+  const scriptPath = mod.ORPHAN_SCRIPT_PATH;
+  try {
+    // ① 开关关掉：目录**存在**（最容易误伤的现场），但一个字都不动
+    mkdirSync(join(gate, '.dsh', 'web-login', 'transport-profile'), { recursive: true });
+    const offLogs = [];
+    mod.sweepOnMount(
+      { info: (message) => offLogs.push(String(message)), warn: (message) => offLogs.push('WARN ' + String(message)) },
+      { [mod.MOUNT_SWEEP_ENV]: 'off', DSH_HOME: join(gate, '.dsh') },
+      gate,
+    );
+
+    // ② 传输目录不存在（web-login 从没跑过）：静默返回
+    const quietLogs = [];
+    mod.sweepOnMount(
+      { info: (message) => quietLogs.push(String(message)), warn: (message) => quietLogs.push('WARN ' + String(message)) },
+      { DSH_HOME: join(empty, '.dsh') },
+      empty,
+    );
+
+    // 真派生了的话，一秒出头就会写出脚本 / 记日志 —— 等它一轮再断言
+    rmSync(scriptPath, { force: true });
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    assert.equal(offLogs.length, 1, '关闭时只应留一句说明');
+    assert.match(offLogs[0], /关闭/);
+    assert.deepEqual(quietLogs, [], '没有传输目录时不该记任何东西');
+    assert.ok(!existsSync(scriptPath), '两道门都不该派生 PowerShell（否则会写出清扫脚本）');
+    return '开关关闭 → 1 句说明；无目录 → 静默；均未派生';
+  } finally {
+    rmSync(gate, { recursive: true, force: true });
+    rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+await check('清扫路由真跑：405 / 外来 Origin 403 / POST 200（只杀孤儿）', async () => {
+  const { ctx, reg } = makeCtx();
+  await withEnv(undefined, () => mod.apply(ctx));
+  const route = reg.routes.find((item) => item.path === mod.ORPHANS_PATH);
+  assert.ok(route, '清扫路由未注册');
+
+  const wrongMethod = fakeResponse();
+  await route.handler({ method: 'GET', headers: {} }, wrongMethod.response);
+  assert.equal(wrongMethod.captured.status, 405);
+
+  const foreign = fakeResponse();
+  await route.handler({ method: 'POST', headers: { origin: 'https://evil.example' } }, foreign.response);
+  assert.equal(foreign.captured.status, 403, '会杀进程的接口不能对外来页面开放');
+
+  const ok = fakeResponse();
+  await route.handler({ method: 'POST', headers: {} }, ok.response);
+  if (process.platform !== 'win32') {
+    assert.equal(ok.captured.status, 501, '非 Windows 应明确回 501');
+    return '非 Windows → 501';
+  }
+  assert.equal(ok.captured.status, 200, ok.captured.body);
+  const payload = JSON.parse(ok.captured.body);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.report.mode, 'orphans');
+  assert.ok(Array.isArray(payload.report.killed), '报告要带 killed 列表');
+  assert.equal(typeof payload.summary, 'string');
+  return payload.summary;
+});
+
+await check('重启 helper 正文：ASCII / 参数齐全 / 清扫排在 dry-run 之后 / 5.1 真解析', async () => {
+  const script = mod.RESTART_SCRIPT;
+  const helperCode = script
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+  // 与孤儿脚本同一条铁律：5.1 对无 BOM 的 .ps1 按 ANSI 解码，正文有中文就解析失败
+  assert.ok(/^[\x00-\x7F]*$/.test(script), 'helper 正文必须全 ASCII');
+  assert.ok(!/\$pid\b/.test(helperCode), '$pid 是只读自动变量，赋值会中断 helper');
+  for (const param of ['$HostPid', '$LogPath', '$Version', '$SweepScript', '$ProfileDir', '$DryRun']) {
+    assert.ok(script.includes(param), '参数块缺 ' + param);
+  }
+  assert.match(script, /& \$SweepScript -Mode all/, 'helper 必须用 all 模式（当前宿主的传输进程马上也会变成孤儿）');
+
+  const dryRunAt = script.indexOf('if ($DryRun)');
+  const exitAt = script.indexOf('exit 0', dryRunAt);
+  const sweepAt = script.indexOf('& $SweepScript');
+  const stopAt = script.indexOf('Stop-Process -Id $target');
+  assert.ok(dryRunAt !== -1 && sweepAt !== -1 && stopAt !== -1, '关键分支必须都在');
+  assert.ok(exitAt > dryRunAt && exitAt < sweepAt, 'dry-run 必须能提前退出，且早于清扫');
+  assert.ok(sweepAt < stopAt, '顺序必须是 dry-run → 清扫 → 杀进程');
+
+  if (process.platform !== 'win32') return '非 Windows 跳过真解析（正文断言 6 项）';
+
+  // 真解析：写出来交给 5.1 跑一次。刻意用**不可能通过身份判据**的 HostPid（系统进程 4），
+  // 于是它必然走 refuse 分支 —— 这证明整份脚本能被 5.1 解析并执行到身份判据那一步，
+  // 且不会碰任何进程。真实 dry-run（拿真宿主 pid、只写日志不停进程）留给人工一次。
+  const dir = mkdtempSync(join(tmpdir(), 'obl-brand-helper-parse-'));
+  const file = join(dir, 'obl-brand-restart.ps1');
+  const log = join(dir, 'restart.log');
+  try {
+    writeFileSync(file, '\uFEFF' + script, 'utf8');
+    const shell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const run = spawnSync(
+      shell,
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file, '-HostPid', '4', '-LogPath', log, '-SweepScript', '', '-ProfileDir', '', '-DryRun'],
+      { encoding: 'utf8', timeout: 60_000 },
+    );
+    const stderr = String(run.stderr ?? '');
+    assert.ok(!/ParserError|无法识别|Unexpected token/i.test(stderr), '不得有解析错误：' + stderr.slice(0, 300));
+    const text = existsSync(log) ? readFileSync(log, 'utf8') : '';
+    assert.match(text, /refused|target confirmed/, 'helper 应至少走到身份判据（日志：' + text.slice(0, 200) + '）');
+    return '正文断言 8 项 + 5.1 真解析（exit ' + String(run.status) + '，按预期拒绝）';
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 process.stdout.write('\n@oblivion/brand selfcheck\n\n');

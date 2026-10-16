@@ -319,7 +319,7 @@ function createEmbeddedPanel(getProvider, label) {
 }
 
 // src/client/version.ts
-var PLUGIN_VERSION = true ? "0.1.3" : "dev";
+var PLUGIN_VERSION = true ? "0.1.4" : "dev";
 
 // src/paths.ts
 var RESTART_PATH = "/obl-brand/restart";

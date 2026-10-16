@@ -32,7 +32,16 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLUGINS_PATH, RESTART_PATH } from './paths.js';
+import {
+  MOUNT_SWEEP_ENV,
+  ORPHAN_SCRIPT_PATH,
+  describeSweep,
+  mountSweepDisabled,
+  resolveTransportProfileDir,
+  sweepTransportOrphans,
+  writeOrphanScript,
+} from './orphans.js';
+import { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH } from './paths.js';
 import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
 
 /** Cordis 插件入口（空 apply 的占位语义保留在下方 `apply`）。 */
@@ -45,10 +54,28 @@ import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
  * ESM，Node 里 import 不了）。宿主半边与浏览器半边共用 `paths.ts` / `plugin-list.ts`，
  * 所以这里导出的是同一份实现，不是副本。
  */
-export { PLUGINS_PATH, RESTART_PATH };
+export { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH };
 export { layerLabel, normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
 export type { InstalledPlugin, PluginLayer, PluginListPayload } from './plugin-list.js';
 export { readInstalledPlugins, resolveProfile };
+/**
+ * 孤儿进程清扫的逻辑面（判据、脚本正文、输出解析、开关）。
+ *
+ * 导出给 `scripts/selfcheck.mjs`：这一块**不能**靠真跑 PowerShell 来验
+ * （那会在开发机上真的杀进程），所以把可判定性做在纯函数上。
+ */
+export {
+  MOUNT_SWEEP_ENV,
+  ORPHAN_SCRIPT,
+  ORPHAN_SCRIPT_PATH,
+  describeSweep,
+  mountSweepDisabled,
+  parseSweepOutput,
+  resolveTransportProfileDir,
+  sweepTransportOrphans,
+  writeOrphanScript,
+} from './orphans.js';
+export type { SweepMode, SweepOutcome, SweepReport } from './orphans.js';
 
 /** helper 脚本与日志落在临时目录。 */
 const SCRIPT_PATH = join(tmpdir(), 'obl-brand-restart.ps1');
@@ -75,12 +102,16 @@ export const MARKET_REGISTRY_MIRROR = 'https://registry.npmmirror.com';
  * 参数：
  *   - `HostPid`  DSH 宿主进程 PID（插件所在进程），用于沿父链上溯。
  *   - `LogPath`  日志文件，便于失败后排查。
+ *   - `SweepScript` 孤儿清扫脚本落点（`obl-brand-orphans.ps1`；空串表示不扫）。
+ *   - `ProfileDir`  web-login 的传输 profile 目录，转交给清扫脚本做判据。
  */
-const RESTART_SCRIPT = String.raw`
+export const RESTART_SCRIPT = String.raw`
 param(
   [Parameter(Mandatory = $true)][int]$HostPid,
   [Parameter(Mandatory = $true)][string]$LogPath,
   [string]$Version = 'unknown',
+  [string]$SweepScript = '',
+  [string]$ProfileDir = '',
   [switch]$DryRun
 )
 $ErrorActionPreference = 'Continue'
@@ -188,9 +219,40 @@ try {
 
   # Verify-only mode: report the target and stop. Used to prove identification
   # without ending the running application.
+  #
+  # This gate comes BEFORE the sweep on purpose: a dry run must not destroy
+  # anything either -- the sweep kills processes, it is not a read-only step.
   if ($DryRun) {
-    Write-Log 'dry run: target identified, batch written, nothing stopped or armed'
+    Write-Log 'dry run: target identified, batch written, sweep skipped, nothing stopped or armed'
     exit 0
+  }
+
+  # -------------------------------------------------------------------- orphan cleanup
+  # Sweep EVERY web-login transport process before the app goes down.
+  #
+  # Not the same rule as the on-demand sweep (panel button): the app is about to
+  # be hard-killed (Stop-Process -Force further down), so the transport processes
+  # spawned by the *current* host are healthy this second but are guaranteed to
+  # become orphans the moment that lands. Selecting only already-orphaned ones
+  # here would leave exactly those behind -- which is the bug this block exists
+  # for.
+  #
+  # The heuristic itself lives in the shared script (obl-brand-orphans.ps1,
+  # written by the plugin next to this one) so there is exactly ONE
+  # implementation of it. That script must not call exit: it runs inside THIS
+  # session, and exit would end the helper before the relauncher is armed.
+  if ($SweepScript -ne '' -and $ProfileDir -ne '' -and (Test-Path -LiteralPath $SweepScript -PathType Leaf)) {
+    try {
+      & $SweepScript -Mode all -ProfileDir $ProfileDir -LogPath $LogPath | Out-Null
+      Write-Log 'transport sweep: done (mode=all)'
+    } catch {
+      Write-Log ("transport sweep failed: {0}" -f $_.Exception.Message)
+    }
+    # Wait a beat for the OS to release the profile directory before the
+    # relauncher brings the app back up.
+    Start-Sleep -Milliseconds 500
+  } else {
+    Write-Log 'transport sweep: script missing, skipped'
   }
 
   # Arm the relauncher BEFORE killing anything.
@@ -364,6 +426,14 @@ function spawnRestartHelper(): string | null {
     return null;
   }
 
+  // 清扫脚本与判据目录一起交给 helper：helper 不做启发式，只负责在
+  // 「即将硬杀宿主」这个时机调用它（`-Mode all`）。
+  const sweepScript = writeOrphanScript();
+  const profileDir = resolveTransportProfileDir();
+  if (sweepScript === null) {
+    appendLog('orphan sweep script write failed; helper will skip the sweep');
+  }
+
   const shell = resolvePowerShell();
   if (shell === null) {
     appendLog('no PowerShell on this platform');
@@ -389,6 +459,10 @@ function spawnRestartHelper(): string | null {
         LOG_PATH,
         '-Version',
         pluginVersion(),
+        '-SweepScript',
+        sweepScript ?? '',
+        '-ProfileDir',
+        profileDir,
       ],
       // ⚠️ `detached` 必须是 **false**，这是实测隔离出来的结论：
       //
@@ -433,7 +507,7 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
     const dispose = server.register({
       kind: 'exact',
       path: RESTART_PATH,
-      handler: (request, response) => {
+      handler: async (request, response) => {
         if (request.method !== 'POST') {
           response.writeHead(405, { allow: 'POST' });
           response.end();
@@ -445,6 +519,19 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
           return;
         }
 
+        // 先做一次**只杀孤儿**的清扫并把结果回给浏览器：这一步不影响正在跑的传输进程，
+        // 因此可以安全地放在 helper 之前；真正的「全杀」在 helper 里（见 RESTART_SCRIPT）。
+        const shell = resolvePowerShell();
+        const sweep =
+          shell === null
+            ? ({ ok: false, error: 'no PowerShell on this platform' } as const)
+            : await sweepTransportOrphans({ shell, mode: 'orphans' });
+        if (sweep.ok) {
+          appendLog(`pre-restart sweep: ${describeSweep(sweep.report)}`);
+        } else {
+          appendLog(`pre-restart sweep failed: ${sweep.error}`);
+        }
+
         const logPath = spawnRestartHelper();
         if (logPath === null) {
           response.writeHead(500, { 'content-type': 'application/json' });
@@ -453,12 +540,70 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
         }
 
         response.writeHead(202, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ ok: true, logPath }));
+        response.end(JSON.stringify({ ok: true, logPath, sweep }));
       },
     });
 
     ctx.effect?.(() => dispose, 'oblivion-brand: restart route');
     ctx.logger?.('@oblivion/brand').info(`重启路由已挂载：POST ${RESTART_PATH}`);
+  });
+}
+
+/**
+ * 注册孤儿进程清扫路由（POST）。
+ *
+ * 与重启路由分开的理由：重启把会话打断，而这个动作只想解开被占住的传输 profile 目录。
+ * 现场「面板上三个账号全红」时用户要的是后者。
+ *
+ * **只跑 `orphans` 模式**：`all` 会连当前会话健康的传输进程一起杀，那会让网页版
+ * 探活在会话中途突然失败 —— 这条路由永远不该造成那种效果。
+ */
+function installOrphanRoute(ctx: HostCtx, warn: (message: string) => void): void {
+  ctx.inject?.(['webServer'], (scope) => {
+    const server = scope.webServer;
+    if (server === undefined || typeof server.register !== 'function') {
+      warn('webServer 不可用，孤儿进程清扫路由未挂载');
+      return;
+    }
+
+    const dispose = server.register({
+      kind: 'exact',
+      path: ORPHANS_PATH,
+      handler: async (request, response) => {
+        const json = (status: number, body: unknown, extra?: Record<string, string>): void => {
+          response.writeHead(status, { 'content-type': 'application/json', ...extra });
+          response.end(JSON.stringify(body));
+        };
+
+        if (request.method !== 'POST') {
+          json(405, { ok: false, error: 'method not allowed' }, { allow: 'POST' });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: 'untrusted origin' });
+          return;
+        }
+
+        const shell = resolvePowerShell();
+        if (shell === null) {
+          json(501, { ok: false, error: '本机没有 PowerShell，无法清扫' });
+          return;
+        }
+
+        const outcome = await sweepTransportOrphans({ shell, mode: 'orphans' });
+        if (!outcome.ok) {
+          appendLog(`orphan sweep failed: ${outcome.error}`);
+          json(500, { ok: false, error: outcome.error });
+          return;
+        }
+
+        appendLog(`orphan sweep: ${describeSweep(outcome.report)}`);
+        json(200, { ok: true, report: outcome.report, summary: describeSweep(outcome.report) });
+      },
+    });
+
+    ctx.effect?.(() => dispose, 'oblivion-brand: orphans route');
+    ctx.logger?.('@oblivion/brand').info(`孤儿进程清扫路由已挂载：POST ${ORPHANS_PATH}`);
   });
 }
 
@@ -564,6 +709,50 @@ export function installMarketRegistryOverride(ctx: HostCtx): void {
   logger?.info(`插件市场 registry 已指向 ${MARKET_REGISTRY_MIRROR}`);
 }
 
+/** 本插件用到的最小日志面。 */
+interface Logger {
+  info(message: string): void;
+  warn(message: string): void;
+}
+
+/**
+ * 装载时清扫一次 web-login 遗留的孤儿传输进程（非阻塞）。
+ *
+ * 这是「以后不再出现同样问题」的那一条：重启 helper 里的清扫只在**走本插件按钮**
+ * 时执行，而现场踩到的路径还有崩溃、任务管理器结束进程、安装器升级 —— 那些都不会
+ * 经过 helper。装载是**所有**路径都会经过的那一个时刻。
+ *
+ * 三个前置条件都不满足就直接返回、不派生 PowerShell：
+ *   1. 非 Windows；
+ *   2. `OBLIVION_BRAND_ORPHAN_SWEEP` 被设成关闭值；
+ *   3. 传输 profile 目录不存在（web-login 从没跑过，没有可清扫的东西）。
+ *
+ * 用 `orphans` 模式：只杀父进程已死的，因此即使当前会话的传输进程已经起来了也不会误伤。
+ */
+export function sweepOnMount(
+  logger?: Logger,
+  env: NodeJS.ProcessEnv = process.env,
+  homeDir: string = homedir(),
+): void {
+  if (process.platform !== 'win32') return;
+  if (mountSweepDisabled(env)) {
+    logger?.info(`${MOUNT_SWEEP_ENV} 已指定为关闭，装载时不清理孤儿进程`);
+    return;
+  }
+  const profileDir = resolveTransportProfileDir(env, homeDir);
+  if (!existsSync(profileDir)) return;
+  const shell = resolvePowerShell();
+  if (shell === null) return;
+
+  void sweepTransportOrphans({ shell, mode: 'orphans', env, homeDir }).then((outcome) => {
+    if (!outcome.ok) {
+      logger?.warn(`装载时孤儿进程清扫失败：${outcome.error}`);
+      return;
+    }
+    logger?.info(`装载时孤儿进程清扫：${describeSweep(outcome.report)}`);
+  });
+}
+
 /** Cordis 插件入口。 */
 export function apply(ctx: HostCtx): void {
   const logger = ctx.logger?.('@oblivion/brand');
@@ -572,6 +761,9 @@ export function apply(ctx: HostCtx): void {
   };
   // 先于重启路由：只写一个环境变量，越早越好（市场第一次发请求前生效）。
   installMarketRegistryOverride(ctx);
+  // 装载即清扫一次：覆盖不经过本插件按钮的那些重启路径（崩溃 / 任务管理器 / 升级）。
+  sweepOnMount(logger);
   installRestartRoute(ctx, warn);
+  installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
 }

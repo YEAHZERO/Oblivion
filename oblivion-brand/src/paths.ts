@@ -11,3 +11,11 @@ export const RESTART_PATH = '/obl-brand/restart';
 
 /** 个人已安装插件清单（GET，只读；供设置面板列出并复制恢复命令）。 */
 export const PLUGINS_PATH = '/obl-brand/plugins';
+
+/**
+ * 清理 web-login 遗留的孤儿 Chromium 进程（POST，**不重启**）。
+ *
+ * 与重启路由分开的理由：重启会把会话打断，而这个动作只想把被占住的传输 profile
+ * 目录解开 —— 现场「三个账号全红」时，用户要的是后者。
+ */
+export const ORPHANS_PATH = '/obl-brand/orphans';

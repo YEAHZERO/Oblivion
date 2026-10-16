@@ -223,6 +223,17 @@ await check('客户端产物是 DSH 模块格式（不是 ESM）', async () => {
   assert.ok(code.includes('window.__ModuleLoader__.load'));
   assert.ok(code.includes('"@oblivion/panel"'));
   assert.ok(code.includes('react/jsx-runtime'), 'React 必须留作 external（由宿主模块表提供）');
+  // 两个宿主动作的路由都要真的进产物：写错路径、忘了接线都会在这里露出来
+  assert.ok(code.includes('/obl-brand/restart'), '重启按钮必须指向 brand 的重启路由');
+  assert.ok(code.includes('/obl-brand/orphans'), '「清理孤儿进程」按钮必须指向 brand 的清扫路由');
+  // 中文会被构建器转成 \uXXXX（大写十六进制），所以先把产物里的转义统一成小写再做字面比较
+  // —— 注意**不能**用 `new RegExp('\\u6e05')`：正则会把 `\uXXXX` 解释成那个字符本身，永远找不到。
+  // 只断言路径的话，常量还在、按钮被删掉也能通过，所以这里钉的是按钮文案。
+  const normalized = code.replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) => '\\u' + hex.toLowerCase());
+  const escaped = (text) =>
+    [...text].map((ch) => '\\u' + ch.codePointAt(0).toString(16).padStart(4, '0')).join('');
+  assert.ok(normalized.includes(escaped('清理孤儿进程')), '「清理孤儿进程」按钮文案必须进产物');
+  assert.ok(normalized.includes(escaped('没有发现孤儿进程')), '「没有发现」文案必须进产物');
   return code.length + ' B';
 });
 

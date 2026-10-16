@@ -76,6 +76,8 @@ protocolVersion / browser / deviceInfo / keyboard / shortcuts / updates
 - **强制结束**：`Stop-Process -Force`，不弹 DSH 自身的退出确认，正在运行的会话与任务会被中断。
 - 脚本与日志在临时目录：`%TEMP%\obl-brand-restart.ps1` / `obl-brand-restart.log`。失败时先看日志。
 - 路由 `POST /obl-brand/restart` 校验 `Origin` 必须是本机回环，挡掉跨站页面发起的重启。
+- 重启前会先清掉 web-login 遗留的无头 Edge 传输进程（见「孤儿进程清扫」一节）—— 它们本来会在这次硬杀之后变成孤儿。
+- 另有 `POST /obl-brand/orphans`：**不重启**，只做那一次清扫（面板「清理孤儿进程」按钮用它）。
 
 ### ⚠️ 三个实测踩出来的坑
 
@@ -109,6 +111,46 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\obl-brand-restart
 ```
 
 日志会打印完整祖先链与最终锁定的 PID。
+
+`-DryRun` 也**跳过清扫** —— dry run 的语义是「只识别不动作」，而清扫会杀进程。为此清扫排在 dry-run 分支之后。
+
+## 孤儿进程清扫（web-login 遗留的无头 Edge）
+
+### 现场
+
+`dsh-deepseek-web-login`（第三方，`cv-superding`）用一个独立 profile 目录跑无头 Edge 做传输进程：`<DSH_HOME>/web-login/transport-profile`。它每次启动传输前先 `rmSync(PROFILE_DIR, { recursive, force })`，而它注册的关停动作（关 CDP + `child.kill()`）**只有优雅退出才跑得到**。
+
+于是硬杀（本插件的重启按钮、任务管理器结束进程、崩溃）之后，那些 msedge 全部活了下来 —— Windows **不会**在父进程死亡时连带杀死子进程。它们继续持有 profile 目录里的文件句柄，下一次探活 `rmSync` 抛 EPERM，被 web-login 写进每个账号的 `lastCheckError`。面板上的表现是「几个账号全部校验失败」，但账号本身没有任何问题。
+
+我们改不了第三方插件的拉起方式（升级会覆盖），所以清扫只能在外面做。
+
+### 三个时机（缺一不可）
+
+| 时机 | 模式 | 为什么必须在这里 |
+| --- | --- | --- |
+| 装载时（`apply`） | `orphans` | 覆盖**不经过本插件按钮**的重启：崩溃、任务管理器、安装器升级。这是「以后不再复发」的那一条 |
+| `POST /obl-brand/restart` | `orphans` | 让面板能立刻显示这次清掉了几个，且不影响正在跑的传输进程 |
+| 重启 helper 内 | `all` | 补刀。DSH 马上要被硬杀，**当前**宿主拉起的传输进程此刻还健康，但硬杀之后必然变成孤儿 —— 所以这里必须全杀 |
+
+清扫脚本落在 `%TEMP%\obl-brand-orphans.ps1`，由 Node 半边写出、helper 用 `& $SweepScript -Mode all` 调用 —— 判据只有一份实现。
+
+### 判据（为什么不会误杀你自己的 Edge）
+
+- **只认命令行里出现 transport profile 目录**的 msedge。那个目录在用户目录下（`%USERPROFILE%\.dsh\...`），正常使用的 Edge 命令行里不会出现。
+- `orphans` 模式的**种子**只取父进程已死的；两种模式共用的收尾规则是「父进程在待杀集合里的一起收进来」（msedge 的子进程挂在浏览器进程下，不在 DSH 下）。杀父不杀子，就是在亲手制造这个脚本要清除的那种孤儿。
+- 全部**失败开放**：查询抛错、脚本缺失、超时都只是不清理，绝不阻断重启或装载。
+
+### 运营者开关：`OBLIVION_BRAND_ORPHAN_SWEEP`
+
+设成 `off` / `0` / `false` / `no` 时，**装载期**的清扫一个进程都不动（重启路径不受影响 —— 那一条是重启正确性的一部分）。这是本插件最越界的动作，所以留一个开关，与「品牌接管可完全关闭」同一套理念。
+
+### ⚠️ 三个实测踩出来的坑（都在 `src/orphans.ts` 里钉着）
+
+1. **脚本里不许写 `exit`。** 它会被 helper 用 `& $SweepScript` 在**同一个会话**里调用，而 `exit` 结束的是整个会话 —— helper 会在「准备重启」的中途直接退出。现象：面板说「已受理」，应用却一直不重启。
+2. **`Get-CimInstance -Property` 是白名单。** 没列进 `-Property` 的字段取回来是 `$null`：只写 `ProcessId, CommandLine` 时，实测 347 个进程的 `ExecutablePath` **全是空**，于是过滤器把所有进程都 `continue` 掉，清扫静默变成空操作。
+3. **`$PID` 是只读自动变量。** `foreach ($pid in ...)` 直接抛 `VariableNotWritable`；若它出现在 helper 的 `try` 里，会被外层 catch 捕获 → 记一行 `failed:` → `exit 1` → 永远走不到「拉起应用」那一步。
+
+另外：**杀父进程会带走子进程**，所以「已经不在了」必须算清理成功而不是失败，否则报告里会出现一堆假失败。
 
 设置存在浏览器 `localStorage`（键 `oblivion-brand:settings:v1`）。0.1.0 的裸字符串键 `oblivion-brand:name` 会在首次读取时自动迁移。
 
