@@ -116,6 +116,35 @@ corepack pnpm key-search -Query '关键词' -Provider all -N 5
 
 退出码 `0` 有结果 / `1` 引擎失败或零结果 / `2` 用法错误。两个坑别踩：5.1 的 `-File` **不能绑定名为 `-Engine` 的参数**（exit `-1`、零输出），所以参数叫 `-Provider`；`opencode` 引擎在 5.1 下要转义 JSON 里的引号（脚本内已按版本处理）。
 
+### 平台登录态采集：`tools/dsh-browser-login.mjs`
+
+`dsh-web-search-pro` 的平台搜索（知乎 / 微博）要**浏览器登录态**。这个脚本用 `dsh-browser` 自带的 Playwright + 本机 Edge 打开登录页，**你自己**扫码/输密码；脚本每 2 秒轮询会话 cookie，一出现就把 `storageState`（cookies + localStorage）原子写到输出路径并关窗。它**不接触账号密码**，只搬运浏览器已经拿到的 cookie：
+
+```powershell
+corepack pnpm dsh-browser-login zhihu                      # 默认 10 分钟等待、输出到 $DSH_HOME/data/dsh-browser/auth/zhihu.json
+corepack pnpm dsh-browser-login weibo --timeout 15
+corepack pnpm dsh-browser-login zhihu --out D:/secrets/zhihu.json
+```
+
+也可以直接调运行时 node（PATH 上没有 `node` 时）：
+
+```powershell
+& "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe" tools\dsh-browser-login.mjs zhihu
+```
+
+拿到 JSON 之后写两处 profile 补丁：`dsh-browser` 的 `authProfiles.<平台>.storageStatePath` 指向它（`allowedDomains` 用该平台的域），`dsh-web-search-pro` 的 `browserBindings.<平台>.authProfile` 绑定同名 profile —— 脚本结束时会把这句提示连同 cookie 条数一起打出来。
+
+| 选项 | 含义 |
+| --- | --- |
+| `--timeout <分钟>` | 等登录的上限，默认 10 |
+| `--channel <名字>` | Playwright 通道，默认 `msedge`（与 `dsh-browser` 的 `channel` 保持一致） |
+| `--edge <exe>` | 改用显式可执行文件（等价 `dsh-browser` 的 `executablePath`） |
+| `--out <文件>` | 输出路径，默认 `$DSH_HOME/data/dsh-browser/auth/<平台>.json`（`DSH_HOME` 缺省 `~/.dsh`） |
+| `--playwright <目录>` | playwright 包目录，默认 `<profile>/node_modules/playwright` |
+| `--headless` | 无头；**无法人工登录**，只用于确认内核找得对 |
+
+退出码：`0` 已保存 · `1` 用法/平台名/内核或 playwright 目录有问题 · `2` 超时未见登录 cookie。
+
 ### 向运行中的 DSH 会话发一条消息：`POST /obl-brand/session/message`
 
 `@oblivion/brand` **v0.1.6** 起（v0.1.5 的这条路由在挂载期就被 Cordis 守卫炸掉了 —— 见已知限制 6），

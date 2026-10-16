@@ -12,6 +12,22 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — 工具链：`tools/dsh-browser-login.mjs` 接入（`corepack pnpm dsh-browser-login <平台>`）
+
+`dsh-web-search-pro` 的平台搜索（知乎 / 微博）要**浏览器登录态**，采集脚本之前只躺在工作区里、没有入口，
+每次都得手写一长串 `node tools/… --channel msedge --out …`。现在它与既有的 `key-search` 同一档：
+
+- `package.json` 加脚本别名 `dsh-browser-login`（`node tools/dsh-browser-login.mjs`）——**参数直接追加，
+  不需要 `--`**：`corepack pnpm dsh-browser-login zhihu --timeout 15`。实测（用 `--playwright C:/nope` 探针）
+  参数确实透传到脚本、退出码 `1`，与直呼 `node tools\dsh-browser-login.mjs zhihu --playwright C:/nope` 同形；
+- `WORKSPACE.md`「常用命令」新增一节：输出路径（`$DSH_HOME/data/dsh-browser/auth/<平台>.json`）、五个选项、
+  三个退出码（`0` 已保存 / `1` 参数或内核错 / `2` 超时未见登录 cookie）、以及拿到 JSON 后要写进哪两处
+  profile 补丁（`dsh-browser.authProfiles.<平台>.storageStatePath` 与
+  `dsh-web-search-pro.browserBindings.<平台>.authProfile`），脚本收尾时也会把这句提示连同 cookie 条数打出来。
+
+脚本本身**不接触账号密码**：它开本机 Edge 让你自己登录，只每 2 秒轮询会话 cookie，一出现就把 `storageState`
+（cookies + localStorage）原子落盘并关窗。
+
 ## [未发布] — `@oblivion/brand` v0.1.6 + v0.1.5 + v0.1.4 + `@oblivion/panel` v0.0.15：孤儿进程清扫（web-login 遗留的无头 Edge）+ 面板「清理孤儿进程」按钮 + 向指定会话注入一条用户消息
 
 起因是现场：面板上几个账号**全部校验失败**，而账号本身没有问题。根因不在本仓库 —— 第三方
