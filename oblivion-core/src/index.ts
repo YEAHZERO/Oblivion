@@ -21,6 +21,9 @@ import { registerFeedback } from './feedback/index.js';
 import { registerGraph } from './graph/index.js';
 import { registerDigest } from './digest/index.js';
 import { registerKnowledge } from './knowledge/index.js';
+import { createMcpEndpoint, publishMcp } from './mcp/index.js';
+import { createRetitleService } from './knowledge/retitle.js';
+import { createWikiService } from './knowledge/wiki.js';
 import { registerPerspective } from './perspective/index.js';
 import { OBLIVION_SYSTEM_PROMPT } from './prompt.js';
 import { attachAgentFromPayload, readRelatedHint, setAgentInstaller } from './prompt-inject.js';
@@ -41,6 +44,21 @@ export const name = '@oblivion/core';
  * 官方样例 `context/file-reference-local` 的 `static inject = ['agents']` 正是这个原因。
  */
 export const inject = ['tools', 'systemPrompt', 'agents'];
+
+/**
+ * 对外提供的服务名。
+ *
+ * 认知层的六个模块原本只在 `apply` 的闭包里传递（`knowledge` 直接传给
+ * `registerQaLoop` / `registerTools`）。这对插件自身够了，但**外部消费者**
+ * （HTTP 桥接、侧栏面板、未来的其他宿主）拿不到它们——DSH 的 ctx 上
+ * 没有 `oblivion` 这个名字，`ctx.get('oblivion')` 会是 undefined。
+ *
+ * 所以这里把已有引用**再暴露一份**成名为 `oblivion` 的服务：
+ *   - 不新增代理、不包装、不改任何既有调用路径（零性能影响）
+ *   - 桥接层 `inject: ['oblivion']` 后 `ctx.get('oblivion')` 拿到同一批对象
+ *   - 与 `inject` 对称：本包 inject 别人的服务，也 provide 自己的
+ */
+export const provides = ['oblivion'];
 
 export const VERSION = __OBLIVION_CORE_VERSION__;
 
@@ -97,6 +115,20 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
     ? registerPerspective(ctx, config, { profile })
     : null;
   const digest = registerDigest(ctx, config, { knowledge, graph });
+  // 笔记改名 / 打标签（`oblivion_retitle`）：模型起名，插件落盘 + 同步条目 + 重建索引。
+  const retitle = createRetitleService({
+    mdRoot: config.mdRoot,
+    dataRoot: config.dataRoot,
+    classify: config.mdClassify,
+    host: knowledge,
+  });
+  // 主题页（`oblivion_wiki`）：模型判「哪些笔记是同一个主题」并写概述，插件落盘 + 回链 + 重建索引。
+  const wiki = createWikiService({
+    mdRoot: config.mdRoot,
+    dataRoot: config.dataRoot,
+    classify: config.mdClassify,
+    host: knowledge,
+  });
 
   registerQaLoop(ctx, config, {
     knowledge,
@@ -198,6 +230,8 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
           graph,
           stats,
           digest,
+          retitle,
+          wiki,
           perspectiveStats: () => perspective?.stats() ?? null,
         });
       });
@@ -222,7 +256,7 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
   // ③ 宿主回调载荷（section / 工具 exec）——由 prompt-inject 转交
   setAgentInstaller(installForAgent);
 
-  registerTools(toolsCtx, { knowledge, profile, feedback, graph, stats, digest, perspectiveStats: () => perspective?.stats() ?? null });
+  registerTools(toolsCtx, { knowledge, profile, feedback, graph, stats, digest, retitle, wiki, perspectiveStats: () => perspective?.stats() ?? null });
 
   // 首次装载索引与目录；失败只记日志，不阻塞装载（此刻缓存与磁盘都可能还不存在）。
   void knowledge.init().catch((error: unknown) => {
@@ -237,7 +271,58 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
     })
     .catch(() => undefined);
 
+  /**
+   * **对外门面**（`provides = ['oblivion']` 的实际内容）。
+   *
+   * 只暴露外部消费者真正需要的能力，不是把内部实现全抛出去：
+   *   - `knowledge` / `profile` / `graph` / `feedback` / `perspective` / `digest`
+   *     是六个模块的服务对象（方法齐全，桥接层据此把 MCP 工具映射过来）
+   *   - `stats.status()` 是观测面快照
+   *   - `config` 让消费者知道自己面对的参数口径
+   *   - `version` 便于桥接层在响应里标注来源版本
+   *
+   * 刻意**不提供** `registerQaLoop` 之类的注册函数：门面是「读/写知识」的能力面，
+   * 不是「再装一遍插件」的装配面。
+   */
+  const facade = {
+    version: VERSION,
+    config,
+    knowledge,
+    profile,
+    graph,
+    feedback,
+    perspective,
+    digest,
+    stats,
+  } as const;
+
+  /**
+   * 注册到 Cordis 服务表。
+   *
+   * 用 `host`（根上下文优先）而非 `ctx`：与事件监听、提示词段落、工具注册保持一致——
+   * 本插件挂在 profile 补丁的插入行下，位置不在任何 agent 链上；服务若只注册到带作用域的
+   * ctx，别的插件同样取不到（实测 `agents` 那次的教训）。`fallback` 保证无 `root` 的宿主行为不变。
+   */
+  try {
+    (host as { provide?: (n: string, v: unknown) => unknown }).provide?.('oblivion', facade);
+  } catch (error: unknown) {
+    ctx.logger?.warn?.(config.logPrefix + ' provide(oblivion) failed: %o', error);
+  }
+
+  /**
+   * **MCP 端点**（C 方案：MCP 是 core 的内部模块，传输由 `@oblivion/http-bridge` 负责）。
+   *
+   * 走进程内通道 `globalThis[Symbol.for('@oblivion/core/mcp')]` 而不是 Cordis 服务表：
+   * 服务可见性随作用域而变（bridge 因 `inject: ['oblivion']` 恒取不到而**从未激活**），
+   * 通道则与「谁挂在谁下面」无关，且端点带 disposer ⇒ 重挂/卸载不留僵尸。
+   */
+  const mcpDispose = publishMcp(
+    createMcpEndpoint({ facade, log: (message: string) => ctx.logger?.debug?.(config.logPrefix + ' ' + message) }),
+  );
+  ctx.effect(() => mcpDispose, 'oblivion-core: mcp channel');
+
+
   console.log('[oblivion-core] loaded');
 }
 
-export default { name, inject, apply };
+export default { name, inject, provides, apply };

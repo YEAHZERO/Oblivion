@@ -49,6 +49,13 @@ export interface AppContext {
   on(event: string, handler: (...args: never[]) => void): unknown;
   inject?(services: string[], fn: (ctx: AppContext) => void): unknown;
   /**
+   * 注册一个对外服务（Cordis DI 的写端）。
+   *
+   * 为什么声明成可选：与 `inject` 同理，极简宿主可能不提供这个方法；
+   * 调用点用 `ctx.provide?.(...)` 保护，缺了也不影响插件自身运行。
+   */
+  provide?(name: string, value: unknown): unknown;
+  /**
    * 根上下文：Cordis 的 `ctx.root`（未带 DSH 作用域标签，是所有 agent 链的共同祖先）。
    *
    * 为什么必须用它：DSH 按作用域过滤事件派发，挂在插件自身 ctx 上的监听者若带作用域标签、

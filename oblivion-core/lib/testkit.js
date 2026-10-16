@@ -282,13 +282,20 @@ function reinforce(edge, cfg, at = now()) {
 }
 
 // src/util/fs.ts
-import { mkdir, rename, writeFile as nodeWriteFile } from "node:fs/promises";
+import { mkdir, rename, unlink, writeFile as nodeWriteFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 async function writeTextAtomic(path, text) {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), "." + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + ".tmp");
-  await nodeWriteFile(tmp, text, "utf8");
-  await rename(tmp, path);
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true });
+  const tmp = join(dir, "." + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + ".tmp");
+  try {
+    await nodeWriteFile(tmp, text, "utf8");
+    await rename(tmp, path);
+    return;
+  } catch {
+    await unlink(tmp).catch(() => void 0);
+  }
+  await nodeWriteFile(path, text, "utf8");
 }
 async function writeFile(path, text, _encoding) {
   return writeTextAtomic(path, text);
@@ -306,6 +313,43 @@ function expandHome(p) {
   if (p === "~") return home;
   if (p.startsWith("~/") || p.startsWith("~\\")) return join2(home, p.slice(2));
   return isAbsolute(p) ? p : resolve(p);
+}
+
+// src/graph/prune.ts
+function pruneGraph(edges, limits, decay, at) {
+  const all = [...edges];
+  const scored = all.map((edge) => ({ edge, weight: effectiveWeight(edge, decay, at) }));
+  const total = all.length;
+  const ranked = scored.slice().sort(
+    (a, b) => b.weight - a.weight || b.edge.last_reinforced_at - a.edge.last_reinforced_at || b.edge.reinforce_count - a.edge.reinforce_count
+  );
+  let kept = limits.maxEdges > 0 ? ranked.slice(0, limits.maxEdges) : ranked;
+  let droppedNodes = 0;
+  if (limits.maxNodes > 0) {
+    const strength = /* @__PURE__ */ new Map();
+    for (const s of kept) {
+      strength.set(s.edge.source_id, (strength.get(s.edge.source_id) ?? 0) + s.weight);
+      strength.set(s.edge.target_id, (strength.get(s.edge.target_id) ?? 0) + s.weight);
+    }
+    if (strength.size > limits.maxNodes) {
+      const allowed = new Set(
+        [...strength.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, limits.maxNodes).map(([id]) => id)
+      );
+      droppedNodes = strength.size - allowed.size;
+      kept = kept.filter((s) => allowed.has(s.edge.source_id) && allowed.has(s.edge.target_id));
+    }
+  }
+  const nodes = /* @__PURE__ */ new Set();
+  for (const s of kept) {
+    nodes.add(s.edge.source_id);
+    nodes.add(s.edge.target_id);
+  }
+  return {
+    kept: kept.map((s) => s.edge),
+    droppedEdges: total - kept.length,
+    droppedNodes,
+    nodes: nodes.size
+  };
 }
 
 // src/graph/index.ts
@@ -334,6 +378,24 @@ function shortHash(input) {
 }
 
 // src/qa-loop/extract.ts
+var NON_VISIBLE_BLOCK_TYPES = /* @__PURE__ */ new Set([
+  "reasoning",
+  "thinking",
+  "analysis",
+  "redacted-reasoning",
+  "tool-call",
+  "tool-result",
+  "tool-addition",
+  "tool-removal",
+  "image",
+  "file"
+]);
+function blockKind(block) {
+  const b = block;
+  if (typeof b.type === "string") return b.type.toLowerCase();
+  if (typeof b.kind === "string") return b.kind.toLowerCase();
+  return "";
+}
 function textOfMessage(data) {
   if (typeof data === "string") return data;
   if (!data || typeof data !== "object") return "";
@@ -345,6 +407,7 @@ function textOfMessage(data) {
     return content.map((block) => {
       if (typeof block === "string") return block;
       if (!block || typeof block !== "object") return "";
+      if (NON_VISIBLE_BLOCK_TYPES.has(blockKind(block))) return "";
       const b = block;
       if (typeof b.text === "string") return b.text;
       if (typeof b.content === "string") return b.content;
@@ -394,7 +457,7 @@ function extractQAPair(turn) {
 
 // src/qa-loop/index.ts
 import { appendFile, mkdir as mkdir3, readFile as readFile2 } from "node:fs/promises";
-import { dirname as dirname2, join as join4 } from "node:path";
+import { basename, dirname as dirname2, join as join4 } from "node:path";
 
 // src/util/ctx-shape.ts
 var PROBE_NAMES = [
@@ -482,6 +545,290 @@ function rememberRelatedKnowledge(titles, at = Date.now()) {
 // src/qa-loop/md-writer.ts
 import { mkdir as mkdir2, readFile } from "node:fs/promises";
 import { join as join3 } from "node:path";
+
+// src/knowledge/naming.ts
+var GENERIC = /* @__PURE__ */ new Set([
+  "\u7ED3\u8BBA",
+  "\u7ED3\u8BBA\u5148\u884C",
+  "\u8981\u70B9",
+  "\u6458\u8981",
+  "\u603B\u7ED3",
+  "\u8BF4\u660E",
+  "\u6982\u89C8",
+  "\u56DE\u7B54",
+  "\u6B63\u6587",
+  "\u80CC\u666F",
+  "\u6B65\u9AA4",
+  "\u65B9\u6CD5",
+  "\u5EFA\u8BAE",
+  "\u6CE8\u610F\u4E8B\u9879",
+  "\u4E0B\u4E00\u6B65",
+  "\u98CE\u9669",
+  "\u65B9\u6848",
+  "\u72B6\u6001",
+  "\u76EE\u6807",
+  "\u7ED3\u679C",
+  "\u95EE\u9898",
+  "\u5B9E\u73B0",
+  "\u5177\u4F53\u505A\u6CD5",
+  "\u5173\u952E\u70B9",
+  "\u5206\u70B9\u8BF4\u660E"
+]);
+var LEAD_NOISE = /^(请|请你|帮我|帮忙|麻烦|现在|然后|接着|先|需要|想要|我要|我们|我|你|这个|那个|这两个|那两个|关于|如何|怎么|为什么|是否|能否|可以|查看|看一下|看看|检查|核对|复核|分析|给出|说明|解释|介绍|对比|比较|整理|列出|写一个|做一个|实现|修改|修复|添加|把|将|我的|还是|不行的话就|单独做一个|直接)/;
+var EDGE_PUNCT = /^[\s·:：;；,，.。、\-—–_~!！?？…/\\|"'`（(「『【《〈\[{<]+|[\s·:：;；,，.。、\-—–_~!！?？…/\\|"'`）)」』】》〉\]}>]+$/g;
+var MAX_TITLE = 32;
+var WEAK_TITLES = /* @__PURE__ */ new Set([
+  "\u7EE7\u7EED",
+  "\u7EE7\u7EED\u5427",
+  "\u7EE7\u7EED\u67E5",
+  "\u884C",
+  "\u4E0D\u884C",
+  "\u53EF\u4EE5",
+  "\u597D\u7684",
+  "\u597D",
+  "\u662F",
+  "\u5BF9",
+  "\u6CA1\u6709",
+  "\u6CA1\u4E8B",
+  "\u55EF",
+  "\u54E6",
+  "\u77E5\u9053",
+  "\u660E\u767D",
+  "\u6536\u5230",
+  "\u6D4B\u8BD5",
+  "\u8BD5\u8BD5",
+  "\u770B\u770B",
+  "\u518D\u770B",
+  "\u4E0B\u4E00\u4E2A",
+  "\u5F00\u59CB",
+  "\u5B8C\u6210",
+  "\u597D\u4E86",
+  "\u91CD\u542F",
+  "\u91CD\u542F\u4E86",
+  "\u5DF2\u91CD\u542F",
+  "\u5DF2\u91CD\u5F00",
+  "\u5DF2\u88C5",
+  "\u5DF2\u7ECF\u88C5\u4E86",
+  "ok",
+  "okay",
+  "yes",
+  "no",
+  "done",
+  "untitled"
+]);
+var TECH = /\b(dsh|dshx|cordis|npm|pnpm|docker|sqlite|fts5|json|jsonl|yaml|toml|api|mcp|wsl2?|arkts|flutter|esbuild|vitest|node|nodejs|react|typescript|javascript|playwright|chromium|msedge|edge|chrome|obsidian|markdown|tsx|ts|js|md)\b/gi;
+var TAG_STOPWORDS = /* @__PURE__ */ new Set([
+  // 文件格式 / 扩展名：出现了不代表主题
+  "md",
+  "markdown",
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "txt",
+  "csv",
+  "log",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  "css",
+  "html",
+  "xml",
+  // 占位词与路径碎片（实测出现过）
+  "untitled",
+  "readme",
+  "read",
+  "docs",
+  "tmp",
+  "temp",
+  "users",
+  "user",
+  "projects",
+  "library",
+  "appdata",
+  "programs",
+  "local",
+  "home",
+  "desktop",
+  "downloads"
+]);
+var TAG_MAX = 8;
+var ZH_TAGS = [
+  [/插件/, "plugin"],
+  [/面板|侧栏|sidebar/i, "panel"],
+  [/知识库|沉淀|笔记/, "knowledge-base"],
+  [/搜索/, "search"],
+  [/抓取|爬取/, "fetch"],
+  [/密钥|令牌|\btoken\b|api\s*key/i, "credential"],
+  [/重启|重开|重新打开/, "restart"],
+  [/配置|补丁|patch/i, "config"],
+  [/会话|对话/, "session"],
+  [/版本|升级/, "version"],
+  [/图谱|双链|反链/, "graph"],
+  [/画像|风格|偏好/, "profile"],
+  [/写盘|落盘|持久化/, "persistence"],
+  [/索引/, "index"],
+  [/标签/, "tag"],
+  [/命名|文件名/, "naming"],
+  [/报错|异常|失败|不行/, "error"],
+  [/测试|自检|用例/, "test"],
+  [/文档|说明|README/i, "docs"],
+  [/性能|卡顿|慢/, "performance"],
+  [/迁移|移植|搬到/, "migration"],
+  [/安装|装载|挂载/, "install"],
+  [/模型|llm|deepseek/i, "llm"]
+];
+function squeeze(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+var BRACKET_PAIRS = [
+  ["\uFF08", "\uFF09"],
+  ["(", ")"],
+  ["\u300C", "\u300D"],
+  ["\u300E", "\u300F"],
+  ["\u300A", "\u300B"],
+  ["\u3010", "\u3011"],
+  ["[", "]"],
+  ["{", "}"]
+];
+function balanceBrackets(text) {
+  let out = "";
+  const stack = [];
+  for (const ch of text) {
+    if (BRACKET_PAIRS.some(([open2]) => open2 === ch)) {
+      stack.push({ ch, index: out.length });
+      out += ch;
+      continue;
+    }
+    const closeIdx = BRACKET_PAIRS.findIndex(([, close]) => close === ch);
+    if (closeIdx < 0) {
+      out += ch;
+      continue;
+    }
+    const open = BRACKET_PAIRS[closeIdx][0];
+    let found = -1;
+    for (let i = stack.length - 1; i >= 0; i -= 1) {
+      if (stack[i].ch === open) {
+        found = i;
+        break;
+      }
+    }
+    if (found < 0) continue;
+    stack.splice(found, 1);
+    out += ch;
+  }
+  for (const { index } of [...stack].sort((a, b) => b.index - a.index)) {
+    out = out.slice(0, index) + out.slice(index + 1);
+  }
+  return out;
+}
+function cleanTitle(raw) {
+  let text = squeeze(raw.replace(/[#*`>~]/g, " "));
+  text = squeeze(text.replace(/https?:\/\/\S+/gi, " ").replace(/\bwww\.\S+/gi, " "));
+  text = squeeze(text.replace(EDGE_PUNCT, ""));
+  text = text.replace(/[。.，,；;：:、!！?？…]+$/g, "");
+  for (const generic of GENERIC) {
+    if (text.length > generic.length + 2 && (text.startsWith(generic + "\uFF1A") || text.startsWith(generic + ":"))) {
+      text = squeeze(text.slice(generic.length + 1));
+      break;
+    }
+  }
+  text = balanceBrackets(text);
+  if (text.length > MAX_TITLE) text = text.slice(0, MAX_TITLE - 1) + "\u2026";
+  return balanceBrackets(squeeze(text.replace(EDGE_PUNCT, "")));
+}
+function isWeakTitle(title) {
+  const text = cleanTitle(title ?? "").toLowerCase();
+  if (text === "" || text.length < 3) return true;
+  return WEAK_TITLES.has(text);
+}
+function titleFromAnswer(answer) {
+  for (const line of answer.split("\n")) {
+    const row = line.trim();
+    const heading = row.match(/^#{1,6}\s+(.+?)\s*#*$/);
+    const bold = row.match(/^\*\*(.{2,40}?)\*\*/);
+    const raw = heading?.[1] ?? bold?.[1];
+    if (raw === void 0) continue;
+    const title = cleanTitle(raw);
+    if (title === "" || title.length < 2) continue;
+    if (GENERIC.has(title)) continue;
+    return title;
+  }
+  return "";
+}
+function titleFromQuestion(question) {
+  const first = question.split("\n").map((line) => line.trim()).find((line) => line !== "");
+  if (first === void 0) return "";
+  let text = squeeze(first);
+  for (let round2 = 0; round2 < 4; round2 += 1) {
+    const next = text.replace(LEAD_NOISE, "").trim();
+    if (next === text || next === "") break;
+    text = next;
+  }
+  text = squeeze(text.replace(/^[的了吗呢啊呀吧哦]+/, ""));
+  return cleanTitle(text);
+}
+function titleFromQA(question, answer) {
+  const fromAnswer = titleFromAnswer(answer ?? "");
+  if (fromAnswer !== "" && fromAnswer.length >= 2) return fromAnswer;
+  const fromQuestion = titleFromQuestion(question ?? "");
+  if (fromQuestion !== "") return fromQuestion;
+  return "untitled";
+}
+var TOPIC_MAX = 48;
+function topicFromQuestion(question) {
+  const first = String(question ?? "").split("\n").map((line) => line.trim()).find((line) => line !== "");
+  if (first === void 0) return "";
+  let text = squeeze(first.replace(/[#*`>~]/g, " "));
+  text = squeeze(text.replace(/https?:\/\/\S+/gi, " ").replace(/\bwww\.\S+/gi, " "));
+  for (let round2 = 0; round2 < 2; round2 += 1) {
+    const next = text.replace(LEAD_NOISE, "").trim();
+    if (next === text || next === "") break;
+    text = next;
+  }
+  text = balanceBrackets(squeeze(text.replace(EDGE_PUNCT, "")));
+  text = text.replace(/[。.，,；;：:、!！?？…]+$/g, "");
+  if (text.length <= TOPIC_MAX) return balanceBrackets(text);
+  const cut = balanceBrackets(text.slice(0, TOPIC_MAX - 1)).replace(EDGE_PUNCT, "").trim();
+  return cut + "\u2026";
+}
+function sanitizeTags(tags, cap = TAG_MAX) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of tags ?? []) {
+    const value = squeeze(String(raw ?? "")).replace(/^#+/, "");
+    if (value === "" || value.length > 40) continue;
+    const lower = value.toLowerCase();
+    if (TAG_STOPWORDS.has(lower)) continue;
+    if (!new RegExp("\\p{L}", "u").test(value)) continue;
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    out.push(value);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+function tagsFromQA(question, answer, extra = []) {
+  const haystack = (question ?? "") + "\n" + (answer ?? "");
+  const out = [];
+  for (const tag of extra) {
+    const value = squeeze(tag);
+    if (value !== "" && value.length <= 40 && /^[A-Za-z0-9@][A-Za-z0-9@._+/-]*$/.test(value)) out.push(value);
+  }
+  for (const match of haystack.matchAll(TECH)) out.push(match[0].toLowerCase());
+  for (const match of haystack.matchAll(/@[a-z0-9][\w.-]*\/[\w.-]+/gi)) out.push(match[0].toLowerCase());
+  for (const match of haystack.matchAll(/\bdsh-[\w-]+/gi)) out.push(match[0].toLowerCase());
+  for (const match of haystack.matchAll(/(?<![#\w])#([\p{L}\p{N}_-]{2,20})/gu)) out.push(match[1]);
+  for (const [pattern2, tag] of ZH_TAGS) if (pattern2.test(haystack)) out.push(tag);
+  return sanitizeTags(out, TAG_MAX);
+}
+
+// src/qa-loop/md-writer.ts
 var MD_FALLBACK_DIR = "99_\u5176\u4ED6";
 function safeDirName(input) {
   const cleaned = String(input ?? "").replace(/^[a-zA-Z]:/, "").split(/[\\/]+/).filter((seg) => seg !== "" && seg !== "." && seg !== "..").map((seg) => seg.replace(/[<>:"|?*]/g, "_").trim()).filter((seg) => seg !== "").join("/");
@@ -515,7 +862,16 @@ function classifyDir(item, map) {
   return MD_FALLBACK_DIR;
 }
 function safeName(topic) {
-  return (topic || "untitled").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
+  const cleaned = (topic || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/^[.\s]+/, "").replace(/[.\s]+$/, "").slice(0, 80).trim();
+  return cleaned === "" ? "untitled" : cleaned;
+}
+function fileNameOf(item) {
+  const title = typeof item.title === "string" ? item.title.trim() : "";
+  const topic = typeof item.topic === "string" ? item.topic.trim() : "";
+  if (title !== "" && !isWeakTitle(title)) return safeName(title);
+  if (topic !== "" && !isWeakTitle(topic)) return safeName(topic);
+  if (topic !== "") return safeName(topic);
+  return safeName(title !== "" ? title : "untitled");
 }
 var ID_MARKER = "oblivion:";
 function renderFrontmatter(item, extra = {}) {
@@ -652,7 +1008,7 @@ function appendSource(existing, payload) {
 }
 async function notePathFor(root, item, classify) {
   const dir = join3(root, classifyDir(item, classify));
-  const name = safeName(item.topic);
+  const name = fileNameOf(item);
   const primary = join3(dir, name + ".md");
   const primaryText = await readFile(primary, "utf8").catch(() => "");
   if (primaryText.includes(ID_MARKER) || primaryText.includes("oblivion:digest")) return primary;
@@ -678,7 +1034,7 @@ async function writeMD(root, payload, classify) {
   if (!item) return "";
   const dir = join3(root, classifyDir(item, classify));
   await mkdir2(dir, { recursive: true });
-  const name = safeName(item.topic);
+  const name = fileNameOf(item);
   let path = join3(dir, name + ".md");
   let existing = await readFile(path, "utf8").catch(() => "");
   if (existing !== "" && !existing.includes(ID_MARKER)) {
@@ -711,21 +1067,41 @@ async function writeIndexNote(root, entries, at = Date.now()) {
   await writeFile(path, renderIndex(entries, at), "utf8");
   return path;
 }
-async function appendRelatedLinks(notePath, titles) {
-  const links = titles.map((t) => String(t).trim()).filter((t) => t !== "");
-  if (links.length === 0) return false;
+var RELATED_HEADER = "## \u5173\u8054\u77E5\u8BC6\uFF08\u81EA\u52A8\uFF09";
+var RELATED_MAX2 = 30;
+function splitRelated(text) {
+  const kept = [];
+  const links = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].trim() !== RELATED_HEADER) {
+      kept.push(lines[i]);
+      continue;
+    }
+    i += 1;
+    for (; i < lines.length && !/^##\s/.test(lines[i]); i += 1) {
+      const hit = /\[\[(.+?)\]\]/.exec(lines[i]);
+      if (hit) links.push(hit[1].trim());
+    }
+    i -= 1;
+  }
+  return { head: kept.join("\n"), links };
+}
+async function appendRelatedLinks(notePath, titles, options = {}) {
+  const target = (t) => safeName(String(t).trim().replace(/^\[\[|\]\]$/g, ""));
+  const wanted = titles.map(target).filter((t) => t !== "" && t !== "untitled" && !isWeakTitle(t));
+  if (wanted.length === 0 && options.prune !== true) return false;
   const existing = await readFile(notePath, "utf8").catch(() => "");
   if (existing === "" || !existing.includes(ID_MARKER)) return false;
-  const missing = links.filter((t) => !existing.includes("[[" + t + "]]"));
-  if (missing.length === 0) return false;
-  const block = [
-    "",
-    "## \u5173\u8054\u77E5\u8BC6\uFF08\u81EA\u52A8\uFF09",
-    "",
-    missing.map((t) => "- [[" + t.replace(/^\[\[|\]\]$/g, "") + "]]").join("\n"),
-    ""
-  ].join("\n");
-  await writeFile(notePath, existing.trimEnd() + "\n" + block, "utf8");
+  const { head, links } = splitRelated(existing);
+  const merged = options.prune === true ? [] : links.map(target).filter((t) => t !== "" && t !== "untitled" && !isWeakTitle(t));
+  for (const title of wanted) if (!merged.includes(title)) merged.push(title);
+  const final = merged.slice(0, RELATED_MAX2);
+  const clean = head.trimEnd();
+  const block = final.length === 0 ? "" : ["", RELATED_HEADER, "", final.map((t) => "- [[" + t + "]]").join("\n"), ""].join("\n");
+  const rebuilt = final.length === 0 ? clean + "\n" : clean + "\n" + block;
+  if (rebuilt.trimEnd() === existing.trimEnd()) return false;
+  await writeFile(notePath, rebuilt, "utf8");
   return true;
 }
 
@@ -737,7 +1113,7 @@ function findRelatedItems(current, candidates, options = {}) {
   const minScore = options.minScore ?? 0.05;
   const recent = Math.max(1, options.recent ?? 60);
   const base = new Set(tokenize(current.title + "\n" + current.content.slice(0, CONTENT_PREFIX)));
-  const pool = candidates.filter((item) => item.id !== current.id && item.status === "active").sort((a, b) => b.updated_at - a.updated_at).slice(0, recent);
+  const pool = candidates.filter((item) => item.id !== current.id && item.status === "active").filter((item) => typeof item.title === "string" && item.title.trim() !== "" && !isWeakTitle(item.title)).sort((a, b) => b.updated_at - a.updated_at).slice(0, recent);
   const scored = [];
   for (const item of pool) {
     const other = new Set(tokenize(item.title + "\n" + item.content.slice(0, CONTENT_PREFIX)));
@@ -904,18 +1280,33 @@ function registerQaLoop(ctx, config, deps) {
       await deps.graph.recordCooccurrence(qa);
       await deps.profile.updateFromQA(qa);
       try {
-        const related2 = findRelatedItems(result.item, deps.knowledge.index.all(), { limit: 5 });
-        if (related2.length > 0 && notePath !== "") {
-          await appendRelatedLinks(notePath, related2.map((item) => item.title));
+        const all = deps.knowledge.index.all();
+        const related2 = findRelatedItems(result.item, all, { limit: 5 });
+        const stemOf = async (id) => {
+          const item = all.find((candidate) => candidate.id === id);
+          if (!item) return "";
+          const path = await notePathFor(mdRoot, item, config.mdClassify);
+          return path === "" ? "" : basename(path).replace(/\.md$/i, "");
+        };
+        const newStem = notePath === "" ? "" : basename(notePath).replace(/\.md$/i, "");
+        if (newStem !== "") {
+          const forward = [];
+          for (const rel of related2) {
+            const stem = await stemOf(rel.id);
+            if (stem !== "") forward.push(stem);
+          }
+          if (forward.length > 0) await appendRelatedLinks(notePath, forward);
         }
-        for (const item of related2) {
-          const existingItem = deps.knowledge.index.all().find((candidate) => candidate.id === item.id);
-          if (!existingItem) continue;
-          const path = await notePathFor(mdRoot, existingItem, config.mdClassify);
-          if (path === "") continue;
-          await appendRelatedLinks(path, [result.item.title]);
+        if (newStem !== "") {
+          for (const rel of related2) {
+            const item = all.find((candidate) => candidate.id === rel.id);
+            if (!item) continue;
+            const path = await notePathFor(mdRoot, item, config.mdClassify);
+            if (path === "") continue;
+            await appendRelatedLinks(path, [newStem]);
+          }
         }
-        await writeIndexNote(mdRoot, deps.knowledge.index.all());
+        await writeIndexNote(mdRoot, all);
       } catch (error) {
         ctx.logger?.warn?.(config.logPrefix + " \u53CC\u94FE/\u7D22\u5F15\u5199\u56DE\u5931\u8D25\uFF1A%o", error);
       }
@@ -1044,7 +1435,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join4(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.1.20",
+    version: "0.2.10",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -1151,8 +1542,8 @@ function registerQaLoop(ctx, config, deps) {
   }
   let agentsScope;
   function reconcileAgents() {
-    const registry = agentsScope?.agents;
-    const live = registry?.list?.() ?? [];
+    const registry2 = agentsScope?.agents;
+    const live = registry2?.list?.() ?? [];
     diag.injectAgentCount = live.length;
     for (const agent of live) attachAgent(agent);
     diagDirty = true;
@@ -1189,6 +1580,7 @@ function registerQaLoop(ctx, config, deps) {
 // src/knowledge/store.ts
 import { mkdir as mkdir4, readFile as readFile3, readdir } from "node:fs/promises";
 import { join as join5 } from "node:path";
+var ENTRY_FILE_RE = /^ts-[0-9a-z]+-[0-9a-z]{2}\.json$/;
 var KnowledgeStore = class {
   constructor(root) {
     this.root = root;
@@ -1205,7 +1597,7 @@ var KnowledgeStore = class {
     const files = await readdir(this.root).catch(() => []);
     const items = [];
     for (const f of files) {
-      if (!f.endsWith(".json")) continue;
+      if (!ENTRY_FILE_RE.test(f)) continue;
       try {
         const raw = await readFile3(join5(this.root, f), "utf8");
         const parsed = JSON.parse(raw);
@@ -1386,13 +1778,12 @@ function registerKnowledge(ctx, config) {
   };
 }
 function deriveTitle(qa) {
-  const q = qa.question.split("\n")[0].trim();
-  return q.length > 60 ? q.slice(0, 57) + "\u2026" : q || "untitled";
+  return titleFromQA(qa.question, qa.answer);
 }
 function deriveTopic(qa) {
   if (qa.topicHint) return qa.topicHint;
-  const m = qa.question.match(/[\p{L}\p{N}_-]{3,20}/gu);
-  return m?.[0] ?? "untitled";
+  const topic = topicFromQuestion(qa.question);
+  return topic === "" ? "untitled" : topic;
 }
 function mergeSources(existing, qa, fp) {
   const all = [...existing, ...qa.sources];
@@ -1407,17 +1798,458 @@ function mergeSources(existing, qa, fp) {
   return out;
 }
 function deriveTags(qa) {
-  const out = /* @__PURE__ */ new Set();
-  if (qa.topicHint) out.add(qa.topicHint);
-  const tech = /\b(dsh|dshx|cordis|npm|pnpm|docker|sqlite|fts5|json|yaml|api|mcp|wsl2?|arkts|flutter|esbuild|vitest|node|react)\b/gi;
-  for (const m of qa.answer.matchAll(tech)) out.add(m[0].toLowerCase());
-  for (const m of qa.answer.matchAll(/#([\p{L}\p{N}_-]{2,20})/gu)) out.add(m[1]);
-  return [...out].slice(0, 8);
+  const extra = [...qa.topicHint ? [qa.topicHint] : [], ...Array.isArray(qa.tagsHint) ? qa.tagsHint : []];
+  return tagsFromQA(qa.question, qa.answer, extra);
+}
+
+// src/knowledge/retitle.ts
+import { readdir as readdir2, readFile as readFile4, rename as rename2, stat, unlink as unlink2 } from "node:fs/promises";
+import { join as join6 } from "node:path";
+var ID_RE = /<!--\s*oblivion:id=(\S+)\s+version=(\d+)\s*-->/;
+var FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+var SECTION_RE = /^##\s+/;
+function asString(value) {
+  const t = value.trim();
+  if (t === "") return "";
+  if (t.startsWith('"')) {
+    try {
+      return String(JSON.parse(t));
+    } catch {
+      return t.replace(/^"|"$/g, "");
+    }
+  }
+  return t;
+}
+function asArray(value) {
+  const t = value.trim();
+  if (t === "") return [];
+  if (t.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(t);
+      return Array.isArray(parsed) ? parsed.map((v) => String(v)) : [];
+    } catch {
+      return [];
+    }
+  }
+  return t.split(",").map((s) => asString(s)).filter((s) => s !== "");
+}
+function parseNote(raw) {
+  const matched = FM_RE.exec(raw);
+  const frontmatter = matched ? matched[1] : "";
+  const body = matched ? raw.slice(matched[0].length) : raw;
+  const field = (key) => {
+    const hit = new RegExp("^" + key + ":\\s*(.*)$", "m").exec(frontmatter);
+    return hit ? hit[1].trim() : "";
+  };
+  const marker = ID_RE.exec(body) ?? ID_RE.exec(raw);
+  return {
+    frontmatter,
+    body,
+    meta: {
+      title: asString(field("title")),
+      topic: asString(field("topic")),
+      tags: asArray(field("tags")),
+      ask: asString(field("ask")),
+      namedBy: asString(field("named_by")),
+      id: marker ? marker[1] : "",
+      version: marker ? Number(marker[2]) : 0
+    }
+  };
+}
+function contentSection(body) {
+  const lines = body.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^##\s+内容\s*$/.test(l));
+  if (start < 0) return body.trim();
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => SECTION_RE.test(l));
+  return (end < 0 ? rest : rest.slice(0, end)).join("\n").trim();
+}
+function setField(frontmatter, key, value) {
+  const line = new RegExp("^" + key + ":.*$", "m");
+  if (line.test(frontmatter)) return frontmatter.replace(line, key + ": " + value);
+  return frontmatter.replace(/\s*$/, "") + "\n" + key + ": " + value;
+}
+function renderNote(parsed, next) {
+  const title = next.title.trim();
+  const ask = (next.ask || parsed.meta.ask || parsed.meta.title).trim();
+  const namedBy = (next.namedBy || parsed.meta.namedBy || "").trim();
+  let frontmatter = parsed.frontmatter;
+  if (frontmatter !== "") {
+    frontmatter = setField(frontmatter, "title", JSON.stringify(title));
+    if (next.tags && next.tags.length > 0) {
+      frontmatter = setField(frontmatter, "tags", "[" + next.tags.map((t) => JSON.stringify(t)).join(", ") + "]");
+    }
+    if (ask !== "") frontmatter = setField(frontmatter, "ask", JSON.stringify(ask));
+    if (namedBy !== "") frontmatter = setField(frontmatter, "named_by", JSON.stringify(namedBy));
+  }
+  const lines = parsed.body.split(/\r?\n/);
+  const h1 = lines.findIndex((l) => /^#\s+/.test(l));
+  if (h1 >= 0) lines[h1] = "# " + title;
+  if (next.tags && next.tags.length > 0) {
+    const tagLine = lines.findIndex((l) => /^>\s*Tags[:：]/.test(l));
+    if (tagLine >= 0) lines[tagLine] = ">Tags\uFF1A " + next.tags.map((t) => "#" + t).join(" ");
+  }
+  if (ask !== "" && !lines.some((l) => /^>\s*Ask[:：]/.test(l))) {
+    let anchor = -1;
+    for (let i = 0; i < Math.min(lines.length, 20); i++) {
+      if (/^>\s*(Date|Source|Note|Tags)/.test(lines[i])) anchor = i;
+    }
+    if (anchor >= 0) lines.splice(anchor + 1, 0, ">Ask\uFF1A " + ask);
+  }
+  const head = frontmatter === "" ? "" : "---\n" + frontmatter + "\n---\n";
+  return head + lines.join("\n");
+}
+async function listNotes(dir, limit = 10) {
+  const files = await readdir2(dir).catch(() => []);
+  const out = [];
+  for (const file of files) {
+    if (!file.endsWith(".md") || file.startsWith(".")) continue;
+    const path = join6(dir, file);
+    const raw = await readFile4(path, "utf8").catch(() => "");
+    if (raw === "") continue;
+    const parsed = parseNote(raw);
+    if (parsed.meta.id === "") continue;
+    const info = await stat(path).catch(() => null);
+    out.push({
+      id: parsed.meta.id,
+      file,
+      path,
+      title: parsed.meta.title,
+      topic: parsed.meta.topic,
+      tags: parsed.meta.tags,
+      ask: parsed.meta.ask || parsed.meta.title,
+      namedBy: parsed.meta.namedBy,
+      excerpt: contentSection(parsed.body).replace(/\s+/g, " ").slice(0, 80),
+      mtime: info ? info.mtimeMs : 0
+    });
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return limit > 0 ? out.slice(0, limit) : out;
+}
+async function freeName(dir, base, self, taken) {
+  let candidate = base + ".md";
+  let n = 2;
+  for (; ; ) {
+    const busy = taken.has(candidate) || await stat(join6(dir, candidate)).then(() => true).catch(() => false);
+    if (!busy || candidate === self) return candidate;
+    candidate = base + "-" + n + ".md";
+    n += 1;
+  }
+}
+async function applyRetitle(deps, entries) {
+  const notes = await listNotes(deps.mdDir, 0);
+  const byId = new Map(notes.map((n) => [n.id, n]));
+  const taken = new Set(notes.map((n) => n.file));
+  const results = [];
+  for (const entry of entries) {
+    const note = byId.get(entry.id);
+    if (!note) {
+      results.push({ id: entry.id, ok: false, error: "note-not-found" });
+      continue;
+    }
+    const title = (entry.title || "").trim();
+    if (title === "") {
+      results.push({ id: entry.id, ok: false, error: "empty-title" });
+      continue;
+    }
+    const raw = await readFile4(note.path, "utf8");
+    const parsed = parseNote(raw);
+    const content = renderNote(parsed, { title, tags: entry.tags, namedBy: entry.namedBy });
+    await writeFile(note.path, content, "utf8");
+    let target = note.file;
+    if (fileNameOf({ title, topic: note.topic }) + ".md" !== note.file) {
+      target = await freeName(deps.mdDir, fileNameOf({ title, topic: note.topic }), note.file, taken);
+      try {
+        await rename2(note.path, join6(deps.mdDir, target));
+      } catch {
+        try {
+          await writeFile(join6(deps.mdDir, target), content, "utf8");
+          await unlink2(note.path);
+        } catch {
+          target = note.file;
+        }
+      }
+      if (target !== note.file) {
+        taken.delete(note.file);
+        taken.add(target);
+      }
+    }
+    let itemSynced = false;
+    const itemRaw = await readFile4(join6(deps.dataDir, note.id + ".json"), "utf8").catch(() => "");
+    if (itemRaw !== "") {
+      try {
+        const item = JSON.parse(itemRaw);
+        item.title = title;
+        if (entry.tags && entry.tags.length > 0) item.tags = entry.tags;
+        item.updated_at = Date.now();
+        await writeFile(join6(deps.dataDir, note.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
+        itemSynced = true;
+      } catch {
+        itemSynced = false;
+      }
+    }
+    results.push({ id: note.id, ok: true, from: note.file, to: target, itemSynced });
+  }
+  return results;
+}
+function createRetitleService(deps) {
+  const mdRoot = expandHome(deps.mdRoot);
+  const dataDir = expandHome(deps.dataRoot);
+  const qaDir = deps.classify?.session ?? deps.classify?.qa_loop ?? "01_\u95EE\u7B54\u6C89\u6DC0";
+  const mdDir = join6(mdRoot, qaDir);
+  return {
+    list: (limit = 10) => listNotes(mdDir, limit),
+    async apply(entries) {
+      const results = await applyRetitle({ mdDir, dataDir }, entries);
+      let index = null;
+      if (deps.host) {
+        try {
+          deps.host.index.rebuild(await deps.host.store.loadAll());
+          const all = deps.host.index.all();
+          index = { path: await writeIndexNote(mdRoot, all), count: all.length };
+        } catch {
+          index = null;
+        }
+      }
+      return { results, index };
+    }
+  };
+}
+
+// src/knowledge/wiki.ts
+import { mkdir as mkdir5, readdir as readdir3, readFile as readFile5, stat as stat2 } from "node:fs/promises";
+import { join as join7 } from "node:path";
+var ID_MARKER2 = "oblivion:";
+var WIKI_MARKER = "oblivion:wiki";
+var WIKI_DIR_FALLBACK = "02_Wiki\u9875\u9762";
+var PAGE_MEMBER_MAX = 40;
+var NOTE_WIKI_MAX = 5;
+var WIKI_TAG_MAX = 12;
+function statusOf(raw) {
+  const hit = /^status:\s*"?([\w-]+)"?\s*$/m.exec(raw);
+  return hit ? hit[1] : "";
+}
+function wikiLinkOf(raw) {
+  const hit = /^>\s*Wiki[:：]\s*(.+)$/m.exec(raw);
+  return hit ? hit[1].trim() : "";
+}
+function pageTitleOf(raw) {
+  const hit = /^title:\s*"?(.*?)"?\s*$/m.exec(raw);
+  return hit ? hit[1] : "";
+}
+var STATUS_NOTE = {
+  superseded: "\uFF08\u5DF2\u88AB\u65B0\u7248\u53D6\u4EE3\uFF09",
+  conflict: "\uFF08\u6709\u51B2\u7A81\uFF09",
+  draft: "\uFF08\u8349\u7A3F\uFF09",
+  archived: "\uFF08\u5DF2\u5F52\u6863\uFF09"
+};
+function linkTargetOf(member) {
+  const stem = String(member.file ?? "").replace(/\\/g, "/").split("/").pop() ?? "";
+  const base = stem.replace(/\.md$/i, "").trim();
+  return base !== "" ? base : safeName(member.title);
+}
+function renderWikiPage(input) {
+  const { cluster, members, at } = input;
+  const title = cluster.title.trim();
+  const date = isoDate(at);
+  const clusterTags = (cluster.tags ?? []).map((t) => String(t).trim().replace(/^#+/, "").toLowerCase()).filter((t) => t !== "");
+  const tags = sanitizeTags([...clusterTags, ...members.flatMap((m) => m.tags)], WIKI_TAG_MAX);
+  const flagged = members.filter((m) => STATUS_NOTE[m.status] !== void 0);
+  const lines = [
+    "---",
+    "title: " + JSON.stringify(title),
+    'source: "wiki"',
+    'generated_by: "model"',
+    "created_at: " + JSON.stringify(date),
+    "updated_at: " + JSON.stringify(date),
+    "tags: [" + tags.map((t) => JSON.stringify(t)).join(", ") + "]",
+    'status: "active"',
+    'impl: "implemented"',
+    "wiki_members: " + members.length,
+    "---",
+    "",
+    "# " + title,
+    "",
+    ">Generated\uFF1A" + date,
+    ">Source\uFF1AOblivion \xB7 \u4E3B\u9898\u9875\uFF08\u6A21\u578B\u5F52\u5E76\uFF0C\u63D2\u4EF6\u53EA\u843D\u76D8\uFF09",
+    ">Members\uFF1A" + members.length + " \u7BC7\u7B14\u8BB0",
+    ">Tags\uFF1A " + (tags.length > 0 ? tags.map((t) => "#" + t).join(" ") : "\uFF08\u65E0\uFF09"),
+    "",
+    "## \u6982\u8FF0",
+    "",
+    (cluster.summary ?? "").trim() === "" ? "\uFF08\u6A21\u578B\u672A\u7ED9\u6982\u8FF0\uFF09" : cluster.summary.trim(),
+    "",
+    "## \u6765\u6E90\u7B14\u8BB0",
+    ""
+  ];
+  if (members.length === 0) lines.push("\uFF08\u6CA1\u6709\u6210\u5458\uFF09");
+  for (const member of members.slice(0, PAGE_MEMBER_MAX)) {
+    const flag = STATUS_NOTE[member.status] ?? "";
+    const ask = member.ask !== "" && member.ask !== member.title ? " \u2014\u2014 " + member.ask.replace(/\s+/g, " ") : "";
+    lines.push("- [[" + linkTargetOf(member) + "]]" + flag + ask);
+  }
+  if (members.length > PAGE_MEMBER_MAX) {
+    lines.push("- \u2026\uFF08\u53E6\u6709 " + (members.length - PAGE_MEMBER_MAX) + " \u7BC7\uFF0C\u89C1 `00-Index/\u7D22\u5F15.md`\uFF09");
+  }
+  if (flagged.length > 0) {
+    lines.push(
+      "",
+      "## \u53E3\u5F84\u63D0\u793A",
+      "",
+      "\u672C\u9875\u6210\u5458\u91CC\u6709 " + flagged.length + " \u7BC7\u4E0D\u662F `active`\uFF08**\u65E7\u7248\u4E0D\u4F1A\u88AB\u5220\uFF0C\u51B2\u7A81\u4E0D\u4F1A\u88AB\u5408\u5E76**\uFF09\uFF1A",
+      ...flagged.map((m) => "- [[" + linkTargetOf(m) + "]]" + (STATUS_NOTE[m.status] ?? "")),
+      ""
+    );
+  }
+  lines.push(
+    "",
+    "## \u6807\u7B7E",
+    "",
+    tags.length > 0 ? tags.map((t) => "#" + t).join(" ") : "\uFF08\u65E0\uFF09",
+    "",
+    "<!-- oblivion:wiki title=" + title + " members=" + members.length + " at=" + at + " -->",
+    ""
+  );
+  return lines.join("\n");
+}
+function writebackWikiLink(raw, wikiLink) {
+  const title = wikiLink.trim();
+  if (title === "" || raw === "" || !raw.includes(ID_MARKER2)) return raw;
+  const lines = raw.split(/\r?\n/);
+  const at = lines.findIndex((line) => /^>\s*Wiki[:：]/.test(line));
+  if (at >= 0) {
+    const existing = [...lines[at].matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1].trim());
+    if (existing.includes(title)) return raw;
+    const merged = [...existing, title].slice(0, NOTE_WIKI_MAX);
+    lines[at] = "> Wiki\uFF1A " + merged.map((t) => "[[" + t + "]]").join(" ");
+    return lines.join("\n");
+  }
+  const link = "> Wiki\uFF1A [[" + title + "]]";
+  let anchor = -1;
+  for (let i = 0; i < Math.min(lines.length, 24); i += 1) {
+    if (/^>\s*(Date|Source|Note|Tags|Ask)/.test(lines[i])) anchor = i;
+  }
+  if (anchor >= 0) {
+    lines.splice(anchor + 1, 0, link);
+  } else {
+    const h1 = lines.findIndex((line) => /^#\s+/.test(line));
+    lines.splice(h1 >= 0 ? h1 + 1 : 0, 0, "", link);
+  }
+  return lines.join("\n");
+}
+async function listWikiPages(dir) {
+  const files = await readdir3(dir).catch(() => []);
+  const out = [];
+  for (const file of files) {
+    if (!file.endsWith(".md") || file.startsWith(".")) continue;
+    const path = join7(dir, file);
+    const raw = await readFile5(path, "utf8").catch(() => "");
+    if (raw === "" || !raw.includes(WIKI_MARKER)) continue;
+    const marker = new RegExp(WIKI_MARKER + "[^>]*?members=(\\d+)").exec(raw);
+    const info = await stat2(path).catch(() => null);
+    out.push({
+      file,
+      title: pageTitleOf(raw),
+      members: marker ? Number(marker[1]) : 0,
+      updatedAt: info ? info.mtimeMs : 0
+    });
+  }
+  out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out;
+}
+function createWikiService(deps) {
+  const mdRoot = expandHome(deps.mdRoot);
+  const qaDir = deps.classify?.session ?? deps.classify?.qa_loop ?? "01_\u95EE\u7B54\u6C89\u6DC0";
+  const mdDir = join7(mdRoot, qaDir);
+  const wikiDir = join7(mdRoot, safeDirName(deps.classify?.wiki ?? WIKI_DIR_FALLBACK) || WIKI_DIR_FALLBACK);
+  void deps.dataRoot;
+  async function memberOf(note) {
+    const raw = await readFile5(note.path, "utf8").catch(() => "");
+    return {
+      id: note.id,
+      file: note.file,
+      title: note.title,
+      ask: note.ask,
+      status: statusOf(raw),
+      tags: note.tags,
+      excerpt: note.excerpt,
+      wiki: wikiLinkOf(raw)
+    };
+  }
+  return {
+    async list(limit = 20) {
+      const notes = await listNotes(mdDir, limit);
+      const candidates = [];
+      for (const note of notes) {
+        const member = await memberOf(note);
+        candidates.push(member);
+      }
+      return { notes: candidates, pages: await listWikiPages(wikiDir) };
+    },
+    async apply(clusters) {
+      await mkdir5(wikiDir, { recursive: true });
+      const notes = await listNotes(mdDir, 0);
+      const byId = new Map(notes.map((n) => [n.id, n]));
+      const taken = new Set(await readdir3(wikiDir).catch(() => []));
+      const results = [];
+      let linked = 0;
+      for (const cluster of clusters ?? []) {
+        const title = String(cluster?.title ?? "").trim();
+        if (title === "") {
+          results.push({ title, ok: false, error: "empty-title" });
+          continue;
+        }
+        const ids = [...new Set((cluster.members ?? []).map((id) => String(id)))];
+        const picked = ids.map((id) => byId.get(id)).filter((n) => n !== void 0);
+        if (picked.length === 0) {
+          results.push({ title, ok: false, error: "no-known-members" });
+          continue;
+        }
+        const members = [];
+        for (const note of picked) members.push(await memberOf(note));
+        const at = Date.now();
+        const page = renderWikiPage({ cluster: { ...cluster, title }, members, at });
+        const base = safeDirName(title).replace(/^[.\s]+/, "").replace(/[.\s]+$/, "").replace(/\//g, "_") || "untitled";
+        let file = base + ".md";
+        const existing = await readFile5(join7(wikiDir, file), "utf8").catch(() => "");
+        if (existing !== "" && !existing.includes(WIKI_MARKER)) {
+          file = await freeName(wikiDir, base + "-oblivion", "", taken);
+        } else if (existing === "") {
+          file = await freeName(wikiDir, base, "", taken);
+        }
+        await writeFile(join7(wikiDir, file), page, "utf8");
+        taken.add(file);
+        const pageLink = file.replace(/\.md$/i, "");
+        let wrote = 0;
+        for (const note of picked) {
+          const raw = await readFile5(note.path, "utf8").catch(() => "");
+          if (raw === "") continue;
+          const next = writebackWikiLink(raw, pageLink);
+          if (next === raw) continue;
+          await writeFile(note.path, next, "utf8");
+          wrote += 1;
+        }
+        linked += wrote;
+        results.push({ title, ok: true, file, members: members.length, linked: wrote });
+      }
+      let index = null;
+      if (deps.host) {
+        try {
+          deps.host.index.rebuild(await deps.host.store.loadAll());
+          const all = deps.host.index.all();
+          index = { path: await writeIndexNote(mdRoot, all), count: all.length };
+        } catch {
+          index = null;
+        }
+      }
+      return { results, linked, index };
+    }
+  };
 }
 
 // src/feedback/index.ts
-import { mkdir as mkdir5, readFile as readFile4 } from "node:fs/promises";
-import { dirname as dirname3, join as join6 } from "node:path";
+import { mkdir as mkdir6, readFile as readFile6 } from "node:fs/promises";
+import { dirname as dirname3, join as join8 } from "node:path";
 
 // src/feedback/tuner.ts
 async function tune(entries, target, profile, threshold) {
@@ -1444,18 +2276,18 @@ async function tune(entries, target, profile, threshold) {
 // src/feedback/index.ts
 var MS_PER_DAY2 = 864e5;
 function registerFeedback(ctx, config, profile) {
-  const path = join6(expandHome(config.dataRoot), "feedback.json");
+  const path = join8(expandHome(config.dataRoot), "feedback.json");
   let prunedTotal = 0;
   async function load() {
     try {
-      const parsed = JSON.parse(await readFile4(path, "utf8"));
+      const parsed = JSON.parse(await readFile6(path, "utf8"));
       return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
   }
   async function save(entries) {
-    await mkdir5(dirname3(path), { recursive: true });
+    await mkdir6(dirname3(path), { recursive: true });
     await writeFile(path, JSON.stringify(entries, null, 2) + "\n", "utf8");
   }
   async function loadPruned() {
@@ -1755,8 +2587,8 @@ function registerPerspective(ctx, config, deps) {
 }
 
 // src/digest/index.ts
-import { mkdir as mkdir6, readFile as readFile5 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { mkdir as mkdir7, readFile as readFile7 } from "node:fs/promises";
+import { join as join9 } from "node:path";
 var DIGEST_EDGE_TEXT_BUDGET = 1200;
 function safeFileName(input) {
   const cleaned = (input || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim();
@@ -1858,10 +2690,10 @@ function registerDigest(ctx, config, deps) {
       status: input.status ?? "active"
     });
     const markdown = composed.markdown.replace("id=pending", "id=" + item.id);
-    const dir = join7(mdRoot, classDir);
-    await mkdir6(dir, { recursive: true });
-    const notePath = join7(dir, composed.fileName);
-    const existing = await readFile5(notePath, "utf8").catch(() => "");
+    const dir = join9(mdRoot, classDir);
+    await mkdir7(dir, { recursive: true });
+    const notePath = join9(dir, composed.fileName);
+    const existing = await readFile7(notePath, "utf8").catch(() => "");
     if (existing.includes("oblivion:digest id=" + item.id)) {
       await writeFile(notePath, existing.trimEnd() + "\n\n---\n\n" + markdown, "utf8");
     } else {
@@ -2030,14 +2862,14 @@ function suggest(summary, config, extra = {}) {
 }
 
 // src/stats/trace.ts
-import { appendFile as appendFile2, mkdir as mkdir7, readFile as readFile6 } from "node:fs/promises";
-import { dirname as dirname4, join as join8 } from "node:path";
+import { appendFile as appendFile2, mkdir as mkdir8, readFile as readFile8 } from "node:fs/promises";
+import { dirname as dirname4, join as join10 } from "node:path";
 function createTraceStore(dataRoot, options) {
-  const path = join8(dataRoot, "decisions.jsonl");
+  const path = join10(dataRoot, "decisions.jsonl");
   const MS_PER_DAY3 = 864e5;
   async function readRaw() {
     try {
-      const raw = await readFile6(path, "utf8");
+      const raw = await readFile8(path, "utf8");
       const out = [];
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
@@ -2056,7 +2888,7 @@ function createTraceStore(dataRoot, options) {
     path,
     async record(entry) {
       try {
-        await mkdir7(dirname4(path), { recursive: true });
+        await mkdir8(dirname4(path), { recursive: true });
         await appendFile2(path, JSON.stringify(entry) + "\n", "utf8");
       } catch (error) {
         options.logger?.warn?.(String(options.logPrefix ?? "") + " \u5224\u5B9A\u7559\u75D5\u5199\u5165\u5931\u8D25\uFF1A%o", error);
@@ -2080,7 +2912,7 @@ function createTraceStore(dataRoot, options) {
 }
 
 // src/stats/index.ts
-import { join as join9 } from "node:path";
+import { join as join11 } from "node:path";
 function registerStats(ctx, config, meta) {
   const dataRoot = expandHome(config.dataRoot);
   const trace = createTraceStore(dataRoot, {
@@ -2121,7 +2953,7 @@ function registerStats(ctx, config, meta) {
     },
     async writeBootSnapshot(extra) {
       try {
-        const path = join9(dataRoot, "status.json");
+        const path = join11(dataRoot, "status.json");
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -2141,6 +2973,584 @@ function registerStats(ctx, config, meta) {
       }
     }
   };
+}
+
+// src/tools.ts
+import { defineTool } from "@deepseek-ai/dsh-tools";
+function asCanonical(value) {
+  return value;
+}
+function asText(value) {
+  return [{ type: "text", text: JSON.stringify(value, null, 2) }];
+}
+var OBJECT_OUTPUT = { type: "object", additionalProperties: true };
+function registerTools(ctx, deps) {
+  ctx.tools.register(defineTool({
+    name: "oblivion_capture",
+    description: "Capture one Q/A pair into the Oblivion knowledge base: dedup, evaluate, persist as JSON plus a topic note, and build co-occurrence edges. Returns the decided action with a reason.",
+    parameters: {
+      question: { type: "string", required: true, description: "The user question." },
+      answer: { type: "string", required: true, description: "The answer to persist." },
+      sources: {
+        type: "array",
+        items: { type: "string" },
+        description: "Source refs; http(s) URLs become url sources, everything else becomes doc sources."
+      },
+      topic_hint: { type: "string", description: "Topic bucket name for the generated markdown note." }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args, exec) {
+      exec.signal.throwIfAborted();
+      const sources = (args.sources ?? []).map((ref) => ({
+        type: /^https?:/i.test(ref) ? "url" : "doc",
+        ref,
+        hash: sha1(ref)
+      }));
+      const at = Date.now();
+      const result = await deps.knowledge.capture({
+        question: args.question,
+        answer: args.answer,
+        sources,
+        topicHint: args.topic_hint,
+        sessionId: "tool",
+        turn: at,
+        capturedAt: at
+      });
+      return asCanonical({
+        pass: result.pass,
+        action: result.action,
+        score: result.score === void 0 ? null : Number(result.score.toFixed(3)),
+        reason: result.reason ?? null,
+        item_id: result.item?.id ?? null,
+        topic: result.item?.topic ?? null
+      });
+    }
+  }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_query",
+    description: "Search the Oblivion knowledge base by keywords. Returns matching items ranked by inverted-index score, each with its sources.",
+    parameters: {
+      query: { type: "string", required: true, description: "Search terms." },
+      limit: { type: "number", description: "Max results (default 10)." }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      return asCanonical(await deps.knowledge.query({ query: args.query, limit: args.limit ?? 10 }));
+    }
+  }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_profile",
+    description: "Read or update the user thinking profile: inquiry style, blind spots, receptive and resistant dimensions. The raw profile is only returned by this explicit call.",
+    parameters: {
+      action: {
+        type: "string",
+        required: true,
+        enum: ["read", "update"],
+        description: "read returns the merged profile; update applies a partial patch."
+      },
+      signal: {
+        type: "object",
+        additionalProperties: true,
+        description: "Partial profile patch; only used when action=update."
+      }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (args.action === "read") return asCanonical(await deps.profile.read());
+      const patch = args.signal ?? {};
+      return asCanonical(await deps.profile.update(patch));
+    }
+  }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_feedback",
+    description: "Record feedback on one perspective or dimension: 1 useful, -1 not useful, 0 neutral. Neutral is recorded but never tunes the profile; tuning needs N same-direction signals on the same target.",
+    parameters: {
+      target: { type: "string", required: true, description: "The dimension or perspective id." },
+      signal: {
+        type: "number",
+        required: true,
+        enum: [-1, 0, 1],
+        description: "1 up, -1 down, 0 neutral."
+      },
+      context: { type: "string", description: "What was being shown when the feedback was given." }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.feedback) {
+        return asCanonical({ skipped: true, reason: "enableFeedback is false" });
+      }
+      return asCanonical(await deps.feedback.record({
+        target: args.target,
+        signal: args.signal,
+        context: args.context
+      }));
+    }
+  }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_graph_neighbors",
+    description: "Query co-occurrence neighbors of one entity id. Weights decay lazily at read time, so older edges rank lower without any background job.",
+    parameters: {
+      id: { type: "string", required: true, description: 'Entity id, lowercased, e.g. "cordis".' },
+      limit: { type: "number", description: "Max neighbors (default 20)." }
+    },
+    output: {
+      schema: { type: "array", items: OBJECT_OUTPUT },
+      render: (_args, value) => asText(value)
+    },
+    async execute(args) {
+      const rows = await deps.graph.neighbors(args.id, args.limit ?? 20);
+      return asCanonical(rows.map((row) => ({
+        id: row.source_id === args.id ? row.target_id : row.source_id,
+        weight: Number(row.weight.toFixed(4)),
+        effective: Number(row.effective.toFixed(4)),
+        reinforce_count: row.reinforce_count,
+        last_reinforced_at: row.last_reinforced_at
+      })));
+    }
+  }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_digest",
+    description: "Organize the current conversation into a structured digest note plus one searchable knowledge item. Use it when the user asks to tidy up / summarize / organize this conversation. YOU produce the structure (you already hold the conversation): sections with headings and bodies, key decisions, todos, open questions, and links to related entries. The plugin writes <mdRoot>/04_\u4F1A\u8BDD\u6574\u7406/<date>-<title>.md, stores one item, and builds co-occurrence edges.",
+    parameters: {
+      title: { type: "string", required: true, description: 'Digest title, e.g. "DSH \u63D2\u4EF6\u5F00\u53D1 \xB7 \u4F1A\u8BDD\u6574\u7406".' },
+      topic: { type: "string", description: "Topic bucket for the note file and the item topic; derived from the title when omitted." },
+      sections: {
+        type: "array",
+        required: true,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            heading: { type: "string", required: true },
+            body: { type: "string", required: true }
+          }
+        },
+        description: "Main body of the digest: 2-6 sections, each a heading plus the distilled content."
+      },
+      decisions: { type: "array", items: { type: "string" }, description: "Key decisions reached in this conversation." },
+      todos: { type: "array", items: { type: "string" }, description: "Action items that follow from this conversation." },
+      open_questions: { type: "array", items: { type: "string" }, description: "Questions left unresolved." },
+      links: { type: "array", items: { type: "string" }, description: "Related item ids or note names, written as [[...]] wikilinks." },
+      session_id: { type: "string", description: "Optional session id recorded in the note and item sources." }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.digest) {
+        return asCanonical({ skipped: true, reason: "digest service unavailable" });
+      }
+      const result = await deps.digest.save({
+        title: args.title,
+        topic: args.topic,
+        sections: args.sections ?? [],
+        decisions: args.decisions,
+        todos: args.todos,
+        openQuestions: args.open_questions,
+        links: args.links,
+        sessionId: args.session_id
+      });
+      return asCanonical({
+        id: result.id,
+        title: result.title,
+        topic: result.topic,
+        sections: result.sections,
+        note: result.notePath,
+        item: result.itemId,
+        edges: result.entities
+      });
+    }
+  }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_retitle",
+    description: "Rename / re-tag Oblivion notes so the file name says what is actually inside. Call it with NO `items` first: it returns candidate notes (id, current file name, topic, the original question, an answer excerpt). Then call it again with `items` giving each note a content-based title (<= 32 chars) and 2-8 tags. The plugin renames the file, rewrites the note header/frontmatter (the original question is preserved in `ask:` / `>Ask\uFF1A`), syncs the knowledge item, and rebuilds <mdRoot>/00-Index/\u7D22\u5F15.md.",
+    parameters: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string", required: true, description: "Note id from the candidate list (the value inside <!-- oblivion:id=\u2026 -->)." },
+            title: { type: "string", required: true, description: 'New content-based name, e.g. "Exa/Tavily \u5BC6\u94A5\u8BFB\u53D6\u4E0E\u76F4\u8FDE\u68C0\u7D22".' },
+            tags: { type: "array", items: { type: "string" }, description: "Replacement tags (2-8, lowercase, no #)." }
+          }
+        },
+        description: "Notes to rename. Omit (or pass an empty array) to get the candidate list instead."
+      },
+      limit: { type: "number", description: "How many candidates to return in list mode (default 10, max 50)." }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.retitle) {
+        return asCanonical({ skipped: true, reason: "retitle service unavailable" });
+      }
+      const items = args.items ?? [];
+      if (items.length === 0) {
+        const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(50, Math.floor(args.limit)) : 10;
+        const notes = await deps.retitle.list(limit);
+        return asCanonical({
+          mode: "list",
+          count: notes.length,
+          hint: "\u7ED9\u6BCF\u7BC7\u4E00\u4E2A\u5185\u5BB9\u540D\uFF08<= 32 \u5B57\uFF09\u4E0E 2-8 \u4E2A\u6807\u7B7E\uFF0C\u518D\u8C03\u4E00\u6B21\u672C\u5DE5\u5177\u5E76\u5728 items \u91CC\u5E26\u4E0A id/title/tags\u3002",
+          notes: notes.map((n) => ({
+            id: n.id,
+            file: n.file,
+            title: n.title,
+            topic: n.topic,
+            tags: n.tags,
+            ask: n.ask,
+            excerpt: n.excerpt
+          }))
+        });
+      }
+      const { results, index } = await deps.retitle.apply(items.map((it) => ({ ...it, namedBy: "model" })));
+      const ok2 = results.filter((r) => r.ok);
+      return asCanonical({
+        mode: "apply",
+        total: results.length,
+        renamed: ok2.filter((r) => r.from !== r.to).length,
+        retagged: ok2.filter((r) => r.from === r.to).length,
+        failed: results.filter((r) => !r.ok),
+        results,
+        index
+      });
+    }
+  }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_wiki",
+    description: "Merge notes that are really about the SAME topic into one wiki page under <mdRoot>/02_Wiki\u9875\u9762/. Call it with NO `clusters` first: it returns candidate notes (id, file name, the original question, tags, excerpt) plus the wiki pages that already exist. Then call it again with `clusters` = [{ title, summary, members: [note id], tags }] \u2014 group by meaning, not by the `topic` field (that field is only the first word of the question). The plugin writes one page per cluster (your summary + source-note links + shared tags), adds a `> Wiki\uFF1A[[title]]` backlink line to every member note, and rebuilds <mdRoot>/00-Index/\u7D22\u5F15.md. It never edits note bodies and never deletes anything; re-running a cluster updates that same page.",
+    parameters: {
+      clusters: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string", required: true, description: 'Wiki page title (also the file name), e.g. "\u8BA4\u77E5\u63D2\u4EF6\u7EC4 \xB7 \u4E8B\u4EF6\u4F5C\u7528\u57DF\u4E0E\u6CE8\u5165".' },
+            summary: { type: "string", required: true, description: "The merged write-up: what the notes together say, where they disagree, what is still open. This is the reason the page exists." },
+            members: {
+              type: "array",
+              items: { type: "string" },
+              required: true,
+              description: "Note ids from the candidate list (the value inside <!-- oblivion:id=\u2026 -->)."
+            },
+            tags: { type: "array", items: { type: "string" }, description: "Extra page tags (lowercase, no #); member tags are merged in automatically." }
+          }
+        },
+        description: "Topic clusters to write. Omit (or pass an empty array) to get the candidate list instead."
+      },
+      limit: { type: "number", description: "How many candidate notes to return in list mode (default 20, max 80)." }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.wiki) {
+        return asCanonical({ skipped: true, reason: "wiki service unavailable" });
+      }
+      const clusters = args.clusters ?? [];
+      if (clusters.length === 0) {
+        const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(80, Math.floor(args.limit)) : 20;
+        const { notes, pages } = await deps.wiki.list(limit);
+        return asCanonical({
+          mode: "list",
+          count: notes.length,
+          hint: "\u6309**\u542B\u4E49**\u5206\u7C07\uFF08\u4E0D\u8981\u6309 topic \u5B57\u6BB5\uFF1A\u90A3\u53EA\u662F\u95EE\u53E5\u7684\u7B2C\u4E00\u4E2A\u8BCD\u4E32\uFF09\uFF0C\u6BCF\u7C07\u7ED9 title + summary + members(\u7B14\u8BB0 id)\u3002\u518D\u8C03\u4E00\u6B21\u672C\u5DE5\u5177\u5E76\u5E26\u4E0A clusters \u843D\u5730\uFF1Bsummary \u662F\u4E3B\u9898\u9875\u7684\u6838\u5FC3\uFF08\u5408\u5E76\u540E\u7684\u53E3\u5F84/\u5206\u6B67/\u672A\u51B3\uFF09\u3002",
+          pages,
+          notes: notes.map((n) => ({
+            id: n.id,
+            file: n.file,
+            title: n.title,
+            ask: n.ask,
+            status: n.status,
+            tags: n.tags,
+            wiki: n.wiki || null,
+            excerpt: n.excerpt
+          }))
+        });
+      }
+      const { results, linked, index } = await deps.wiki.apply(clusters);
+      const ok2 = results.filter((r) => r.ok);
+      return asCanonical({
+        mode: "apply",
+        total: results.length,
+        pages: ok2.length,
+        linked,
+        failed: results.filter((r) => !r.ok),
+        results,
+        index
+      });
+    }
+  }));
+  ctx.tools.register(defineTool({
+    name: "oblivion_status",
+    description: "Inspect the Oblivion cognition layer: effective config, capture stats from real decision traces (capture rate, rejection reasons, value-score distribution), tuning hints (which key to change and why), and the most recent per-turn decisions.",
+    parameters: {
+      recent: {
+        type: "number",
+        description: "How many recent decisions to include (default from config, max 100)."
+      },
+      include_config: {
+        type: "boolean",
+        description: "Include the full effective config (default true)."
+      }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.stats) {
+        return asCanonical({ enabled: false, reason: "enableStats is false \u2014\u2014 \u5224\u5B9A\u7559\u75D5\u88AB\u5173\u95ED" });
+      }
+      const recentLimit = typeof args.recent === "number" && args.recent > 0 ? Math.min(100, Math.floor(args.recent)) : void 0;
+      const snapshot = await deps.stats.status({
+        recentLimit,
+        perspective: deps.perspectiveStats?.() ?? void 0
+      });
+      const { config, ...rest } = snapshot;
+      return asCanonical(args.include_config === false ? rest : { ...rest, config });
+    }
+  }));
+}
+
+// src/mcp/channel.ts
+var MCP_CHANNEL = "@oblivion/core/mcp";
+var MCP_API_VERSION = 1;
+var MCP_OWNER = "@oblivion/core";
+function channelKey() {
+  return Symbol.for(MCP_CHANNEL);
+}
+function registry() {
+  const key = channelKey();
+  const scope = globalThis;
+  const existing = scope[key];
+  if (existing instanceof Map) return existing;
+  const created = /* @__PURE__ */ new Map();
+  Object.defineProperty(scope, key, {
+    value: created,
+    enumerable: false,
+    writable: false,
+    configurable: false
+  });
+  return created;
+}
+function publishMcp(endpoint) {
+  const slot = {
+    apiVersion: endpoint.apiVersion,
+    owner: endpoint.owner,
+    endpoint,
+    at: Date.now()
+  };
+  registry().set(endpoint.owner, slot);
+  return () => {
+    const current = registry().get(endpoint.owner);
+    if (current !== void 0 && current.endpoint === endpoint) registry().delete(endpoint.owner);
+  };
+}
+function resolveMcp() {
+  const slots = [...registry().values()].filter((slot) => slot.apiVersion === MCP_API_VERSION);
+  if (slots.length === 0) return null;
+  const ready = slots.filter((slot) => slot.endpoint.describe().ready);
+  const pool = ready.length > 0 ? ready : slots;
+  return pool.reduce((newest, slot) => slot.at >= newest.at ? slot : newest).endpoint;
+}
+function describeMcpChannel() {
+  const slots = [...registry().values()];
+  const fresh = slots.filter((slot) => slot.apiVersion === MCP_API_VERSION);
+  if (fresh.length === 0) {
+    return {
+      present: false,
+      apiVersion: MCP_API_VERSION,
+      owner: fresh.length === 0 && slots.length > 0 ? slots[0].owner : "",
+      at: 0,
+      version: "",
+      tools: [],
+      ready: false
+    };
+  }
+  const newest = fresh.reduce((a, b) => b.at >= a.at ? b : a);
+  const info = newest.endpoint.describe();
+  return { present: true, apiVersion: info.apiVersion, owner: info.owner, at: newest.at, version: info.version, tools: info.tools, ready: info.ready };
+}
+function clearMcpChannel() {
+  registry().clear();
+}
+
+// src/mcp/tools.ts
+function toSources(urls) {
+  if (!Array.isArray(urls)) return [];
+  return urls.filter((value) => typeof value === "string" && value !== "").map((ref) => ({ type: /^https?:/i.test(ref) ? "url" : "doc", ref }));
+}
+function toTags(value) {
+  if (!Array.isArray(value)) return void 0;
+  const tags = value.filter((tag) => typeof tag === "string" && tag.trim() !== "").map((tag) => tag.trim());
+  return tags.length > 0 ? tags : void 0;
+}
+var TOOLS = [
+  {
+    name: "oblivion_capture_page",
+    description: "\u628A\u5F53\u524D\u7F51\u9875\uFF08\u6B63\u6587\u6216\u7528\u6237\u9009\u4E2D\u7684\u7247\u6BB5\uFF09\u52A0\u5165\u672C\u5730 Oblivion \u77E5\u8BC6\u5E93\u3002\u4F1A\u7ECF\u8FC7\u53BB\u91CD\u4E0E\u4EF7\u503C\u8BC4\u4F30\uFF0C\u8FD4\u56DE\u5B9E\u9645\u5904\u7F6E\u7ED3\u679C\uFF08created/appended/duplicate/ignored\uFF09\u4E0E\u539F\u56E0\u3002",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "\u9875\u9762 URL\u3002" },
+        title: { type: "string", description: "\u9875\u9762\u6807\u9898\u3002" },
+        content: { type: "string", description: "\u9875\u9762\u6B63\u6587\u6587\u672C\u3002" },
+        selection: { type: "string", description: "\u7528\u6237\u9009\u4E2D\u7684\u7247\u6BB5\uFF1B\u63D0\u4F9B\u65F6\u4F18\u5148\u4E8E content\u3002" },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "\u6807\u7B7E\u3002\u5F52\u4E00\u5316\u540E\u5199\u5165\uFF08\u53EA\u7559 ASCII \u6280\u672F\u8BCD\u5F62\u72B6\u3001\u5355\u9879 \u226440 \u5B57\uFF09\u3002"
+        }
+      },
+      required: ["url", "title", "content"],
+      additionalProperties: false
+    },
+    async run(facade, args) {
+      const url = String(args.url ?? "");
+      const title = String(args.title ?? "");
+      const selection = typeof args.selection === "string" ? args.selection.trim() : "";
+      const body = selection !== "" ? selection : String(args.content ?? "");
+      if (body.trim() === "") throw new Error("\u5185\u5BB9\u4E3A\u7A7A\uFF0C\u672A\u5199\u5165\u77E5\u8BC6\u5E93\u3002");
+      const at = Date.now();
+      return facade.knowledge.capture({
+        question: title === "" ? url : title,
+        answer: body,
+        sources: toSources([url]),
+        tagsHint: toTags(args.tags),
+        sessionId: "http-bridge",
+        turn: at,
+        capturedAt: at
+      });
+    }
+  },
+  {
+    name: "oblivion_search",
+    description: "\u68C0\u7D22\u672C\u5730 Oblivion \u77E5\u8BC6\u5E93\uFF0C\u8FD4\u56DE\u6700\u76F8\u5173\u7684\u82E5\u5E72\u6761\u8BB0\u5F55\uFF08\u542B\u6765\u6E90 URL\uFF09\u3002",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "\u68C0\u7D22\u5173\u952E\u8BCD\u6216\u81EA\u7136\u8BED\u8A00\u95EE\u9898\u3002" },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "\u8FD4\u56DE\u6761\u6570\u4E0A\u9650\uFF0C\u9ED8\u8BA4 10\u3002" }
+      },
+      required: ["query"],
+      additionalProperties: false
+    },
+    async run(facade, args) {
+      const query = String(args.query ?? "").trim();
+      if (query === "") throw new Error("query \u4E0D\u80FD\u4E3A\u7A7A\u3002");
+      const rawLimit = Number(args.limit ?? 10);
+      const limit = Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 50 ? rawLimit : 10;
+      return facade.knowledge.query({ query, limit });
+    }
+  }
+];
+
+// src/mcp/protocol.ts
+var PROTOCOL_VERSION = "2025-06-18";
+var INSTRUCTIONS = [
+  "Oblivion \u672C\u5730\u77E5\u8BC6\u5E93\u7AEF\u70B9\u3002",
+  "\u63D0\u4F9B oblivion_capture_page\uFF08\u628A\u5F53\u524D\u7F51\u9875\u52A0\u5165\u77E5\u8BC6\u5E93\uFF09\u4E0E oblivion_search\uFF08\u68C0\u7D22\u5DF2\u5B58\u77E5\u8BC6\uFF09\u3002",
+  "\u6240\u6709\u6570\u636E\u4FDD\u5B58\u5728\u7528\u6237\u672C\u673A\uFF0C\u4E0D\u4E0A\u4F20\u3002"
+].join("");
+var ok = (id, result) => ({ jsonrpc: "2.0", id, result });
+var fail = (id, code, message) => ({
+  jsonrpc: "2.0",
+  id,
+  error: { code, message }
+});
+function toolSchemas() {
+  return TOOLS.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }));
+}
+function toolNames() {
+  return TOOLS.map((tool) => tool.name);
+}
+function describeEndpoint(facade, apiVersion, owner) {
+  return {
+    apiVersion,
+    owner,
+    version: facade?.version ?? "",
+    tools: toolNames(),
+    ready: facade !== null
+  };
+}
+async function handleMcpMessage(options) {
+  const log = options.log ?? (() => void 0);
+  let message;
+  try {
+    const parsed = JSON.parse(options.rawBody);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return fail(null, -32600, "invalid request");
+    }
+    message = parsed;
+  } catch {
+    return fail(null, -32700, "parse error");
+  }
+  if (message.id === void 0) {
+    log(`mcp: notification ${String(message.method)}`);
+    return null;
+  }
+  if (message.jsonrpc !== "2.0") return fail(message.id, -32600, "invalid request");
+  switch (message.method) {
+    case "initialize": {
+      const facade = options.facade;
+      return ok(message.id, {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: { tools: {} },
+        serverInfo: { name: "oblivion", version: facade?.version ?? "unknown" },
+        instructions: INSTRUCTIONS
+      });
+    }
+    case "notifications/initialized":
+      return null;
+    case "ping":
+      return ok(message.id, {});
+    case "tools/list":
+      return ok(message.id, { tools: toolSchemas() });
+    case "tools/call": {
+      const name = message.params?.name;
+      const tool = TOOLS.find((candidate) => candidate.name === name);
+      if (tool === void 0) return fail(message.id, -32602, `Unknown tool: ${String(name)}`);
+      const facade = options.facade;
+      if (facade === null) {
+        return fail(message.id, -32603, "oblivion core facade not ready");
+      }
+      const args = message.params?.arguments !== null && typeof message.params?.arguments === "object" ? message.params.arguments : {};
+      try {
+        const value = await tool.run(facade, args);
+        return ok(message.id, {
+          content: [
+            {
+              type: "text",
+              text: typeof value === "string" ? value : JSON.stringify(value, null, 2)
+            }
+          ],
+          isError: false
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        log(`mcp: tool ${String(name)} failed: ${reason}`);
+        return ok(message.id, {
+          content: [{ type: "text", text: `\u5DE5\u5177\u6267\u884C\u5931\u8D25\uFF1A${reason}` }],
+          isError: true
+        });
+      }
+    }
+    default:
+      return fail(message.id, -32601, `Unsupported method: ${String(message.method)}`);
+  }
+}
+
+// src/mcp/index.ts
+function createMcpEndpoint(options = {}) {
+  const owner = options.owner ?? MCP_OWNER;
+  const current = options.facadeOf ?? (() => options.facade ?? null);
+  return {
+    apiVersion: MCP_API_VERSION,
+    owner,
+    version: () => current()?.version ?? "",
+    describe: () => describeEndpoint(current(), MCP_API_VERSION, owner),
+    handle: (rawBody, log) => handleMcpMessage({ facade: current(), rawBody, log: log ?? options.log })
+  };
+}
+function registerMcp(options = {}) {
+  const endpoint = createMcpEndpoint(options);
+  return { endpoint, dispose: publishMcp(endpoint) };
 }
 
 // src/config.ts
@@ -2198,6 +3608,13 @@ var DEFAULT_CONFIG = {
   graphWeightCap: 1,
   graphDecayBase: 0.95,
   graphDecayPeriodDays: 30,
+  /**
+   * 上限按本机实测标定（23,253 条边 / 1,437 个节点、权重中位数就是初始值 0.3）：
+   * 留 8,000 条边 ≈ 保留「共现过 ≥2 次或较新」的那部分，文件降到 ~1 MB；
+   * 600 个节点保住 `graph_neighbors` 最常查的中心节点，弱节点连边一起走。
+   */
+  graphMaxEdges: 8e3,
+  graphMaxNodes: 600,
   feedbackTuneThreshold: 3,
   promptSectionOrder: 50,
   maxPerspectivePerTurn: 2,
@@ -2230,21 +3647,40 @@ export {
   CONFLICTS_DIR,
   DEFAULT_CONFIG,
   DIMENSIONS,
+  ENTRY_FILE_RE,
   INDEX_DIR,
+  KnowledgeStore,
+  MCP_API_VERSION,
+  MCP_CHANNEL,
+  MCP_OWNER,
+  TOOLS as MCP_TOOLS,
   MD_FALLBACK_DIR,
   MS_PER_DAY,
+  PROTOCOL_VERSION,
+  RELATED_HEADER,
+  TAG_MAX,
+  TOPIC_MAX,
+  WIKI_DIR_FALLBACK,
   adaptStyle,
   ageDays,
   analyzeCoverage,
   appendRelatedLinks,
+  applyRetitle,
+  channelKey,
   checkL3Rules,
   classifyDir,
+  clearMcpChannel,
   compareByOverlap,
   composeDigest,
+  contentSection,
+  createMcpEndpoint,
+  createRetitleService,
   createTraceStore,
+  createWikiService,
   defaultProfile,
   deriveTitle,
   deriveTopic,
+  describeMcpChannel,
   effectiveWeight,
   ensureMdDirs,
   evaluate,
@@ -2252,39 +3688,60 @@ export {
   extractEntities,
   extractQAPair,
   extractStyleSignal,
+  fileNameOf,
   findRelatedItems,
   fourLayerFilter,
   generatePerspectives,
+  handleMcpMessage,
   heuristicScore,
   isHumanUserMessage,
   isOblivionOriginated,
+  isWeakTitle,
   isoDate,
   jaccard,
+  listNotes,
+  listWikiPages,
+  toolNames as mcpToolNames,
+  toolSchemas as mcpToolSchemas,
   mdDirNames,
   mergeProfile,
   newId,
   normalizeForHash,
+  parseNote,
+  pruneGraph,
+  publishMcp,
   registerDigest,
   registerFeedback,
   registerKnowledge,
+  registerMcp,
   registerPerspective,
   registerQaLoop,
   registerStats,
+  registerTools,
   reinforce,
   renderConflict,
   renderFrontmatter,
   renderIndex,
+  renderNote,
+  renderWikiPage,
   resolveConfig,
+  resolveMcp,
   safeDirName,
   safeFileName,
+  safeName,
+  sanitizeTags,
   sha1,
   shortHash,
   suggest,
   summarize,
+  tagsFromQA,
   textOfMessage,
+  titleFromQA,
   tokenize,
+  topicFromQuestion,
   tune,
   userMessageSourceKind,
   writeIndexNote,
-  writeMD
+  writeMD,
+  writebackWikiLink
 };
