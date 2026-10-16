@@ -12,6 +12,48 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — 本机诊断：`billion-context`（lane）重建每个请求时**拆坏一对 `tool_use`/`tool_result`** —— `session-10837d9b` 每轮 400 的收窄结论 + 三条可回退的开关
+
+会话 `session-10837d9b` 在 `deepseek-account/deepseek-flash` 上**每轮 400**，报错永远指向同一次调用
+（`call_271ef71a7fed425c8482`），下标随数组规模漂移（实测 1097 / 713 / 47 / 65）；切到 `agnes-2.5-flash`
+（OpenAI 形状、本机私网上游）就正常 —— 是**形状相关**的问题，不是会话坏了。
+
+结论：**lane 每请求都从自己那份会话库重建数组**（逐请求日志里都有 `rebasing ACP state onto the compacted
+history (#2432)`），而它的 **Anthropic 形状渲染**会把「两条 tool-call 中间夹 text」的那条 assistant 消息渲染成
+独立记录 ⇒ `tool_use` 后面不再紧跟 `tool_result`。四条取证与完整复核配方在
+[`WORKSPACE.md`](WORKSPACE.md) 已知限制 7；给上游的报告草稿在
+[`docs/上游问题报告-billion-context.md`](docs/上游问题报告-billion-context.md)。
+
+同一句措辞的 400 在 **2026-10-06 另外两个会话**上也出现过（lane `0.1.185`，call id 不同）⇒ 不是这条会话
+独有的形态问题，lane 的 Anthropic 重建**会在某些历史形态下让 `tool_use` 丢掉紧跟的 `tool_result`**。
+
+本轮实验（都在真实会话上跑，改配置前先备份）：
+
+| 轮次 | 配置 | 结果 |
+| --- | --- | --- |
+| 1 | 只开 `dsh.allowDshCompaction` | DSH 原生压缩落地（`compaction/start → summary → end`，surfaceOp `{replace, 14994→17791}`），占用 **199% → 40%**；deepseek 的 400 **不变**（同一 call id，压缩开着时下标 47） |
+| 2 | + 顶层 `passthrough: true` | deepseek 400 **依旧**（lane 打 `PASSTHROUGH (compression OFF)`，请求里仍是同一条孤儿，本次下标 65）⇒「全局 passthrough」不解决这条；**但会话在 agnes 上恢复可答**（`turn/end completed`） |
+| 3 | 压缩**打开** + 路由级 `providers."https://api.deepseek.com".passthrough` | 用来**定性**「lane 的重建健康吗」：同一会话、同一请求在 **OpenAI 形状**下被 lane 完整重建（`311 msgs`，`inbound 652.4KiB → outbound 500.4KiB`，T1 nudge + fold 生效）→ 上游接受、`turn/end reason={"kind":"completed"}` ⇒ **OpenAI 形状没问题，问题在 Anthropic 形状** |
+| 4 | 回到安全态：顶层 `passthrough` + 路由级豁免 | 会话正常（`turn/end completed`；注入的「安全态已恢复」拿到真实回答） |
+
+改动只落在**工作区之外**的 lane 配置（`~/.config/billion-context/billion-context.json`）与本仓库文档，
+没有插件代码改动 ⇒ **不递增任何版本**。当前值：
+
+```json
+{ "dsh": { "allowDshCompaction": true },
+  "passthrough": true,
+  "providers": { "https://api.deepseek.com": { "passthrough": true } } }
+```
+
+> 顶层 `passthrough` 是**临时安全态**（把 lane 全局静音、会话不被打断）。要恢复 lane 的压缩能力，删掉它即可 ——
+> 届时 agnes 路由会重新经过 lane 的重建（轮次 3 证明它在 OpenAI 形状下是好的），而 deepseek 路由由路由级
+> 豁免保着。改动前的配置都留了带时间戳的备份（同目录 `*.bak-before-*`）。
+
+**未定**：路由级豁免够不够，必须把会话模型切回 `deepseek-account/deepseek-flash` 再发一轮才知道；三种结果
+（定案 / 反证回到 DSH 侧 / lane 的重写对本会话其实是必需的）的含义见 WORKSPACE 已知限制 7 的表。
+两条「覆盖那条消息」的兜底（DSH `/compact`、临时降 `compaction-basic` 的 `retainTokens`）**会牺牲历史，
+需先经所有者同意** —— 本轮没有执行。
+
 ## [未发布] — 工具链：`tools/dsh-browser-login.mjs` 接入（`corepack pnpm dsh-browser-login <平台>`）
 
 `dsh-web-search-pro` 的平台搜索（知乎 / 微博）要**浏览器登录态**，采集脚本之前只躺在工作区里、没有入口，

@@ -353,6 +353,100 @@ vendor/cordis/src/reflect.ts:144   cannot get property "x" without inject
 两条规矩由此而来：**① 作用域里只读 `inject` 声明过的东西**；**② 挂载期任何动作都要能把异常变成一条 warn**
 ——「路由静默消失」这种故障从外部看和「没装」一模一样，不留下痕迹就只能靠重启 + 猜测排查。
 
+### 7. `billion-context`（lane）从自己那份会话库**重建每个请求**：Anthropic 形状会把一对 `tool_use`/`tool_result` 拆开（2026-10-17 收窄）
+
+现场：会话 `session-10837d9b` 在 `deepseek-account/deepseek-flash` 上**每轮 400**，报错永远指向同一次调用：
+
+```
+messages.<N>.1: `tool_use` ids were found without `tool_result` blocks immediately after: call_271ef71a7fed425c8482
+```
+
+`<N>` 随请求数组规模漂移（实测 1097 → 713 → 65 → 47），**call id 不变**；同一会话切到 `agnes-2.5-flash`
+（OpenAI 形状、本机私网上游）一切正常 ⇒ 与「会话坏了」无关，是**请求形状相关**的问题。
+
+**触发形态**（全部只读取证，没动任何数据）：会话 surface 里只有一条 assistant 消息的内容在两条 `tool-call`
+之间**夹了 `text`**（`seq=18087`，`2026-10-10T14:22:49Z` 写入；它的两条 result 在日志里紧跟着 `18089`/`18091`，
+内容非空）。它进日志后 **12 小时**才第一次 400（`2026-10-11T02:39:02Z`）⇒ **形态本身不是触发点**，
+「每轮都把请求重写一遍」的那个动作才是（`session.v4.jsonl.zstd` 的 `time` 是 epoch 毫秒，此处与 lane 日志
+一样按 UTC 记；DSH 界面按本地时区显示）。
+
+**同一类 400 在别的会话也出现过**：`2026-10-06T09:08Z`（lane `0.1.185`）`session-70941d46…` 与
+`session-e8a4ca50…` 报的是同一句措辞、另一条 call id（`call_436f4aeb9f78477a9544`）⇒ 不是这条会话独有的
+形态问题，而是 lane 的 Anthropic 重建**会在某些历史形态下让 `tool_use` 丢掉紧跟的 `tool_result`**。
+
+| 取证对象 | 事实 | 指向 |
+| --- | --- | --- |
+| DSH 的会话日志 `session.v4.jsonl.zstd` | tool-call 与两条 tool-result 三份记录俱全 | 磁盘上的历史是好的 |
+| DSH 自己的 Anthropic 序列化器 `packages/llm/llm-deepseek/src/serialize.ts` | **在本地就校验配对**：孤儿会抛 `LlmError(… need immediate results)`，不会走到上游 | 拆配对发生在**序列化之后** |
+| lane 自己那份会话库（`index.db`） | 那条消息被拆成 `assistant/tool-call` → `assistant/text` → `assistant/tool-call` 三条记录，其 `wireIndex=65` **正好等于**上游报的下标 | lane 的重建是唯一同时解释「下标吻合」+「形状相关」的一环 |
+| lane 对**同一会话、同一请求**的 **OpenAI** 形状重建（本轮实验：压缩打开、T1 nudge + fold 生效） | `request: 311 msgs, inbound=652.4KiB → outbound=500.4KiB`，上游接受，`turn/end reason={"kind":"completed"}` | lane 的重建在 OpenAI 形状下是健康的 ⇒ 故障在其**Anthropic 形状的渲染** |
+
+**这是本轮能做到的最强推断，不是逐字节实证**：lane 每请求都从自己的库重建数组（日志里每次都有
+`dsh native compaction detected (…) → rebasing ACP state onto the compacted history (#2432)`）；
+Anthropic 形状要求 `tool_result` **紧跟**其 `tool_use`，而它把夹在中间的 `text` 渲染成了一个独立消息 ⇒
+上游看到「`tool_use` 后面没有 `tool_result`」。
+
+**最小修复（已落配置，一条命令可回退）**：让这条上游的流量**不经过 lane 的会话状态重建**。
+
+`~/.config/billion-context/billion-context.json`：
+
+```json
+{
+  "dsh": { "allowDshCompaction": true },
+  "passthrough": true,
+  "providers": { "https://api.deepseek.com": { "passthrough": true } }
+}
+```
+
+| 开关（依 lane 的 `CONFIGURATION.md`） | 语义 | 实测效果 |
+| --- | --- | --- |
+| `providers.<上游>.passthrough` | **路由级**：该上游逐字节转发、**不带会话状态** | 针对本故障的那一条（待验证，见下） |
+| `providers.<上游>.direct` | **路由级**：该上游流量**完全不指向 lane**（客户端豁免） | 备选；若 `passthrough` 无效，用它区分「lane 的重建」与「链上别的拦截器」 |
+| 顶层 `passthrough` | **全局**：不做压缩/工具注入/nudge，**但仍持有会话状态** | 实测**不足以**修这条 400（孤儿依旧、下标漂到 65）；对 agnes 形状有效（会话恢复可答） |
+| `dsh.allowDshCompaction` | 放行 **DSH 原生压缩**（默认被 lane 以 422 拒） | 让那对被顶到边界外的 tool 对能被压缩**覆盖**掉（`selectCompactableRange`：region 取前缀 + `toolPairingBalancedBefore` 不切对，构造上拆不开配对）；实测占用 199% → 40% |
+
+改动前都留了带时间戳的备份：`billion-context.json.bak-before-allow-dsh-compaction-*` ·
+`.bak-before-passthrough-*` · `.bak-before-verdict-*`（同目录）。
+
+> ⚠️ **别把顶层 `passthrough` 当成「关掉 lane」**：文档只承诺它「forward without compression / tool injection /
+> nudging」，**会话状态仍在** —— 所以它对这条 400 无效（有实测）。`dsh.allowDshCompaction` 也只解决「DSH 想压缩但
+> 被拒」，不解决「lane 每次重建」。
+
+**还没定的一条**：路由级豁免到底够不够。`providers` 的键必须与上游**逐字**匹配 —— 没匹配上时 lane 会打
+`[route] no provider route matched <host:…>`（匹配上就不打）。验证必须**把会话模型切回
+`deepseek-account/deepseek-flash` 再发一轮**（本机没有别的 deepseek 流量能替代）。三种结果各有含义：
+
+| 验证结果 | 结论 |
+| --- | --- |
+| 不再 400 | 定案：lane 的 Anthropic 重建是肇事者；deepseek 路由恢复（代价：这条上游不再被 lane 压缩） |
+| 仍旧同一个 400 | 反证：不是 lane 的重建 ⇒ 回头查 DSH 侧，那时唯一的路是让 DSH 原生压缩**覆盖**那条消息（`/compact` 用 `retainTokens=0`、损失大；或临时降 `compaction-basic` 的 `thresholdRatio`/`retainTokens` 触发一次更激进的压缩）—— **两条都要先问所有者**，那是牺牲历史 |
+| 换成别的错（例如 `reasoning_content` 类） | lane 的重写对本会话的 deepseek 路由是**必需**的（它会修 reasoning 配对，见下）⇒ 只能等 lane 修 Anthropic 重建，规避回到「覆盖那条消息」 |
+
+**复核配方**（都不碰数据）：
+
+```powershell
+[Console]::OutputEncoding = [Text.Encoding]::UTF8        # 控制台是 GBK，中文乱码先修这一行
+$node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+
+# ① lane 的逐请求日志：400 原文、rebasing、路由匹配、nudge/usage
+Get-Content "$env:USERPROFILE\.local\state\billion-context\bili.log" -Tail 60
+
+# ② 会话日志是多帧拼接（一个 zstd 帧一段），Node 的 createZstdDecompress 只解第一帧 ——
+#    必须自己按 magic 28 B5 2F FD 切帧、再逐帧 zstdDecompressSync（本轮用 %TEMP%\opencode\tail-frames.mjs）
+
+# ③ lane 那份会话库（~8.8 MB SQLite）里这条消息被拆成几条、wireIndex 是多少：
+#    运行时 node v24 自带 node:sqlite（DatabaseSync），不需要装 sqlite3
+$db = "$env:USERPROFILE\.local\share\billion-context\sessions\index.db"
+
+# ④ 宿主端口每次启动都会变：GET /obl-brand/plugins 200 认端口（见上一节）
+```
+
+**同一份日志里另外两处值得上报的 lane 缺陷**：
+`reasoning-pair-violated: 121 assistant tool-call message(s) lack reasoning_content while 1 carry it — strict-echo
+upstreams (DeepSeek thinking mode) will reject the request`；以及每请求重复的
+`DIGEST DRIFT … migration parity broken`。报告草稿见
+[`docs/上游问题报告-billion-context.md`](docs/上游问题报告-billion-context.md)（lane 版本 **0.1.197**）。
+
 ## 应用图标：只能改快捷方式，改不了窗口/任务栏
 
 DSH 桌面端有三处「图标」，来源各不相同（依据 `app.asar/lib/main.js`）：
