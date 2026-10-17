@@ -19,11 +19,20 @@
   powershell -File tools/check-workspace.ps1 -Task test     # 只跑测试
   powershell -File tools/check-workspace.ps1 -Task compat   # 只跑 DSH 宿主契约校验
   powershell -File tools/check-workspace.ps1 -Task selfcheck# 只跑每包端到端自检
+  powershell -File tools/check-workspace.ps1 -Task build -AllowRunning   # 覆盖「构建守卫」，见下
+
+  构建守卫（2026-10-17 加）：`check` 与 `build` 两个 task 都会**重写插件 client 产物**，
+  而「应用运行中重写产物」会让正在启动/刷新的界面起不来（根因见 Assert-DshNotRunning）。
+  所以这两个 task 默认在 DSH 活着时**直接拒绝**，想覆盖就显式加 `-AllowRunning`，
+  并在跑完立刻**完全重启** DSH（不是只刷新窗口）。
 #>
 [CmdletBinding()]
 param(
   [ValidateSet('check', 'compat', 'install', 'typecheck', 'test', 'build', 'version', 'selfcheck')]
-  [string]$Task = 'check'
+  [string]$Task = 'check',
+
+  # 构建守卫的覆盖开关：默认「DSH 活着就拒绝构建」。理由见 Assert-DshNotRunning。
+  [switch]$AllowRunning
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,6 +74,73 @@ function Assert-NoLibVersion {
   }
 }
 Assert-NoLibVersion
+
+# ---- 构建守卫：DSH 活着的时候，不许重建插件 client 产物 ----
+#
+# 2026-10-17 的真故障（`%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-2026-10-17T01-48-07-569Z-web-boot.log`）：
+# 应用**运行中**重建插件 ⇒ client 产物的 rev（`sha1(mtimeMs, ctimeMs, size)`，见
+# `dsh-client-modules/lib/index.js:193`）变了，而正在启动/刷新的界面手里仍是**旧 rev** 的 URL；
+# 宿主按「含 rev 的完整 URL」精确查表 ⇒ 旧 rev **404**（`:958-971`），且 `compose()` 只保留
+# **上一代** batch 响应（`:681`）；客户端又规定「一个脚本加载失败 → 整条 combo 批跳过」
+# （`dsh-client-modules/lib/client.js:629`）⇒ `web boot: 4 entries did not activate` ⇒
+# 「DeepSeek Harness 无法使用」。四个未激活的 entry 与当时被重写的四个 client 包**逐一对应**：
+# panel / brand / daily-life / vimc。
+#
+# 修它的成本极低（关掉 App 再构建），漏掉的代价极高（界面起不来，只能走恢复对话框），
+# 而 `pnpm check` 里就含 build ⇒ 靠人记必踩。所以这里机器拦，并把「为什么」写进报错。
+function Get-RunningDshCarrier {
+  $found = @()
+
+  # ① 桌面端：Electron 的主/渲染/工具进程名都叫这个，捞到任意一个就说明 App 活着。
+  $desktop = @(Get-Process -Name 'DeepSeek Harness' -ErrorAction SilentlyContinue)
+  if ($desktop.Count -gt 0) {
+    $head = @($desktop | Select-Object -First 3 | ForEach-Object { $_.Id }) -join '/'
+    $tail = ''
+    if ($desktop.Count -gt 3) { $tail = ' 等' }
+    $found += ('桌面端 ' + $desktop.Count + ' 个进程（pid ' + $head + $tail + '）')
+  }
+
+  # ② 我们的插件宿主：心跳 / 装载留痕里记了 pid。桌面端之外的载体（如 `dsh web`）也能靠这条捞到，
+  #    而且这条精确到「有插件在跑的宿主」，不依赖进程名 —— 从 DSH 内部跑构建同样会被拦下（本该如此）。
+  $hostPids = @()
+  foreach ($file in @(
+      (Join-Path $env:USERPROFILE '.oblivion\bridge-heartbeat.json'),
+      (Join-Path $env:USERPROFILE '.oblivion\data\mcp-channel-diag.json')
+    )) {
+    if (-not (Test-Path $file)) { continue }
+    $pin = $null
+    try { $pin = (Get-Content $file -Raw | ConvertFrom-Json).pid } catch { continue }
+    if ($null -eq $pin) { continue }
+    $proc = Get-Process -Id ([int]$pin) -ErrorAction SilentlyContinue
+    if ($null -eq $proc) { continue }
+    $hostPids += $proc.Id
+  }
+  $hostPids = @($hostPids | Sort-Object -Unique)
+  if ($hostPids.Count -gt 0) {
+    $found += ('插件宿主 pid ' + ($hostPids -join '/') + '（心跳 / 装载留痕）')
+  }
+
+  $found
+}
+
+function Assert-DshNotRunning {
+  $running = @(Get-RunningDshCarrier)
+  if ($running.Count -eq 0) { return }
+
+  $who = $running -join '、'
+  if ($AllowRunning) {
+    Write-Host ('⚠ DSH 正在运行（' + $who + '），-AllowRunning 已给：继续重建 client 产物。') -ForegroundColor Yellow
+    Write-Host '  跑完请**立刻完全重启** DSH（不是只刷新窗口），否则界面可能起不来。' -ForegroundColor Yellow
+    return
+  }
+
+  throw ('构建被拒绝：DSH 正在运行（' + $who + '）。' +
+    '构建会重写插件 client 产物 ⇒ rev（sha1(mtimeMs, ctimeMs, size)）变化；运行中的 DSH 若此刻启动或刷新界面，' +
+    '手里仍是旧 rev 的 URL，宿主对旧 rev 直接 404（且只保留上一代 batch 响应），一个脚本失败会连坐整条 combo 批 ⇒ ' +
+    '「web boot: N entries did not activate」⇒「DeepSeek Harness 无法使用」。' +
+    '2026-10-17 01:48Z 实测：4 个未激活 entry = 当时被重写的 4 个 client 包（panel / brand / daily-life / vimc）。' +
+    '怎么办：① 完全退出 DSH 后重跑；② 或加 -AllowRunning，跑完立刻完全重启 DSH（别只刷新窗口）。')
+}
 
 $runtimeRoot = $env:DSH_RUNTIME_ROOT
 if (-not $runtimeRoot) {
@@ -120,6 +196,7 @@ try {
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'test') -Label '全部插件测试'
   }
   elseif ($Task -eq 'build') {
+    Assert-DshNotRunning
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'build') -Label '全部插件构建'
   }
   elseif ($Task -eq 'version') {
@@ -133,6 +210,7 @@ try {
     Invoke-Pnpm -TaskArgs @('install') -Label '安装工作区依赖（依赖只存一份）'
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'typecheck') -Label '全部插件类型检查'
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'test') -Label '全部插件测试'
+    Assert-DshNotRunning
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'build') -Label '全部插件构建'
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'check:version') -Label 'VERSION 与 package.json 一致性'
     # selfcheck 必须在 build 之后：它 import 的是 lib/ 产物，不是源码。

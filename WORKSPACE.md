@@ -228,6 +228,18 @@ powershell -File tools/check-workspace.ps1                # 全部四层
 powershell -File tools/check-workspace.ps1 -Task selfcheck# 只跑第 ④ 层
 ```
 
+> 🚧 **构建守卫（2026-10-17 加）**：`check` 与 `build` 都会**重写插件 client 产物**，而「DSH 运行中重写产物」
+> 会让正在启动/刷新的界面起不来（根因与实测见已知限制 9）。所以这两个 task 在 DSH 活着时**默认直接拒绝**：
+>
+> ```powershell
+> powershell -File tools/check-workspace.ps1 -Task build                  # DSH 开着 → 拒绝（并说明因果）
+> powershell -File tools/check-workspace.ps1 -Task build -AllowRunning    # 覆盖：跑完立刻完全重启 DSH
+> ```
+>
+> `typecheck` / `test` / `version` / `selfcheck` / `compat` / `install` 不受影响（它们不写 `lib/client.js`）。
+> 守卫认两类证据：进程名 `DeepSeek Harness`，以及心跳/装载留痕里那个还活着的插件宿主 pid
+> （后者让「从 DSH 内部跑构建」也会被拦下 —— 那同样是高危动作）。
+
 **第 ④ 层不可省**：前三层验源码，它验产物 + 装载行为。2026-10-06 的 App 崩溃、
 路由数变化、缺失导入，全是它抓出来的。典型只有它能抓的故障：`inject` 声明了宿主
 没有的服务（不报错，静默 pending）、`lib/` 裸导入解析失败、`effect` 没返回 disposer
@@ -545,6 +557,38 @@ Invoke-WebRequest -UseBasicParsing -Method POST http://127.0.0.1:42081/oblivion/
 （`heartbeatPath` 配置 + 两侧自检断言）。即便如此，**看完 `pnpm test` 的任何诊断结论前先核对上面两列**
 —— 本轮就被这条误导过一次。真机心跳若被写坏，**下次 DSH 启动时 bridge 会自己重写**
 （`apply()` 一进来就写，不用等端点解析）。
+
+### 9. 应用运行中重建插件 ⇒ 界面起不来（`web boot: N entries did not activate`，2026-10-17 结案）
+
+**症状**：更新插件后 DSH 弹「DeepSeek Harness 无法使用 / 应用无法启动或已意外停止」，详情里是
+`web boot: 4 entries did not activate` 与 `client-modules: bundle script plugins/??…&rev=… failed to load`。
+一直靠「禁用第三方插件、备份 profile patch 并重启」救回来（每次都这么干很烦）。
+
+**根因**（DSH 侧的机制，逐条可核）：
+
+| # | 机制 | 位置 |
+| --- | --- | --- |
+| ① | client 产物的 `rev = sha1(mtimeMs, ctimeMs, size)` ⇒ **任何重写都换 rev** | `dsh-client-modules/lib/index.js:193` |
+| ② | 路由按**含 rev 的完整 URL** 精确查表，查不到就是 `404` | 同上 `:958` |
+| ③ | `compose()` 只保留**上一代** batch 响应 | 同上 `:681` |
+| ④ | 一个脚本加载失败 ⇒ **整条 combo 批被跳过**（"skipped after an earlier failure of this bundle"） | `dsh-client-modules/lib/client.js:629` |
+
+⇒ 应用**运行中**重建插件：界面手里仍是旧 rev 的 URL，而宿主只认当前一代 ⇒ `404` ⇒ 那一批全废 ⇒
+`web boot: N entries did not activate`。**2026-10-17 01:48Z 实测**：4 个未激活 entry 与当时被重写的
+4 个 client 包**逐一对应**（`panel` / `brand` / `daily-life` / `vimc`）；崩溃日志
+`%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-2026-10-17T01-48-07-569Z-web-boot.log`。
+
+**所以 `pnpm check` 本身就是高危动作**（它含 build）—— 现在构建前会被拦，见「检查：四层闸门」的构建守卫。
+
+**怎么办**：① 完全退出 DSH → 构建 → 再开（最稳）；② 或构建完**立刻完全重启** DSH（不是只刷新窗口）。
+弹了那张对话框时，先确认没有 node/pnpm 还在写文件，再点「**重启**」；
+「禁用第三方插件、备份 profile patch」是最后手段，不该成为常规步骤。
+
+**复核配方**（一行就能换掉 rev，但**别在真机上随手试** —— 它会把界面打掉，只能靠重启救回来）：
+
+```powershell
+(Get-Item oblivion-brand\lib\client.js).LastWriteTime = Get-Date   # rev 变 → 旧 rev 的 URL 将 404
+```
 
 ## 应用图标：只能改快捷方式，改不了窗口/任务栏
 
