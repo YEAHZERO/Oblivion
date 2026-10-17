@@ -20,11 +20,16 @@
   powershell -File tools/check-workspace.ps1 -Task compat   # 只跑 DSH 宿主契约校验
   powershell -File tools/check-workspace.ps1 -Task selfcheck# 只跑每包端到端自检
   powershell -File tools/check-workspace.ps1 -Task build -AllowRunning   # 覆盖「构建守卫」，见下
+  powershell -File tools/check-workspace.ps1 -Task build -Filter '@oblivion/core'   # 只构建无 client 半边的包（DSH 活着也放行）
 
-  构建守卫（2026-10-17 加）：`check` 与 `build` 两个 task 都会**重写插件 client 产物**，
+  构建守卫（2026-10-17 加）：`check` 与 `build` 两个 task 都可能**重写插件 client 产物**，
   而「应用运行中重写产物」会让正在启动/刷新的界面起不来（根因见 Assert-DshNotRunning）。
   所以这两个 task 默认在 DSH 活着时**直接拒绝**，想覆盖就显式加 `-AllowRunning`，
   并在跑完立刻**完全重启** DSH（不是只刷新窗口）。
+
+  守卫的判词是「**这次构建会不会重写插件产物**」，不是「是不是构建」：用 `-Filter` 把范围收窄到
+  **没有 client 半边**的包（纯 Host 插件，如 `@oblivion/core`）时，它一个插件产物都不碰，
+  DSH 活着也安全 —— 这不叫豁免，是把判定算准（过度的规则会被绕过，那才是真风险）。
 #>
 [CmdletBinding()]
 param(
@@ -32,7 +37,13 @@ param(
   [string]$Task = 'check',
 
   # 构建守卫的覆盖开关：默认「DSH 活着就拒绝构建」。理由见 Assert-DshNotRunning。
-  [switch]$AllowRunning
+  [switch]$AllowRunning,
+
+  # `-Task build` 的**范围收窄**：逗号分隔的**精确包名**（如 '@oblivion/core'），空 = 全工作区。
+  #
+  # 只有一个用途：让构建守卫的判定变精确 —— 范围里没有 client 半边时（纯 Host 插件不写
+  # `lib/client.js`），重建不碰任何插件产物，DSH 活着也安全。见 Get-BuildScope。
+  [string]$Filter
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,7 +120,9 @@ function Get-RunningDshCarrier {
     )) {
     if (-not (Test-Path $file)) { continue }
     $pin = $null
-    try { $pin = (Get-Content $file -Raw | ConvertFrom-Json).pid } catch { continue }
+    # 同上：不写 `-Encoding UTF8` 时 PS 5.1 按 ANSI 读，含中文的 `error` 字段会让 JSON 解析失败，
+    # 于是这一条证据被 `catch` 静默丢掉（守卫漏报）。诊断文件里出现中文并不稀奇。
+    try { $pin = (Get-Content $file -Raw -Encoding UTF8 | ConvertFrom-Json).pid } catch { continue }
     if ($null -eq $pin) { continue }
     $proc = Get-Process -Id ([int]$pin) -ErrorAction SilentlyContinue
     if ($null -eq $proc) { continue }
@@ -123,11 +136,65 @@ function Get-RunningDshCarrier {
   $found
 }
 
+# ---- 构建范围 → 「这次构建会不会重写插件产物」----
+#
+# 守卫最初的判词是「DSH 活着 ⇒ 拒绝」，但那条判词的**前提**是构建会重写插件 client 产物。
+# 范围收窄到没有 client 半边的包时不成立（纯 Host 插件只产出 `lib/*.js`，一个插件产物都不碰），
+# 此时拒绝就是过度设防 —— 而过度的规则会被绕过，那才是真风险。所以判词改成算准一件事：
+# **这次构建会不会重写插件产物**。
+#
+# client 半边怎么认：看 `exports["./client"]` —— 宿主找客户端就只认这一个字段
+# （`dsh-client-modules/lib/index.js` 的 clientExportOf），比「`lib/client.js` 存不存在」稳
+# （产物可以被删掉，声明不会骗人）。
+function Get-BuildScope {
+  param([string]$FilterText)
+
+  $packages = @()
+  Get-ChildItem $repoRoot -Directory -Filter 'oblivion-*' | ForEach-Object {
+    $manifestPath = Join-Path $_.FullName 'package.json'
+    if (-not (Test-Path $manifestPath)) { return }
+    $manifest = $null
+    # 注意 `-Encoding UTF8`：PS 5.1 的 `Get-Content` 默认按 ANSI/GBK 读，中文注释会变成乱码
+    # 而让 `ConvertFrom-Json` 直接报「传入的对象无效」—— 与 .ps1 的 BOM 规则同一个病根。
+    try { $manifest = (Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return }
+    if (-not $manifest.name) { return }
+    $hasClient = $false
+    if ($null -ne $manifest.exports) {
+      $hasClient = @($manifest.exports.PSObject.Properties.Name) -contains './client'
+    }
+    $packages += [pscustomobject]@{ Name = $manifest.name; Dir = $_.Name; HasClient = $hasClient }
+  }
+
+  # 空 = 全工作区（保持原行为：全量构建必然重写产物 ⇒ DSH 活着就拒绝）。
+  if ([string]::IsNullOrWhiteSpace($FilterText)) { return @() }
+
+  $selected = @()
+  foreach ($name in @($FilterText -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })) {
+    $hit = @($packages | Where-Object { $_.Name -eq $name })
+    if ($hit.Count -eq 0) {
+      throw ('-Filter 里的包名在工作区里不存在：' + $name +
+        '（可用的：' + (($packages | ForEach-Object { $_.Name }) -join ', ') + '）')
+    }
+    $selected += $hit
+  }
+  $selected
+}
+
 function Assert-DshNotRunning {
+  param([object[]]$Scope = @())
+
   $running = @(Get-RunningDshCarrier)
   if ($running.Count -eq 0) { return }
 
   $who = $running -join '、'
+
+  # 范围里一个 client 半边都没有 ⇒ 这次构建不重写插件产物 ⇒ 对运行中的界面无害（放行）。
+  if ($Scope.Count -gt 0 -and @($Scope | Where-Object { $_.HasClient }).Count -eq 0) {
+    Write-Host ('DSH 正在运行（' + $who + '），但本次范围（' + (($Scope | ForEach-Object { $_.Name }) -join ', ') +
+      '）没有 client 半边 ⇒ 不重写插件产物，放行。') -ForegroundColor DarkGray
+    return
+  }
+
   if ($AllowRunning) {
     Write-Host ('⚠ DSH 正在运行（' + $who + '），-AllowRunning 已给：继续重建 client 产物。') -ForegroundColor Yellow
     Write-Host '  跑完请**立刻完全重启** DSH（不是只刷新窗口），否则界面可能起不来。' -ForegroundColor Yellow
@@ -139,7 +206,8 @@ function Assert-DshNotRunning {
     '手里仍是旧 rev 的 URL，宿主对旧 rev 直接 404（且只保留上一代 batch 响应），一个脚本失败会连坐整条 combo 批 ⇒ ' +
     '「web boot: N entries did not activate」⇒「DeepSeek Harness 无法使用」。' +
     '2026-10-17 01:48Z 实测：4 个未激活 entry = 当时被重写的 4 个 client 包（panel / brand / daily-life / vimc）。' +
-    '怎么办：① 完全退出 DSH 后重跑；② 或加 -AllowRunning，跑完立刻完全重启 DSH（别只刷新窗口）。')
+    '怎么办：① 完全退出 DSH 后重跑；② 或加 -AllowRunning，跑完立刻完全重启 DSH（别只刷新窗口）；' +
+    '③ 只改纯 Host 插件（@oblivion/core / @oblivion/http-bridge）时加 -Filter 收窄范围 —— 不重写任何插件产物，DSH 活着也安全。')
 }
 
 $runtimeRoot = $env:DSH_RUNTIME_ROOT
@@ -183,6 +251,11 @@ try {
   Write-Host ("工作区： " + $repoRoot) -ForegroundColor DarkGray
   Write-Host ("pnpm  ： " + $pnpm + "（v" + $version + "，由 " + $node + " 执行）") -ForegroundColor DarkGray
 
+  if (-not [string]::IsNullOrWhiteSpace($Filter) -and $Task -ne 'build') {
+    throw ('-Filter 只对 -Task build 有意义（当前 task=' + $Task + '）。其余 task 要么不写产物（typecheck / test / version / selfcheck / compat），' +
+      '要么必须全工作区一起验（check 含 install+typecheck+test+build）—— 静默忽略一个给出来的范围比报错更糟。')
+  }
+
   if ($Task -eq 'install') {
     Invoke-Pnpm -TaskArgs @('install') -Label '安装工作区依赖（依赖只存一份）'
   }
@@ -196,8 +269,13 @@ try {
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'test') -Label '全部插件测试'
   }
   elseif ($Task -eq 'build') {
-    Assert-DshNotRunning
-    Invoke-Pnpm -TaskArgs @('-r', 'run', 'build') -Label '全部插件构建'
+    $scope = @(Get-BuildScope -FilterText $Filter)
+    Assert-DshNotRunning -Scope $scope
+    $buildArgs = @('-r')
+    foreach ($target in $scope) { $buildArgs += @('--filter', $target.Name) }
+    $label = '全部插件构建'
+    if ($scope.Count -gt 0) { $label = '构建（范围：' + (($scope | ForEach-Object { $_.Name }) -join ', ') + '）' }
+    Invoke-Pnpm -TaskArgs ($buildArgs + @('run', 'build')) -Label $label
   }
   elseif ($Task -eq 'version') {
     Invoke-Pnpm -TaskArgs @('-r', 'run', 'check:version') -Label 'VERSION 与 package.json 一致性'
