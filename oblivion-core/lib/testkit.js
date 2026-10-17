@@ -1444,7 +1444,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join4(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.18",
+    version: "0.2.19",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -4754,7 +4754,8 @@ function createOrganizeService(deps) {
       considered: notes.length,
       dropped,
       reason: full.length > 0 ? "" : "\u6A21\u578B\u6CA1\u7ED9\u51FA\u53EF\u7528\u5EFA\u8BAE\uFF08\u89E3\u6790\u7ED3\u679C\u4E3A\u7A7A\uFF09",
-      raw: full.length > 0 ? void 0 : result.text.slice(0, 400)
+      // 成功路径不写 raw 键（显式 raw:undefined 会挂宿主「lossless JSON」校验）
+      ...full.length > 0 ? {} : { raw: result.text.slice(0, 400) }
     };
   };
   const apply = async (proposals) => {
