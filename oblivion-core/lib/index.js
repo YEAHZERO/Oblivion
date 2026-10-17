@@ -84,8 +84,47 @@ var DEFAULT_CONFIG = {
   enableEventProbe: true,
   eventProbeMax: 200,
   // 盲区修正：同主题新版本自动降级旧版本（不删，只标 superseded）
-  autoSupersede: true
+  autoSupersede: true,
+  /**
+   * 自动整理（DEC-030）：**默认全关** —— 把「插件不调 LLM」从硬约束降级成默认行为。
+   *
+   * 想开的人去设置页打开（写 `<dataRoot>/settings.json`，压过 profile 里的插件 config）。
+   * `everyTurns: 0` 表示「连建议都不自动产出」；`autoApply: false` 表示
+   * 「产出了也只写建议文件，不碰知识库」。
+   */
+  organize: {
+    enabled: false,
+    digest: true,
+    retitle: true,
+    provider: "",
+    model: "",
+    fallbacks: [],
+    maxTokens: 1024,
+    timeoutMs: 3e4,
+    everyTurns: 0,
+    minIntervalMs: 6e5,
+    autoApply: false,
+    batchSize: 8
+  }
 };
+function mergeOrganize(base, patch) {
+  if (!patch) return base;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === void 0 || v === null) continue;
+    out[k] = v;
+  }
+  return out;
+}
+function resolveConfig(input) {
+  if (!input) return DEFAULT_CONFIG;
+  const out = { ...DEFAULT_CONFIG };
+  for (const [k, v] of Object.entries(input)) {
+    if (v !== void 0 && v !== null) out[k] = v;
+  }
+  out.organize = mergeOrganize(DEFAULT_CONFIG.organize, input.organize);
+  return out;
+}
 
 // src/feedback/index.ts
 import { mkdir as mkdir2, readFile } from "node:fs/promises";
@@ -111,6 +150,14 @@ async function writeFile(path, text, _encoding) {
 }
 async function writeJsonAtomic(path, value) {
   await writeTextAtomic(path, JSON.stringify(value, null, 2) + "\n");
+}
+async function readJsonSafe(path) {
+  try {
+    const { readFile: readFile12 } = await import("node:fs/promises");
+    return JSON.parse(await readFile12(path, "utf8"));
+  } catch {
+    return void 0;
+  }
 }
 
 // src/feedback/index.ts
@@ -1625,6 +1672,81 @@ function deriveTags(qa) {
   return tagsFromQA(qa.question, qa.answer, extra);
 }
 
+// src/llm/client.ts
+var DEFAULT_MAX_TOKENS = 1024;
+var DEFAULT_TIMEOUT_MS = 3e4;
+var BAD_FINISH = /error|abort|cancel|timeout/i;
+function llmRuntimeOf(ctx) {
+  const candidate = ctx?.llm;
+  if (!candidate) return null;
+  if (typeof candidate.stream !== "function" || typeof candidate.listProviders !== "function") return null;
+  return candidate;
+}
+async function drainText(stream) {
+  let text = "";
+  let finish;
+  for await (const raw of stream) {
+    const chunk = raw;
+    if (!chunk || typeof chunk.type !== "string") continue;
+    if (chunk.type === "text-delta" && typeof chunk.text === "string") {
+      text += chunk.text;
+    } else if (chunk.type === "finish" && typeof chunk.reason === "string") {
+      finish = chunk.reason;
+    }
+  }
+  return { text, finish };
+}
+async function attempt(runtime, route, request, options) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const payload = {
+    provider: route.provider,
+    model: route.model,
+    messages: [{ role: "user", content: [{ type: "text", text: request.prompt }] }],
+    maxTokens: options.maxTokens ?? request.maxTokens ?? DEFAULT_MAX_TOKENS,
+    purpose: options.purpose ?? "oblivion-organize"
+  };
+  if (request.system !== void 0 && request.system !== "") payload.system = request.system;
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) payload.signal = AbortSignal.timeout(timeoutMs);
+  const { text, finish } = await drainText(runtime.stream(payload));
+  if (finish !== void 0 && BAD_FINISH.test(finish)) {
+    return { ok: false, text, error: `finish=${finish}` };
+  }
+  if (finish === void 0 && text.trim() === "") {
+    return { ok: false, text, error: "empty stream (no finish, no text)" };
+  }
+  return { ok: true, text };
+}
+async function generate(runtime, routes, request, options = {}) {
+  const attempts = [];
+  if (routes.length === 0) {
+    return { ok: false, text: "", route: null, attempts, error: "no route configured" };
+  }
+  for (const route of routes) {
+    try {
+      const result = await attempt(runtime, route, request, options);
+      if (result.ok) {
+        attempts.push({ route, ok: true, chars: result.text.length });
+        return { ok: true, text: result.text, route, attempts };
+      }
+      attempts.push({ route, ok: false, error: result.error });
+    } catch (error) {
+      attempts.push({ route, ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { ok: false, text: "", route: null, attempts, error: attempts[attempts.length - 1]?.error ?? "all routes failed" };
+}
+function buildRoutes(primary, fallbacks = []) {
+  const routes = [];
+  const push = (provider, model) => {
+    if (provider === "" || model === "") return;
+    if (routes.some((r) => r.provider === provider && r.model === model)) return;
+    routes.push({ provider, model });
+  };
+  if (primary) push(String(primary.provider ?? ""), String(primary.model ?? ""));
+  for (const f of fallbacks) push(String(f.provider ?? ""), String(f.model ?? ""));
+  return routes;
+}
+
 // src/mcp/channel.ts
 var MCP_CHANNEL = "@oblivion/core/mcp";
 var MCP_API_VERSION = 1;
@@ -1776,15 +1898,15 @@ async function writeDiag(dataRoot, diag) {
   const path = join8(expandHome(dataRoot), "mcp-channel-diag.json");
   const previous = lastWriteErrors.get(path);
   const payload = previous === void 0 ? diag : { ...diag, writeError: previous };
-  for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt += 1) {
+  for (let attempt2 = 1; attempt2 <= WRITE_ATTEMPTS; attempt2 += 1) {
     try {
       await writeJsonAtomic(path, payload);
       lastWriteErrors.delete(path);
       return;
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
-      lastWriteErrors.set(path, text + "\uFF08\u7B2C " + attempt + "/" + WRITE_ATTEMPTS + " \u6B21\u5C1D\u8BD5\uFF0C" + (/* @__PURE__ */ new Date()).toISOString() + "\uFF09");
-      if (attempt < WRITE_ATTEMPTS) await delay(WRITE_RETRY_MS);
+      lastWriteErrors.set(path, text + "\uFF08\u7B2C " + attempt2 + "/" + WRITE_ATTEMPTS + " \u6B21\u5C1D\u8BD5\uFF0C" + (/* @__PURE__ */ new Date()).toISOString() + "\uFF09");
+      if (attempt2 < WRITE_ATTEMPTS) await delay(WRITE_RETRY_MS);
     }
   }
 }
@@ -1966,6 +2088,10 @@ function createMcpEndpoint(options = {}) {
     handle: (rawBody, log) => handleMcpMessage({ facade: current(), rawBody, log: log ?? options.log })
   };
 }
+
+// src/organize/index.ts
+import { readFile as readFile7 } from "node:fs/promises";
+import { join as join10 } from "node:path";
 
 // src/knowledge/retitle.ts
 import { readdir as readdir2, readFile as readFile6, rename as rename2, stat, unlink as unlink2 } from "node:fs/promises";
@@ -2181,9 +2307,302 @@ function createRetitleService(deps) {
   };
 }
 
+// src/organize/index.ts
+var EXCERPT_CHARS = 600;
+var TITLE_MAX = 40;
+var TAGS_MAX = 8;
+function buildRetitlePrompt(notes) {
+  const system = [
+    "\u4F60\u662F\u4E2D\u6587\u77E5\u8BC6\u5E93\u7684\u6574\u7406\u52A9\u624B\uFF1A\u7ED9\u4E00\u6279\u7B14\u8BB0\u8D77\u300C\u4E00\u773C\u770B\u51FA\u8BB2\u4E86\u4EC0\u4E48\u300D\u7684\u540D\u5B57\uFF0C\u5E76\u8865\u6807\u7B7E\u3002",
+    "\u53EA\u8F93\u51FA\u4E00\u4E2A JSON \u6570\u7EC4\uFF0C\u4E0D\u8981\u89E3\u91CA\u3001\u4E0D\u8981 Markdown \u4EE3\u7801\u5757\u56F4\u680F\u3001\u4E0D\u8981\u591A\u4F59\u6587\u5B57\u3002"
+  ].join("\n");
+  const blocks = notes.map((n) => {
+    const lines = ["### id=" + n.id + " | \u73B0\u540D\uFF1A" + n.file];
+    if (n.topic !== "") lines.push("\u4E3B\u9898\uFF1A" + n.topic);
+    if (n.ask !== "") lines.push("\u5F53\u521D\u7684\u63D0\u95EE\uFF1A" + n.ask);
+    if (n.text !== "") lines.push("\u5185\u5BB9\u7247\u6BB5\uFF1A" + n.text);
+    return lines.join("\n");
+  });
+  const prompt = [
+    "\u4E0B\u9762\u662F\u4E00\u4E2A\u77E5\u8BC6\u5E93\u91CC\u7684\u4E00\u6279\u7B14\u8BB0\u3002\u8BF7**\u4E3A\u6BCF\u4E00\u7BC7**\u7ED9\u51FA\u540D\u5B57\u4E0E\u6807\u7B7E\uFF0C\u8F93\u51FA JSON \u6570\u7EC4\uFF1A",
+    "",
+    '[{"id":"<\u539F\u6837\u56DE\u6284>","title":"<\u540D\u5B57>","tags":["\u6807\u7B7E1","\u6807\u7B7E2"]}]',
+    "",
+    "\u89C4\u5219\uFF1A",
+    "- `id` \u5FC5\u987B**\u539F\u6837\u56DE\u6284**\uFF0C\u4E0D\u5F97\u6539\u5199\u3001\u4E0D\u5F97\u6F0F\u5B57\u3002",
+    "- `title` \u7528\u4E2D\u6587\u8BF4\u6E05\u8FD9\u7BC7\u8BB2\u4E86\u4EC0\u4E48\uFF1B\u4E0D\u8981\u7528\u300C\u95EE\u53E5\u7684\u7B80\u5199\u300D\uFF0C\u4E0D\u8981\u5E26 `.md` \u540E\u7F00\u6216 `#`\uFF0C\u4E0D\u8D85\u8FC7 " + TITLE_MAX + " \u4E2A\u5B57\u3002",
+    "- `tags` \u7ED9 2-" + TAGS_MAX + " \u4E2A\u77ED\u6807\u7B7E\uFF08\u4E2D\u6587\u6216\u5C0F\u5199\u82F1\u6587\uFF09\uFF0C\u53D6\u5185\u5BB9\u91CC\u7684\u5173\u952E\u8BCD\u3002",
+    "- **\u770B\u4E0D\u61C2\u5185\u5BB9\u7684\u7B14\u8BB0\u5C31\u8DF3\u8FC7**\uFF08\u4E0D\u8981\u8F93\u51FA\u5B83\u7684\u6761\u76EE\uFF09\uFF0C\u4E0D\u8981\u51ED\u7A7A\u7F16\u3002",
+    "",
+    "\u7B14\u8BB0\uFF1A",
+    blocks.join("\n\n")
+  ].join("\n");
+  return { system, prompt };
+}
+function cleanTitle2(input) {
+  if (typeof input !== "string") return "";
+  return input.replace(/\s+/g, " ").trim().replace(/^[#\s]+/, "").replace(/\.md$/i, "").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, TITLE_MAX).trim();
+}
+function cleanTags(input) {
+  const raw = Array.isArray(input) ? input : typeof input === "string" ? input.split(/[,，\s]+/) : [];
+  const out = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const tag = item.replace(/^#/, "").replace(/\s+/g, "").trim();
+    if (tag === "" || tag.length > 24) continue;
+    if (out.includes(tag)) continue;
+    out.push(tag);
+    if (out.length >= TAGS_MAX) break;
+  }
+  return out;
+}
+function sliceJsonArray(text) {
+  const bare = text.replace(/```[a-zA-Z]*\s*/g, "").replace(/```/g, "").trim();
+  const start = bare.indexOf("[");
+  const end = bare.lastIndexOf("]");
+  if (start < 0 || end <= start) return null;
+  return bare.slice(start, end + 1);
+}
+function parseProposals(text, allowed) {
+  const candidates = [];
+  const sliced = sliceJsonArray(text);
+  let parsed = false;
+  if (sliced !== null) {
+    try {
+      const value = JSON.parse(sliced);
+      if (Array.isArray(value)) {
+        candidates.push(...value);
+        parsed = true;
+      }
+    } catch {
+      parsed = false;
+    }
+  }
+  if (!parsed) {
+    const matches = text.match(/\{[^{}]*\}/g) ?? [];
+    for (const m of matches) {
+      try {
+        candidates.push(JSON.parse(m));
+      } catch {
+      }
+    }
+  }
+  const proposals = [];
+  let dropped = 0;
+  const seen = /* @__PURE__ */ new Set();
+  for (const item of candidates) {
+    if (item === null || typeof item !== "object") {
+      dropped += 1;
+      continue;
+    }
+    const rec = item;
+    const id = typeof rec.id === "string" ? rec.id.trim() : "";
+    const title = cleanTitle2(rec.title);
+    if (id === "" || !allowed.has(id) || title === "" || seen.has(id)) {
+      dropped += 1;
+      continue;
+    }
+    seen.add(id);
+    proposals.push({ id, title, tags: cleanTags(rec.tags) });
+  }
+  return { proposals, dropped };
+}
+async function richExcerpt(path) {
+  const raw = await readFile7(path, "utf8").catch(() => "");
+  if (raw === "") return "";
+  return contentSection(parseNote(raw).body).replace(/\s+/g, " ").slice(0, EXCERPT_CHARS);
+}
+function asRoute(value) {
+  if (value === null || typeof value !== "object") return null;
+  const rec = value;
+  const provider = typeof rec.provider === "string" ? rec.provider : "";
+  const model = typeof rec.model === "string" ? rec.model : "";
+  if (provider === "" || model === "") return null;
+  return { provider, model };
+}
+function createOrganizeService(deps) {
+  const cfg = deps.config.organize;
+  const at = deps.at ?? (() => Date.now());
+  const proposalsPath = deps.proposalsPath ?? join10(expandHome(deps.config.dataRoot), "organize-proposals.json");
+  let cachedDefault = null;
+  let lastAuto = null;
+  const turns = /* @__PURE__ */ new Map();
+  let lastRunAt = 0;
+  function routesNow() {
+    const explicit = buildRoutes({ provider: cfg.provider, model: cfg.model }, cfg.fallbacks);
+    if (cfg.provider !== "" && cfg.model !== "") return explicit;
+    if (cachedDefault === null) return explicit;
+    if (explicit.some((r) => r.provider === cachedDefault?.provider && r.model === cachedDefault?.model)) {
+      return explicit;
+    }
+    return [...explicit, cachedDefault];
+  }
+  async function resolveDefaultRoute() {
+    if (cachedDefault !== null || !deps.defaultRoute) return;
+    try {
+      const selection = await Promise.resolve(deps.defaultRoute());
+      cachedDefault = asRoute(selection);
+    } catch {
+      cachedDefault = null;
+    }
+  }
+  const status = () => {
+    return {
+      enabled: cfg.enabled,
+      scopes: { digest: cfg.digest, retitle: cfg.retitle },
+      routes: routesNow(),
+      llmAvailable: deps.runtime !== null,
+      everyTurns: cfg.everyTurns,
+      autoApply: cfg.autoApply
+    };
+  };
+  const preview = async (limit) => {
+    const base = {
+      ok: false,
+      scope: "retitle",
+      enabled: cfg.enabled,
+      routes: [],
+      attempts: [],
+      proposals: [],
+      considered: 0,
+      dropped: 0,
+      reason: ""
+    };
+    if (!cfg.enabled) {
+      return { ...base, reason: "organize.enabled is false \u2014\u2014 \u81EA\u52A8\u6574\u7406\u6CA1\u5F00\uFF0C\u672A\u53D1\u51FA\u4EFB\u4F55\u8BF7\u6C42" };
+    }
+    if (!deps.runtime) {
+      return { ...base, reason: "\u5BBF\u4E3B\u6CA1\u6709 llm \u670D\u52A1\uFF08ctx.llm \u4E0D\u53EF\u7528\uFF09" };
+    }
+    await resolveDefaultRoute();
+    const routes = routesNow();
+    if (routes.length === 0) {
+      return { ...base, routes, reason: "\u6CA1\u9009\u51FA\u6A21\u578B\uFF1Aorganize.provider/model \u4E3A\u7A7A\uFF0C\u4E14\u5BBF\u4E3B\u9ED8\u8BA4\u9009\u8DEF\u4E5F\u62FF\u4E0D\u5230" };
+    }
+    const want = limit && limit > 0 ? limit : cfg.batchSize;
+    const notes = await deps.retitle.list(want);
+    if (notes.length === 0) {
+      return { ...base, routes, reason: "\u6CA1\u6709\u5019\u9009\u7B14\u8BB0\uFF08`01_\u95EE\u7B54\u6C89\u6DC0` \u91CC\u6CA1\u6709\u5E26 oblivion \u6807\u8BB0\u7684\u7B14\u8BB0\uFF09" };
+    }
+    const enriched = await Promise.all(
+      notes.map(async (n) => ({
+        id: n.id,
+        file: n.file,
+        topic: n.topic,
+        ask: n.ask,
+        text: await richExcerpt(n.path)
+      }))
+    );
+    const allowed = new Set(notes.map((n) => n.id));
+    const { system, prompt } = buildRetitlePrompt(enriched);
+    const result = await generate(deps.runtime, routes, { prompt, system }, {
+      maxTokens: cfg.maxTokens,
+      timeoutMs: cfg.timeoutMs,
+      purpose: "oblivion-organize:retitle"
+    });
+    if (!result.ok) {
+      return {
+        ...base,
+        routes,
+        attempts: result.attempts,
+        considered: notes.length,
+        reason: "\u6240\u6709\u8DEF\u90FD\u5931\u8D25\u4E86\uFF1A" + String(result.error ?? "unknown")
+      };
+    }
+    const { proposals, dropped } = parseProposals(result.text, allowed);
+    const byId = new Map(notes.map((n) => [n.id, n]));
+    const full = proposals.map((p) => ({
+      id: p.id,
+      file: byId.get(p.id)?.file ?? "",
+      title: p.title,
+      tags: p.tags,
+      ask: byId.get(p.id)?.ask ?? ""
+    }));
+    return {
+      ok: full.length > 0,
+      scope: "retitle",
+      enabled: true,
+      routes,
+      attempts: result.attempts,
+      proposals: full,
+      considered: notes.length,
+      dropped,
+      reason: full.length > 0 ? "" : "\u6A21\u578B\u6CA1\u7ED9\u51FA\u53EF\u7528\u5EFA\u8BAE\uFF08\u89E3\u6790\u7ED3\u679C\u4E3A\u7A7A\uFF09",
+      raw: full.length > 0 ? void 0 : result.text.slice(0, 400)
+    };
+  };
+  const apply2 = async (proposals) => {
+    return deps.retitle.apply(
+      proposals.map((p) => ({
+        id: p.id,
+        title: p.title,
+        tags: p.tags.length > 0 ? p.tags : void 0,
+        namedBy: "model"
+      }))
+    );
+  };
+  const onTurn = async (input) => {
+    if (!cfg.enabled || !cfg.retitle || cfg.everyTurns <= 0) return null;
+    const count = (turns.get(input.sessionId) ?? 0) + 1;
+    turns.set(input.sessionId, count);
+    if (count % cfg.everyTurns !== 0) return null;
+    if (input.at - lastRunAt < cfg.minIntervalMs) {
+      return { at: input.at, ran: false, reason: "\u8DDD\u4E0A\u6B21\u81EA\u52A8\u6574\u7406\u4E0D\u8DB3 minIntervalMs\uFF0C\u8DF3\u8FC7" };
+    }
+    lastRunAt = input.at;
+    let produced;
+    try {
+      produced = await preview();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      deps.logger?.warn?.("oblivion organize \u81EA\u52A8\u4EA7\u51FA\u5EFA\u8BAE\u5931\u8D25\uFF1A%s", reason);
+      lastAuto = { at: input.at, ran: true, reason: "preview threw: " + reason };
+      return lastAuto;
+    }
+    await writeJsonAtomic(proposalsPath, {
+      at: input.at,
+      sessionId: input.sessionId,
+      routes: produced.routes,
+      attempts: produced.attempts,
+      proposals: produced.proposals
+    }).catch(() => void 0);
+    lastAuto = { at: input.at, ran: true, reason: produced.reason, preview: produced };
+    if (!produced.ok || !cfg.autoApply || produced.proposals.length === 0) return lastAuto;
+    try {
+      const { results } = await apply2(produced.proposals);
+      lastAuto = { ...lastAuto, applied: true, results };
+    } catch (error) {
+      lastAuto = {
+        ...lastAuto,
+        reason: "apply failed: " + (error instanceof Error ? error.message : String(error))
+      };
+    }
+    return lastAuto;
+  };
+  const readProposals = async () => {
+    const stored = await readJsonSafe(proposalsPath);
+    if (!stored || !Array.isArray(stored.proposals)) return { at: null, proposals: [] };
+    const proposals = [];
+    for (const item of stored.proposals) {
+      if (item === null || typeof item !== "object") continue;
+      const rec = item;
+      if (typeof rec.id !== "string" || typeof rec.title !== "string") continue;
+      proposals.push({
+        id: rec.id,
+        file: typeof rec.file === "string" ? rec.file : "",
+        title: rec.title,
+        tags: cleanTags(rec.tags),
+        ask: typeof rec.ask === "string" ? rec.ask : ""
+      });
+    }
+    return { at: typeof stored.at === "number" ? stored.at : null, proposals };
+  };
+  return { status, preview, apply: apply2, onTurn, lastAuto: () => lastAuto, readProposals };
+}
+
 // src/knowledge/wiki.ts
-import { mkdir as mkdir7, readdir as readdir3, readFile as readFile7, stat as stat2 } from "node:fs/promises";
-import { join as join10 } from "node:path";
+import { mkdir as mkdir7, readdir as readdir3, readFile as readFile8, stat as stat2 } from "node:fs/promises";
+import { join as join11 } from "node:path";
 var ID_MARKER2 = "oblivion:";
 var WIKI_MARKER = "oblivion:wiki";
 var WIKI_DIR_FALLBACK = "02_Wiki\u9875\u9762";
@@ -2307,8 +2726,8 @@ async function listWikiPages(dir) {
   const out = [];
   for (const file of files) {
     if (!file.endsWith(".md") || file.startsWith(".")) continue;
-    const path = join10(dir, file);
-    const raw = await readFile7(path, "utf8").catch(() => "");
+    const path = join11(dir, file);
+    const raw = await readFile8(path, "utf8").catch(() => "");
     if (raw === "" || !raw.includes(WIKI_MARKER)) continue;
     const marker = new RegExp(WIKI_MARKER + "[^>]*?members=(\\d+)").exec(raw);
     const info = await stat2(path).catch(() => null);
@@ -2325,11 +2744,11 @@ async function listWikiPages(dir) {
 function createWikiService(deps) {
   const mdRoot = expandHome(deps.mdRoot);
   const qaDir = deps.classify?.session ?? deps.classify?.qa_loop ?? "01_\u95EE\u7B54\u6C89\u6DC0";
-  const mdDir = join10(mdRoot, qaDir);
-  const wikiDir = join10(mdRoot, safeDirName(deps.classify?.wiki ?? WIKI_DIR_FALLBACK) || WIKI_DIR_FALLBACK);
+  const mdDir = join11(mdRoot, qaDir);
+  const wikiDir = join11(mdRoot, safeDirName(deps.classify?.wiki ?? WIKI_DIR_FALLBACK) || WIKI_DIR_FALLBACK);
   void deps.dataRoot;
   async function memberOf(note) {
-    const raw = await readFile7(note.path, "utf8").catch(() => "");
+    const raw = await readFile8(note.path, "utf8").catch(() => "");
     return {
       id: note.id,
       file: note.file,
@@ -2376,18 +2795,18 @@ function createWikiService(deps) {
         const page = renderWikiPage({ cluster: { ...cluster, title }, members, at });
         const base = safeDirName(title).replace(/^[.\s]+/, "").replace(/[.\s]+$/, "").replace(/\//g, "_") || "untitled";
         let file = base + ".md";
-        const existing = await readFile7(join10(wikiDir, file), "utf8").catch(() => "");
+        const existing = await readFile8(join11(wikiDir, file), "utf8").catch(() => "");
         if (existing !== "" && !existing.includes(WIKI_MARKER)) {
           file = await freeName(wikiDir, base + "-oblivion", "", taken);
         } else if (existing === "") {
           file = await freeName(wikiDir, base, "", taken);
         }
-        await writeFile(join10(wikiDir, file), page, "utf8");
+        await writeFile(join11(wikiDir, file), page, "utf8");
         taken.add(file);
         const pageLink = file.replace(/\.md$/i, "");
         let wrote = 0;
         for (const note of picked) {
-          const raw = await readFile7(note.path, "utf8").catch(() => "");
+          const raw = await readFile8(note.path, "utf8").catch(() => "");
           if (raw === "") continue;
           const next = writebackWikiLink(raw, pageLink);
           if (next === raw) continue;
@@ -2410,6 +2829,73 @@ function createWikiService(deps) {
       return { results, linked, index };
     }
   };
+}
+
+// src/settings-file.ts
+import { readFileSync } from "node:fs";
+import { join as join12 } from "node:path";
+var SETTINGS_FILE = "settings.json";
+function settingsPathOf(dataRoot) {
+  return join12(expandHome(dataRoot), SETTINGS_FILE);
+}
+function writableKeys() {
+  return Object.keys(DEFAULT_CONFIG).filter((k) => k !== "dataRoot");
+}
+function sanitizeSettings(input) {
+  if (input === null || typeof input !== "object") return {};
+  const known = new Set(writableKeys());
+  const organizeKeys = new Set(Object.keys(DEFAULT_CONFIG.organize));
+  const out = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (v === void 0 || v === null) continue;
+    if (k === "organize") {
+      if (typeof v !== "object") continue;
+      const sub = {};
+      for (const [sk, sv] of Object.entries(v)) {
+        if (sv === void 0 || sv === null) continue;
+        if (!organizeKeys.has(sk)) continue;
+        sub[sk] = sv;
+      }
+      if (Object.keys(sub).length > 0) out.organize = sub;
+      continue;
+    }
+    if (!known.has(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+function readSettingsSync(dataRoot) {
+  try {
+    const raw = readFileSync(settingsPathOf(dataRoot), "utf8");
+    return sanitizeSettings(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+function mergeSettingsConfig(pluginConfig, settings) {
+  const out = { ...pluginConfig };
+  const clean = sanitizeSettings(settings);
+  for (const [k, v] of Object.entries(clean)) {
+    if (k === "organize" && typeof v === "object") {
+      out.organize = mergeOrganize(
+        mergeOrganize(DEFAULT_CONFIG.organize, pluginConfig.organize),
+        v
+      );
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+function configSources(pluginConfig, settings, keys = writableKeys()) {
+  const clean = sanitizeSettings(settings);
+  const out = {};
+  for (const key of keys) {
+    if (clean[key] !== void 0) out[key] = "settings";
+    else if (pluginConfig[key] !== void 0 && pluginConfig[key] !== null) out[key] = "plugin";
+    else out[key] = "default";
+  }
+  return out;
 }
 
 // src/perspective/adapter.ts
@@ -2717,8 +3203,8 @@ function readRelatedHint(now2 = Date.now()) {
 }
 
 // src/profile/index.ts
-import { mkdir as mkdir8, readFile as readFile8 } from "node:fs/promises";
-import { dirname as dirname3, join as join11 } from "node:path";
+import { mkdir as mkdir8, readFile as readFile9 } from "node:fs/promises";
+import { dirname as dirname3, join as join13 } from "node:path";
 
 // src/profile/schema.ts
 function defaultProfile() {
@@ -2754,10 +3240,10 @@ function mergeProfile(cur, signal) {
 // src/profile/index.ts
 var CONFIDENCE_FLOOR = 0.3;
 function registerProfile(ctx, config) {
-  const path = join11(expandHome(config.dataRoot), "profile.json");
+  const path = join13(expandHome(config.dataRoot), "profile.json");
   async function raw() {
     try {
-      const parsed = JSON.parse(await readFile8(path, "utf8"));
+      const parsed = JSON.parse(await readFile9(path, "utf8"));
       return { ...defaultProfile(), ...parsed };
     } catch {
       return defaultProfile();
@@ -2815,8 +3301,8 @@ function extractStyleSignal(qa) {
 }
 
 // src/qa-loop/index.ts
-import { appendFile, mkdir as mkdir9, readFile as readFile9 } from "node:fs/promises";
-import { basename, dirname as dirname4, join as join12 } from "node:path";
+import { appendFile, mkdir as mkdir9, readFile as readFile10 } from "node:fs/promises";
+import { basename, dirname as dirname4, join as join14 } from "node:path";
 
 // src/util/ctx-shape.ts
 var PROBE_NAMES = [
@@ -3041,7 +3527,7 @@ function registerQaLoop(ctx, config, deps) {
       return void 0;
     }
   }
-  const probePath = join12(expandHome(config.dataRoot), "events-probe.jsonl");
+  const probePath = join14(expandHome(config.dataRoot), "events-probe.jsonl");
   async function probe(subject, event, sessionId, origin) {
     if (!config.enableEventProbe) return;
     try {
@@ -3057,7 +3543,7 @@ function registerQaLoop(ctx, config, deps) {
       });
       await mkdir9(dirname4(probePath), { recursive: true });
       await appendFile(probePath, line + "\n", "utf8");
-      const raw = await readFile9(probePath, "utf8");
+      const raw = await readFile10(probePath, "utf8");
       const lines = raw.split("\n").filter((l) => l.trim() !== "");
       if (lines.length > config.eventProbeMax) {
         await writeFile(probePath, lines.slice(-config.eventProbeMax).join("\n") + "\n", "utf8");
@@ -3228,6 +3714,7 @@ function registerQaLoop(ctx, config, deps) {
         }
       }
       void handle(sessionId, turn, events);
+      deps.onTurnEnd?.({ sessionId, at: Date.now() });
       return;
     }
     if (event.type === "user/message" || event.type === "assistant/message") {
@@ -3236,7 +3723,7 @@ function registerQaLoop(ctx, config, deps) {
     }
   }
   function describeScopeRouting(self, root) {
-    const attempt = (fn, fallback) => {
+    const attempt2 = (fn, fallback) => {
       try {
         return fn();
       } catch {
@@ -3247,25 +3734,25 @@ function registerQaLoop(ctx, config, deps) {
       const out = [];
       let cursor = value;
       for (let depth = 0; depth < 8 && cursor !== null && typeof cursor === "object"; depth += 1) {
-        const names = attempt(() => Object.getOwnPropertySymbols(cursor).map((s) => String(s)), ["(throws)"]);
+        const names = attempt2(() => Object.getOwnPropertySymbols(cursor).map((s) => String(s)), ["(throws)"]);
         out.push(`depth${depth}:${names.length > 0 ? names.join("|") : "-"}`);
-        const parent = attempt(() => Object.getPrototypeOf(cursor), null);
+        const parent = attempt2(() => Object.getPrototypeOf(cursor), null);
         if (parent === null) break;
         cursor = parent;
       }
       return out;
     };
-    const nameOfFiber = (fiber2) => attempt(() => {
+    const nameOfFiber = (fiber2) => attempt2(() => {
       const anyFiber = fiber2;
       const candidates = [anyFiber?.name, anyFiber?.runtime?.name, anyFiber?.entry?.options?.name];
       for (const candidate of candidates) if (typeof candidate === "string" && candidate !== "") return candidate;
       return typeof fiber2;
     }, "(throws)");
     const chain = [];
-    let fiber = attempt(() => self.fiber, void 0);
+    let fiber = attempt2(() => self.fiber, void 0);
     for (let depth = 0; depth < 24 && fiber !== null && fiber !== void 0; depth += 1) {
       chain.push(nameOfFiber(fiber));
-      const parent = attempt(() => fiber.parent, void 0);
+      const parent = attempt2(() => fiber.parent, void 0);
       if (parent === fiber || parent === void 0) break;
       fiber = parent;
     }
@@ -3293,9 +3780,9 @@ function registerQaLoop(ctx, config, deps) {
       loaderEntries
     };
   }
-  const diagPath = join12(expandHome(config.dataRoot), "mount-diag.json");
+  const diagPath = join14(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.14",
+    version: "0.2.15",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -3438,7 +3925,7 @@ function registerQaLoop(ctx, config, deps) {
 }
 
 // src/stats/index.ts
-import { join as join14 } from "node:path";
+import { join as join16 } from "node:path";
 
 // src/stats/summary.ts
 function ratio(part, whole) {
@@ -3570,14 +4057,14 @@ function suggest(summary, config, extra = {}) {
 }
 
 // src/stats/trace.ts
-import { appendFile as appendFile2, mkdir as mkdir10, readFile as readFile10 } from "node:fs/promises";
-import { dirname as dirname5, join as join13 } from "node:path";
+import { appendFile as appendFile2, mkdir as mkdir10, readFile as readFile11 } from "node:fs/promises";
+import { dirname as dirname5, join as join15 } from "node:path";
 function createTraceStore(dataRoot, options) {
-  const path = join13(dataRoot, "decisions.jsonl");
+  const path = join15(dataRoot, "decisions.jsonl");
   const MS_PER_DAY3 = 864e5;
   async function readRaw() {
     try {
-      const raw = await readFile10(path, "utf8");
+      const raw = await readFile11(path, "utf8");
       const out = [];
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
@@ -3660,7 +4147,7 @@ function registerStats(ctx, config, meta) {
     },
     async writeBootSnapshot(extra) {
       try {
-        const path = join14(dataRoot, "status.json");
+        const path = join16(dataRoot, "status.json");
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -3928,6 +4415,66 @@ function registerTools(ctx, deps) {
     }
   }));
   register(defineTool({
+    name: "oblivion_organize",
+    description: 'Auto-organize the Oblivion knowledge base with a model (plugin-side LLM call). mode:"status" (default) reports whether it is enabled and which model route would be used \u2014 no request is made. mode:"preview" asks the model for content-based titles/tags for existing notes (READ ONLY, nothing is written). mode:"apply" writes proposals back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). It is OFF by default: with organize.enabled=false nothing calls any model.',
+    parameters: {
+      mode: { type: "string", description: 'One of "status" | "preview" | "apply" (default "status").' },
+      limit: { type: "number", description: "How many notes to consider in preview mode (default = organize.batchSize)." },
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string", required: true, description: "Note id (the value inside <!-- oblivion:id=\u2026 -->)." },
+            title: { type: "string", required: true, description: "Content-based name from the preview." },
+            tags: { type: "array", items: { type: "string" }, description: "Tags from the preview (2-8)." }
+          }
+        },
+        description: "Proposals to write. Omit to apply the last preview produced by this plugin."
+      }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.organize) {
+        return asCanonical({ skipped: true, reason: "organize service unavailable" });
+      }
+      const mode = typeof args.mode === "string" ? args.mode : "status";
+      if (mode === "status") {
+        return asCanonical({ mode: "status", ...deps.organize.status() });
+      }
+      if (mode === "preview") {
+        const limit = typeof args.limit === "number" && args.limit > 0 ? Math.floor(args.limit) : void 0;
+        return asCanonical({ mode: "preview", ...await deps.organize.preview(limit) });
+      }
+      if (mode === "apply") {
+        const items = args.items ?? [];
+        let proposals = items.map((it) => ({ id: it.id, title: it.title, tags: it.tags ?? [], file: "", ask: "" }));
+        let source = "items";
+        if (proposals.length === 0) {
+          const stored = await deps.organize.readProposals();
+          proposals = stored.proposals;
+          source = "last-preview";
+        }
+        if (proposals.length === 0) {
+          return asCanonical({ mode: "apply", applied: 0, reason: "\u6CA1\u6709\u53EF\u843D\u5730\u7684\u5EFA\u8BAE\uFF08items \u4E3A\u7A7A\uFF0C\u4E14\u6CA1\u627E\u5230\u4E0A\u4E00\u6B21\u7684\u9884\u89C8\u4EA7\u51FA\uFF09" });
+        }
+        const { results, index } = await deps.organize.apply(proposals);
+        const ok2 = results.filter((r) => r.ok);
+        return asCanonical({
+          mode: "apply",
+          source,
+          total: results.length,
+          renamed: ok2.filter((r) => r.from !== r.to).length,
+          retagged: ok2.filter((r) => r.from === r.to).length,
+          failed: results.filter((r) => !r.ok),
+          index
+        });
+      }
+      return asCanonical({ error: "unknown mode: " + mode, hint: 'use "status" | "preview" | "apply"' });
+    }
+  }));
+  register(defineTool({
     name: "oblivion_wiki",
     description: "Merge notes that are really about the SAME topic into one wiki page under <mdRoot>/02_Wiki\u9875\u9762/. Call it with NO `clusters` first: it returns candidate notes (id, file name, the original question, tags, excerpt) plus the wiki pages that already exist. Then call it again with `clusters` = [{ title, summary, members: [note id], tags }] \u2014 group by meaning, not by the `topic` field (that field is only the first word of the question). The plugin writes one page per cluster (your summary + source-note links + shared tags), adds a `> Wiki\uFF1A[[title]]` backlink line to every member note, and rebuilds <mdRoot>/00-Index/\u7D22\u5F15.md. It never edits note bodies and never deletes anything; re-running a cluster updates that same page.",
     parameters: {
@@ -4025,19 +4572,24 @@ function registerTools(ctx, deps) {
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt", "agents"];
 var provides = ["oblivion"];
-var VERSION = "0.2.14";
+var VERSION = "0.2.15";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
-  const config = { ...DEFAULT_CONFIG, ...rawConfig ?? {} };
+  const pluginConfig = rawConfig ?? {};
+  const bootDataRoot = typeof pluginConfig.dataRoot === "string" && pluginConfig.dataRoot !== "" ? pluginConfig.dataRoot : DEFAULT_CONFIG.dataRoot;
+  const settings = readSettingsSync(bootDataRoot);
+  const config = resolveConfig(
+    mergeSettingsConfig(pluginConfig, settings)
+  );
   void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, null, "apply:enter"));
   try {
-    applyInner(rawCtx, config);
+    applyInner(rawCtx, config, pluginConfig, settings);
   } catch (error) {
     void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, null, "apply:failed", error));
     throw error;
   }
 }
-function applyInner(rawCtx, config) {
+function applyInner(rawCtx, config, pluginConfig, settings) {
   const ctx = rawCtx;
   let channelReport = null;
   const rootCtx = ctx.root;
@@ -4047,6 +4599,13 @@ function applyInner(rawCtx, config) {
     return typeof candidate.on === "function" && typeof candidate.systemPrompt?.section === "function" && typeof candidate.tools?.register === "function";
   };
   const host = usableHost(rootCtx) ? rootCtx : ctx;
+  const optionalService = (target, key) => {
+    try {
+      return target[key] ?? null;
+    } catch {
+      return null;
+    }
+  };
   const knowledge = registerKnowledge(ctx, config);
   const profile = registerProfile(ctx, config);
   const graph = registerGraph(ctx, config);
@@ -4066,6 +4625,14 @@ function applyInner(rawCtx, config) {
     classify: config.mdClassify,
     host: knowledge
   });
+  const defaultModelService = optionalService(host, "agentDefaultModel") ?? optionalService(ctx, "agentDefaultModel");
+  const organize = createOrganizeService({
+    config,
+    retitle,
+    runtime: llmRuntimeOf({ llm: optionalService(host, "llm") ?? optionalService(ctx, "llm") }),
+    defaultRoute: () => defaultModelService?.currentSelection?.(),
+    logger: ctx.logger
+  });
   registerQaLoop(ctx, config, {
     knowledge,
     graph,
@@ -4073,6 +4640,12 @@ function applyInner(rawCtx, config) {
     stats: stats ?? void 0,
     onCaptured: (info) => {
       void perspective?.onTurn(info);
+    },
+    // 自动整理的节拍：到点才跑；**全程 fire-and-forget**，模型再慢也不拖住问答链路。
+    onTurnEnd: (info) => {
+      void organize.onTurn(info).catch((error) => {
+        ctx.logger?.warn?.(config.logPrefix + " \u81EA\u52A8\u6574\u7406\u5931\u8D25\uFF1A%o", error);
+      });
     }
   });
   ctx.effect(
@@ -4145,6 +4718,7 @@ function applyInner(rawCtx, config) {
           digest,
           retitle,
           wiki,
+          organize,
           perspectiveStats: () => perspective?.stats() ?? null
         });
       });
@@ -4174,6 +4748,7 @@ function applyInner(rawCtx, config) {
         digest,
         retitle,
         wiki,
+        organize,
         perspectiveStats: () => perspective?.stats() ?? null
       });
       return () => {
@@ -4203,6 +4778,16 @@ function applyInner(rawCtx, config) {
     feedback,
     perspective,
     digest,
+    retitle,
+    wiki,
+    organize,
+    /**
+     * 每个键最终是谁定的（`settings` / `plugin` / `default`）。
+     *
+     * 面板/桥接据此显示「生效值 + 来源」—— 没有这一层，
+     * 「我明明在界面里改了怎么没生效」只能靠人猜三层配置的先后。
+     */
+    configSources: configSources(pluginConfig, settings),
     stats
   };
   try {

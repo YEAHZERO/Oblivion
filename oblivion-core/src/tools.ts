@@ -7,6 +7,7 @@ import type { ProfileService } from './profile/index.js';
 import type { DigestService } from './digest/index.js';
 import type { RetitleService } from './knowledge/retitle.js';
 import type { WikiService } from './knowledge/wiki.js';
+import type { OrganizeService } from './organize/index.js';
 import type { StatsService } from './stats/index.js';
 import type { Source, UserProfile } from './types.js';
 import { sha1 } from './util/hash.js';
@@ -53,12 +54,14 @@ export interface ToolDeps {
   retitle?: RetitleService | null;
   /** 主题页（Wiki）归并（`oblivion_wiki`）。 */
   wiki?: WikiService | null;
+  /** 自动整理（DEC-030）：插件自己经 `ctx.llm` 调模型（`oblivion_organize`）。 */
+  organize?: OrganizeService | null;
   /** 陪伴模块的运行计数（触发闸门命中情况）。 */
   perspectiveStats?: () => Record<string, number> | null;
 }
 
 /**
- * 注册 9 个 `oblivion_*` 工具，并**回交注销用的 disposer 列表**。
+ * 注册 10 个 `oblivion_*` 工具，并**回交注销用的 disposer 列表**。
  *
  * 为什么要回交（2026-10-17 真机现场）：`ctx.tools.register()` 的返回值就是
  * 「注销这个工具」的那个 disposer（宿主 `dsh-tools` 的文档原话），它绑在**调用时用的那个 ctx** 上。
@@ -341,6 +344,85 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): Disposable[] {
         results,
         index,
       });
+    },
+  }));
+
+  /**
+   * **自动整理（插件自己调模型）** —— 与 `oblivion_retitle` 是两条路：
+   *
+   *   - `oblivion_retitle`：**外层会话的模型**看候选、起名，插件只落盘（0.2.2 起就有）。
+   *   - `oblivion_organize`（本工具）：**插件自己**经 `ctx.llm` 问一次模型，所以
+   *     「自动整理」不必有人在会话里催（`organize.everyTurns` 到点会自动跑）。
+   *
+   * 两段式与 `oblivion_retitle` 一致，但**预览是独立的一步**（DEC-030 的硬要求：
+   * 回填必须先出预览再落地）：
+   *   `mode:'status'` → 开关/模型/可用性（**零请求**）
+   *   `mode:'preview'` → 让模型给建议（**只读，不改知识库**）
+   *   `mode:'apply'`  → 落地（`items` 省略时，落地**上一次**产出的建议）
+   */
+  register(defineTool({
+    name: 'oblivion_organize',
+    description:
+      'Auto-organize the Oblivion knowledge base with a model (plugin-side LLM call). ' +
+      'mode:"status" (default) reports whether it is enabled and which model route would be used — no request is made. ' +
+      'mode:"preview" asks the model for content-based titles/tags for existing notes (READ ONLY, nothing is written). ' +
+      'mode:"apply" writes proposals back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). ' +
+      'It is OFF by default: with organize.enabled=false nothing calls any model.',
+    parameters: {
+      mode: { type: 'string', description: 'One of "status" | "preview" | "apply" (default "status").' },
+      limit: { type: 'number', description: 'How many notes to consider in preview mode (default = organize.batchSize).' },
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true, description: 'Note id (the value inside <!-- oblivion:id=… -->).' },
+            title: { type: 'string', required: true, description: 'Content-based name from the preview.' },
+            tags: { type: 'array', items: { type: 'string' }, description: 'Tags from the preview (2-8).' },
+          },
+        },
+        description: 'Proposals to write. Omit to apply the last preview produced by this plugin.',
+      },
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      if (!deps.organize) {
+        return asCanonical({ skipped: true, reason: 'organize service unavailable' });
+      }
+      const mode = typeof args.mode === 'string' ? args.mode : 'status';
+      if (mode === 'status') {
+        return asCanonical({ mode: 'status', ...deps.organize.status() });
+      }
+      if (mode === 'preview') {
+        const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : undefined;
+        return asCanonical({ mode: 'preview', ...(await deps.organize.preview(limit)) });
+      }
+      if (mode === 'apply') {
+        const items = (args.items ?? []) as Array<{ id: string; title: string; tags?: string[] }>;
+        let proposals = items.map((it) => ({ id: it.id, title: it.title, tags: it.tags ?? [], file: '', ask: '' }));
+        let source = 'items';
+        if (proposals.length === 0) {
+          const stored = await deps.organize.readProposals();
+          proposals = stored.proposals;
+          source = 'last-preview';
+        }
+        if (proposals.length === 0) {
+          return asCanonical({ mode: 'apply', applied: 0, reason: '没有可落地的建议（items 为空，且没找到上一次的预览产出）' });
+        }
+        const { results, index } = await deps.organize.apply(proposals);
+        const ok = results.filter((r) => r.ok);
+        return asCanonical({
+          mode: 'apply',
+          source,
+          total: results.length,
+          renamed: ok.filter((r) => r.from !== r.to).length,
+          retagged: ok.filter((r) => r.from === r.to).length,
+          failed: results.filter((r) => !r.ok),
+          index,
+        });
+      }
+      return asCanonical({ error: 'unknown mode: ' + mode, hint: 'use "status" | "preview" | "apply"' });
     },
   }));
 

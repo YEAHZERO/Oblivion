@@ -89,11 +89,11 @@ function makeCtx() {
   };
 }
 
-await check('apply 注册面完整（9 工具 / 1 段落 / 事件 / 各自 effect）', () => {
+await check('apply 注册面完整（10 工具 / 1 段落 / 事件 / 各自 effect）', () => {
   const { ctx, reg } = makeCtx();
   mod.apply(ctx, { dataRoot, mdRoot });
-  assert.equal(reg.tools.length, 9, '工具数应为 9（含观测面、整理、改名与主题页）');
-  for (const name of ['oblivion_retitle', 'oblivion_wiki']) {
+  assert.equal(reg.tools.length, 10, '工具数应为 10（含观测面、整理、改名、主题页与自动整理）');
+  for (const name of ['oblivion_retitle', 'oblivion_wiki', 'oblivion_organize']) {
     assert.ok(reg.tools.includes(name), '缺少工具 ' + name);
   }
   assert.deepEqual(reg.sections, ['OBLIVION_COGNITION']);
@@ -108,6 +108,33 @@ await check('apply 注册面完整（9 工具 / 1 段落 / 事件 / 各自 effec
   assert.ok(reg.events.some((e) => e.event === 'agent/created'), '必须在 agent 作用域补挂订阅');
   assert.ok(reg.effects.length >= 6, '每个模块都要有 effect 清理位');
   return reg.tools.join(', ');
+});
+
+// ---- 三层配置（DEC-030）----
+await check('三层配置：<dataRoot>/settings.json 压过插件 config（设置页改一下即生效）', async () => {
+  const kit = await import(new URL('file://' + join(ROOT, 'lib', 'testkit.js').replace(/\\/g, '/')).href);
+  const root = mkdtempSync(join(tmpdir(), 'oblivion-core-settings-'));
+  try {
+    await kit.writeSettings(root, { logPrefix: '[from-settings]' });
+    const { ctx: layeredCtx } = makeCtx();
+    mod.apply(layeredCtx, { dataRoot: root, mdRoot: join(root, 'kb'), logPrefix: '[from-plugin]' });
+    // `writeBootSnapshot` 是 fire-and-forget（`void stats?.writeBootSnapshot(...)`），
+    // 所以这里要等它落盘，不能 apply 完立刻读。
+    const statusPath = join(root, 'status.json');
+    for (let i = 0; i < 50 && !existsSync(statusPath); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+    assert.equal(status.config.logPrefix, '[from-settings]', '设置层没有压过插件层');
+    assert.equal(status.config.mdRoot, join(root, 'kb'), '没被覆盖的键该保留插件层的值');
+    return '设置层生效：logPrefix=' + status.config.logPrefix + ' / mdRoot 仍来自插件层';
+  } finally {
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {
+      // 临时目录清不掉不算失败（Windows 瞬时 EPERM，与用例结论无关）。
+    }
+  }
 });
 
 // ---- 用桩 ctx 做一次真实的捕获（走真实文件系统）----

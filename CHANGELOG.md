@@ -12,27 +12,62 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — 决策记录 **DEC-030**：插件**默认不调 LLM**，显式开启后经 `ctx.llm` 调用
+## [0.2.15] — 自动整理（DEC-030）第一片：**设置页可写配置层** + 插件自带 **LLM 客户端** + `oblivion_organize`
 
-**范围裁定**（所有者 2026-10-17）：自动整理的**作用域** = ① 会话整理（`oblivion_digest`）的产出
-**+** ② **知识库级标题/标签回填**（`oblivion_retitle`）——**各一份开关**，可分别启用。
-②会动大量既有笔记 ⇒ **必须先出预览清单（dry-run）再确认落地**，并与规则管线共用 `named_by` 标记。
-
-**决策**：把旧约束「插件不调 LLM」从**硬约束**降级为**默认行为**：
-
-- 默认仍走**确定性实现**（token Jaccard + 规则打分），**不联网、不发任何外部请求**；
-- 只有设置页**显式开启并选定模型**后，才调 LLM：`ctx.llm.listProviders` / `listModels` 选路，
-  `ctx.llm.stream()` + 自带文本累加器收流，密钥经 `ctx.credentials.resolve(credentialRef('…'))`；
-- 旧理由「`ctx.llm` 稳定调用面未确认」**已被实测证伪**（除缺高层 `chat()` 外，方法全公开）；
-- **自动切换**：按 `provider/model` → `fallbacks[…]` 顺序尝试，失败即换下一个；全失败只记留痕、
-  **绝不阻塞 turn**（`enabled:false` 时零请求，见设计稿 §10 验收）；
-- **配置分层**：`DEFAULT_CONFIG` < 插件 config < **`<dataRoot>/settings.json`（设置页写，压过 profile）**
-  —— 否则「界面里改了却没生效」会变成查不出来的 bug。
-
-落点：设计书 [`.design/ARCHITECTURE.MD`](.design/ARCHITECTURE.MD) §31.2 / §33.6 增加 DEC-030 行；
+**决策**（所有者 2026-10-17 确认「按建议来」）：旧约束「插件不调 LLM」**从硬约束降级为默认行为** ——
+默认仍走确定性实现、**零外部请求**；只有显式开启并选定模型后才经 `ctx.llm` 调用。
+旧理由（「`ctx.llm` 稳定调用面未确认」）**已被实测证伪**。设计书
+[`.design/ARCHITECTURE.MD`](.design/ARCHITECTURE.MD) §31.2 / §33.6 增加 **DEC-030**，
 设计稿 [`.design/自动整理与设置页.md`](.design/自动整理与设置页.md) §8 三个未决问题全部结清。
 
-> **本条只记决策，不含实现**：`src/organize/` 与设置页**尚未编码**。
+**范围裁定**：自动整理 = ① 会话整理（`oblivion_digest`）产出 **+** ② 知识库级标题/标签回填，
+**各一份开关**。②会动大量既有笔记 ⇒ **必须先出预览再落地**，并与规则管线共用 `named_by` 标记。
+
+### 新增
+
+- **`src/llm/client.ts`** —— 经宿主 `ctx.llm` 跑一次文本生成的**唯一**出入口。实测确认两件事：
+  `ctx.llm` **没有**高层 `chat()`，只有 `stream()` ⇒ 自己把 `text-delta` 拼起来（不引 `dsh-llm`
+  依赖，用结构化类型）；适配器抛错会被宿主归一成**终态 `finish`**（含 `error`/`aborted`）⇒
+  「抛错」与「流里报错」两种失败都当失败。
+  **密钥不由插件经手**：宿主 provider 适配器内部经 `ctx.credentials` 解析，插件只报
+  `provider` / `model` —— 比自己去读 `~/.dsh/.credentials.yaml` 更安全，也正是「复用 DSH 的地址与密钥」。
+  **自动切换** = `buildRoutes(主路, fallbacks[])` 按序试，每条路的成败都留在 `attempts` 里（可解释、可留痕）。
+- **`src/organize/index.ts`** —— `oblivion_organize` 的后端：`status` / `preview` / `apply` 三段式，
+  外加触发闸门 `onTurn()`（每 N 个 `turn/end` 自动产出建议）。提示词要求**原样回抄 id**；
+  回话解析**三级降级**（整段 JSON → 去围栏 → 逐个 `{…}` 抠）。解析不出来的条数**如实报出** ——
+  「模型回了空」与「模型回了但名字没用」是两种故障，不能混成一个。
+- **`src/settings-file.ts`** —— `<dataRoot>/settings.json`，**设置页可写**的第三层配置
+  （`DEFAULT_CONFIG` < 插件 config < 本文件）。两处刻意边界：**`dataRoot` 不能由本文件覆盖**
+  （「住址」不能由「住址」自己决定）、**只接受已知键**（写错键名不该静默生效）。配套
+  `configSources()`：每个键最终是谁定的 —— 面板据此显示「生效值 + 来源」。
+- **`oblivion_organize` 工具**（第 10 个）：`status` 零请求；`preview` 只读、**一个字都不改知识库**；
+  `apply` 落地（省略 `items` 时落地**上一次**产出的建议）。
+
+### 三条不变量（各有单测钉着）
+
+1. **默认零请求**：`organize.enabled === false` 时连 prompt 都不构造、`runtime` 一次都不碰；
+2. **先预览再落地**：自动路径只写 `<dataRoot>/organize-proposals.json`，**不碰知识库** ——
+   改名不可逆（知识库不是 git 仓库），故 `autoApply` 默认 `false`；
+3. **失败不阻塞**：全路失败只记留痕；触发路径是 fire-and-forget，模型再慢也不拖住问答链路。
+
+### 变更
+
+- `config.ts` 新增 **`organize`** 配置块（默认全关）+ **`mergeOrganize()`**：`organize: { enabled: true }`
+  这种「只翻一个开关」的写法必须**深合并**，否则同块其他键会被浅合并抹掉（症状是「打开开关后模型名莫名空了」）。
+- `core-types.ts` 新增可选 `llm` / `agentDefaultModel`。两者**都不写进 `inject`**（那里列的是**必需**服务，
+  缺了插件就不装载），而是经 `optionalService()` 裸读 + try/catch —— 缺 `llm` 只**降级**
+  （`oblivion_organize` 报不可用），不影响插件其余部分。
+- 门面 `oblivion` 增加 `retitle` / `wiki` / `organize` / `configSources`。
+- `qa-loop` 新增 `onTurnEnd` 回调（**不管本轮有没有捕获到问答**都通知一次）——
+  自动整理的节拍要的是「轮次」，不是「捕获成功」。
+
+### 验证
+
+- typecheck ✅ / **单测 76 → 102**（+26）/ **自检 34 → 35** ✅ / 构建 v0.2.15 ✅
+- 新增单测覆盖：零请求、无模型不碰 runtime、缺 `llm` 服务降级、自动切换留痕、终态 `finish` 报错算失败、
+  触发闸门与 `minIntervalMs` 防抖、`autoApply=false` 不碰知识库、解析容错 5 例、三层配置 7 例。
+- 尚未编码：**设置页 UI**（路径 / 模型选择 / 自动切换，需要 DSH 停窗的构建窗口）与
+  `organize.digest` 作用域（会话整理产出走模型）。
 
 ## [未发布] — `@oblivion/panel` v0.0.16：知识库条目的「日期」拆成**入库 + 更新于**；兜底知识库路径改为 `~/OblivionKB`
 

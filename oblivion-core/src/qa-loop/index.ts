@@ -49,6 +49,14 @@ export interface QaLoopDeps {
     sessionId: string;
     sources: number;
   }): void;
+  /**
+   * 每轮结束都通知一次（**不管本轮有没有捕获到问答**）。
+   *
+   * 自动整理（DEC-030）的触发闸门挂在这里：整理的对象是**存量笔记**，不是本轮问答，
+   * 所以它要的是「轮次」这个节拍，而不是「捕获成功」这个事件。回调本身由上层做成
+   * fire-and-forget，绝不让模型调用拖住问答链路。
+   */
+  onTurnEnd?(info: { sessionId: string; at: number }): void;
 }
 
 /**
@@ -427,6 +435,8 @@ export function registerQaLoop(ctx: AppContext, config: Config, deps: QaLoopDeps
         }
       }
       void handle(sessionId, turn, events);
+      // 自动整理的节拍：与「本轮捕获到了什么」无关，只在轮次边界推进计数器。
+      deps.onTurnEnd?.({ sessionId, at: Date.now() });
       return;
     }
 

@@ -145,7 +145,7 @@ function applyInTemp(ctx, config = {}) {
 }
 
 describe('装配（apply）', () => {
-  it('注册 9 个模型面工具（含观测面、整理、改名与主题页）', () => {
+  it('注册 10 个模型面工具（含观测面、整理、改名、主题页与自动整理）', () => {
     const { ctx, seen } = fakeCtx();
     // 用系统临时目录：插件装载时会写 status.json / decisions.jsonl，绝不能落在仓库里
     const tmp = mkdtemp(join(tmpdir(), 'oblivion-tools-'));
@@ -156,6 +156,7 @@ describe('装配（apply）', () => {
         'oblivion_digest',
         'oblivion_feedback',
         'oblivion_graph_neighbors',
+        'oblivion_organize',
         'oblivion_profile',
         'oblivion_query',
         'oblivion_retitle',
@@ -635,17 +636,17 @@ related_wiki: []
     const deps = { knowledge: {}, profile: {}, feedback: null, graph: {} };
 
     const first = kit.registerTools(ctx, deps);
-    assert.equal(first.length, 9, '9 个 oblivion_* 工具都要把注销函数回交出来');
-    assert.equal(defs.size, 9);
+    assert.equal(first.length, 10, '10 个 oblivion_* 工具都要把注销函数回交出来');
+    assert.equal(defs.size, 10);
 
     // 不注销就再装一遍 = 2026-10-17 那次真机现场：apply() 直接抛，MCP 通道从桥接里消失。
     assert.throws(() => kit.registerTools(ctx, deps), /already registered/);
 
-    // 注销后再装：不抛，注册表回到 9 个 —— 这就是 index.ts 把注册包进 ctx.effect 的效果。
+    // 注销后再装：不抛，注册表回到 10 个 —— 这就是 index.ts 把注册包进 ctx.effect 的效果。
     for (const dispose of first) dispose();
     assert.equal(defs.size, 0, 'disposer 调完注册表要清空');
-    assert.equal(kit.registerTools(ctx, deps).length, 9);
-    assert.equal(defs.size, 9);
+    assert.equal(kit.registerTools(ctx, deps).length, 10);
+    assert.equal(defs.size, 10);
   });
 
   it('工具两段式：不带 items 给候选，带 items 落地；服务缺席时只回 skipped', async () => {
@@ -1255,5 +1256,410 @@ describe('名字里的半截括号', () => {
   it('topic 与标题同一口径（两处都清）', () => {
     assert.ok(!kit.topicFromQuestion('不显示：最近判定 （窗口 10 条，显示最近 6 条').includes('（'));
     assert.ok(!kit.topicFromQuestion('改代码，更稳）：让 bridge 支持「直接给 token').includes('）'));
+  });
+});
+
+describe('自动整理（DEC-030）', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  const NOTES = [
+    { id: 'a1', file: '你是一个.md', path: join(tmpdir(), 'no-such-a1.md'), title: '你是一个', topic: '你是一个', tags: [], ask: '你是一个什么', namedBy: '', excerpt: '略', mtime: 2 },
+    { id: 'b2', file: '逐包.md', path: join(tmpdir(), 'no-such-b2.md'), title: '逐包', topic: '逐包', tags: [], ask: '逐包怎么弄', namedBy: '', excerpt: '略', mtime: 1 },
+  ];
+
+  /**
+   * 假宿主 LLM：`script` 的路 → 这一段流。
+   *   `'throw'` = 适配器抛错；`'empty'` = 空流；其他字符串 = 一段 text-delta。
+   * 同时记下**有没有真被调用**（「关着就不该发请求」这条断言全靠它）。
+   */
+  function fakeLlm(script) {
+    const calls = [];
+    return {
+      calls,
+      listProviders: () => [{ id: 'fake' }],
+      listModels: async () => [{ provider: 'fake', id: 'm1' }],
+      stream(options) {
+        calls.push(options);
+        const key = options.provider + '/' + options.model;
+        const step = Object.prototype.hasOwnProperty.call(script, key) ? script[key] : '';
+        if (step === 'throw') throw new Error('boom:' + key);
+        if (step === 'empty') return (async function* emptyStream() {})();
+        return (async function* textStream() {
+          yield { type: 'block-start', index: 0, blockType: 'text' };
+          yield { type: 'text-delta', index: 0, text: step };
+          yield { type: 'finish', reason: 'stop' };
+        })();
+      },
+    };
+  }
+
+  function fakeRetitle(notes = NOTES, applied = []) {
+    return {
+      list: async (limit) => (limit > 0 ? notes.slice(0, limit) : notes),
+      apply: async (entries) => {
+        applied.push(...entries);
+        return { results: entries.map((e) => ({ id: e.id, ok: true, from: 'old.md', to: 'new.md' })), index: null };
+      },
+    };
+  }
+
+  function organizeWith(overrides = {}, deps = {}) {
+    return kit.createOrganizeService({
+      config: {
+        ...kit.DEFAULT_CONFIG,
+        organize: { ...kit.DEFAULT_CONFIG.organize, ...overrides },
+      },
+      retitle: deps.retitle ?? fakeRetitle(),
+      runtime: deps.runtime === undefined ? fakeLlm({}) : deps.runtime,
+      at: deps.at ?? (() => 1_000_000),
+      proposalsPath: deps.proposalsPath,
+    });
+  }
+
+  it('默认关着：preview 一个请求都不发', async () => {
+    const runtime = fakeLlm({});
+    const svc = organizeWith({ enabled: false }, { runtime });
+    const out = await svc.preview();
+    assert.equal(out.ok, false);
+    assert.equal(out.enabled, false);
+    assert.equal(runtime.calls.length, 0, '关着还去调模型了');
+    assert.match(out.reason, /enabled is false/);
+    assert.equal(svc.status().enabled, false);
+  });
+
+  it('开着但没选出模型：不碰 runtime，并说清为什么', async () => {
+    const runtime = fakeLlm({});
+    const svc = organizeWith({ enabled: true, provider: '', model: '' }, { runtime });
+    const out = await svc.preview();
+    assert.equal(out.ok, false);
+    assert.equal(runtime.calls.length, 0);
+    assert.match(out.reason, /没选出模型/);
+  });
+
+  it('宿主没有 llm 服务：不报错，只说不可用', async () => {
+    const svc = organizeWith({ enabled: true, provider: 'fake', model: 'm1' }, { runtime: null });
+    const out = await svc.preview();
+    assert.equal(out.ok, false);
+    assert.match(out.reason, /没有 llm 服务/);
+    assert.equal(svc.status().llmAvailable, false);
+  });
+
+  it('开着且配了模型：拿到建议，落地时 named_by=model', async () => {
+    const payload = JSON.stringify([{ id: 'a1', title: '你是一个什么（身份问答）', tags: ['#身份', 'rel'] }]);
+    const runtime = fakeLlm({ 'fake/m1': payload });
+    const applied = [];
+    const svc = organizeWith(
+      { enabled: true, provider: 'fake', model: 'm1' },
+      { runtime, retitle: fakeRetitle(NOTES, applied) },
+    );
+    const out = await svc.preview();
+    assert.equal(out.ok, true, out.reason);
+    assert.equal(out.considered, 2);
+    assert.equal(out.proposals.length, 1);
+    assert.equal(out.proposals[0].id, 'a1');
+    assert.equal(out.proposals[0].file, '你是一个.md');
+    assert.deepEqual(out.proposals[0].tags, ['身份', 'rel'], '标签该去掉 # ');
+    assert.equal(out.attempts.length, 1);
+    assert.equal(out.attempts[0].ok, true);
+    await svc.apply(out.proposals);
+    assert.equal(applied.length, 1);
+    assert.equal(applied[0].namedBy, 'model', '规则管线要靠这个标记让路');
+  });
+
+  it('自动切换：主路抛错，备用路顶上，两条路都留痕', async () => {
+    const payload = JSON.stringify([{ id: 'a1', title: '备用路成功', tags: [] }]);
+    const runtime = fakeLlm({ 'fake/main': 'throw', 'fake/backup': payload });
+    const svc = organizeWith(
+      { enabled: true, provider: 'fake', model: 'main', fallbacks: [{ provider: 'fake', model: 'backup' }] },
+      { runtime },
+    );
+    const out = await svc.preview();
+    assert.equal(out.ok, true, out.reason);
+    assert.deepEqual(out.routes, [
+      { provider: 'fake', model: 'main' },
+      { provider: 'fake', model: 'backup' },
+    ]);
+    assert.equal(out.attempts.length, 2);
+    assert.equal(out.attempts[0].ok, false);
+    assert.match(String(out.attempts[0].error), /boom/);
+    assert.equal(out.attempts[1].ok, true);
+  });
+
+  it('全路失败：ok:false，且每条路的失败原因都在', async () => {
+    const runtime = fakeLlm({ 'fake/main': 'throw', 'fake/backup': 'empty' });
+    const svc = organizeWith(
+      { enabled: true, provider: 'fake', model: 'main', fallbacks: [{ provider: 'fake', model: 'backup' }] },
+      { runtime },
+    );
+    const out = await svc.preview();
+    assert.equal(out.ok, false);
+    assert.equal(out.attempts.length, 2);
+    assert.equal(out.attempts[1].ok, false);
+    assert.match(String(out.attempts[1].error), /empty stream/);
+    assert.match(out.reason, /所有路都失败了/);
+  });
+
+  it('终态 finish 报错也算失败（宿主把异常归一成 finish）', async () => {
+    const runtime = fakeLlm({});
+    const failing = {
+      listProviders: () => [],
+      listModels: async () => [],
+      stream() {
+        return (async function* finishError() {
+          yield { type: 'text-delta', index: 0, text: '半截' };
+          yield { type: 'finish', reason: 'error' };
+        })();
+      },
+    };
+    const svc = organizeWith({ enabled: true, provider: 'fake', model: 'm1' }, { runtime: failing });
+    const out = await svc.preview();
+    assert.equal(out.ok, false);
+    assert.match(String(out.attempts[0].error), /finish=error/);
+  });
+
+  it('触发闸门：everyTurns=2 时第 1 轮不跑、第 2 轮跑；minIntervalMs 防抖', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-gate-'));
+    try {
+      const runtime = fakeLlm({ 'fake/m1': '[]' });
+      const svc = organizeWith(
+        { enabled: true, provider: 'fake', model: 'm1', everyTurns: 2, minIntervalMs: 60_000 },
+        { runtime, proposalsPath: join(dir, 'p.json') },
+      );
+      assert.equal(await svc.onTurn({ sessionId: 's1', at: 1_000_000 }), null, '第 1 轮不该跑');
+      const second = await svc.onTurn({ sessionId: 's1', at: 1_000_000 });
+      assert.ok(second !== null && second.ran, '第 2 轮该跑');
+      assert.equal(await svc.onTurn({ sessionId: 's1', at: 1_000_000 }), null, '第 3 轮不该跑');
+      const fourth = await svc.onTurn({ sessionId: 's1', at: 1_000_000 });
+      assert.ok(fourth !== null);
+      assert.equal(fourth.ran, false, 'minIntervalMs 内不该再跑');
+      assert.match(fourth.reason, /minIntervalMs/);
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('自动路径：只写建议文件、不碰知识库；readProposals 能读回', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-props-'));
+    try {
+      const payload = JSON.stringify([{ id: 'a1', title: '甲', tags: ['t'] }]);
+      const runtime = fakeLlm({ 'fake/m1': payload });
+      const applied = [];
+      const path = join(dir, 'organize-proposals.json');
+      const svc = organizeWith(
+        { enabled: true, provider: 'fake', model: 'm1', everyTurns: 1, minIntervalMs: 0, autoApply: false },
+        { runtime, retitle: fakeRetitle(NOTES, applied), proposalsPath: path },
+      );
+      const out = await svc.onTurn({ sessionId: 's1', at: 5 });
+      assert.ok(out !== null && out.ran);
+      assert.equal(out.applied, undefined, 'autoApply=false 时不该落地');
+      assert.equal(applied.length, 0, '自动路径不能碰知识库');
+      assert.ok(existsSync(path), '建议该落盘');
+      const back = await svc.readProposals();
+      assert.equal(back.at, 5);
+      assert.deepEqual(back.proposals.map((p) => p.id), ['a1']);
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('autoApply=true 才落地，且仍走 apply（named_by=model）', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-autoapply-'));
+    try {
+      const payload = JSON.stringify([{ id: 'a1', title: '甲', tags: [] }]);
+      const runtime = fakeLlm({ 'fake/m1': payload });
+      const applied = [];
+      const svc = organizeWith(
+        { enabled: true, provider: 'fake', model: 'm1', everyTurns: 1, minIntervalMs: 0, autoApply: true },
+        { runtime, retitle: fakeRetitle(NOTES, applied), proposalsPath: join(dir, 'p.json') },
+      );
+      const out = await svc.onTurn({ sessionId: 's1', at: 7 });
+      assert.ok(out !== null && out.applied === true);
+      assert.equal(applied.length, 1);
+      assert.equal(applied[0].namedBy, 'model');
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('关着时 onTurn 直接 null（自动路径也零请求）', async () => {
+    const runtime = fakeLlm({});
+    const svc = organizeWith({ enabled: false, everyTurns: 1, minIntervalMs: 0 }, { runtime });
+    assert.equal(await svc.onTurn({ sessionId: 's1', at: 1 }), null);
+    assert.equal(runtime.calls.length, 0);
+  });
+
+  describe('建议解析（容错）', () => {
+    const allowed = new Set(['a1', 'b2']);
+
+    it('吃掉 Markdown 围栏与前后废话', () => {
+      const text = '好的，我整理如下：\n```json\n[{"id":"a1","title":"名字","tags":["x"]}]\n```\n希望有帮助！';
+      const { proposals, dropped } = kit.parseProposals(text, allowed);
+      assert.equal(proposals.length, 1);
+      assert.equal(proposals[0].title, '名字');
+      assert.equal(dropped, 0);
+    });
+
+    it('未知 id / 空名字被丢，且计数对得上', () => {
+      const text = '[{"id":"zz","title":"别人的"},{"id":"a1","title":"  "},{"id":"b2","title":"好名字"}]';
+      const { proposals, dropped } = kit.parseProposals(text, allowed);
+      assert.deepEqual(proposals.map((p) => p.id), ['b2']);
+      assert.equal(dropped, 2);
+    });
+
+    it('整段不是数组时，逐个对象救回', () => {
+      const text = '第一条 {"id":"a1","title":"甲"} 第二条 {"id":"b2","title":"乙"}';
+      const { proposals } = kit.parseProposals(text, allowed);
+      assert.deepEqual(proposals.map((p) => p.id), ['a1', 'b2']);
+    });
+
+    it('同一 id 只收一次（模型偶尔会重复输出）', () => {
+      const text = '[{"id":"a1","title":"甲"},{"id":"a1","title":"乙"}]';
+      const { proposals } = kit.parseProposals(text, allowed);
+      assert.deepEqual(proposals.map((p) => p.title), ['甲']);
+    });
+
+    it('名字清洗：剥 # / .md、去换行与路径字符，并截断', () => {
+      const text = JSON.stringify([{ id: 'a1', title: '  #  路径/名:字.md  ', tags: [] }]);
+      const { proposals } = kit.parseProposals(text, allowed);
+      const title = proposals[0].title;
+      assert.ok(!title.includes('#'), title);
+      assert.ok(!title.includes('.md'), title);
+      assert.ok(!/[\n/\\:*?"<>|]/.test(title), title);
+      assert.equal(title, '路径 名 字');
+    });
+
+    it('标签去 # / 去重 / 最多 8 个', () => {
+      const text = JSON.stringify([{ id: 'a1', title: 'x', tags: ['#a', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'] }]);
+      const { proposals } = kit.parseProposals(text, allowed);
+      assert.deepEqual(proposals[0].tags, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+    });
+
+    it('完全不是 JSON：建议为空、原文可回带（便于当场看见模型没按格式回）', async () => {
+      const runtime = fakeLlm({ 'fake/m1': '我觉得这些笔记都挺好，不用改。' });
+      const svc = organizeWith({ enabled: true, provider: 'fake', model: 'm1' }, { runtime });
+      const out = await svc.preview();
+      assert.equal(out.ok, false);
+      assert.equal(out.proposals.length, 0);
+      assert.match(out.reason, /没给出可用建议/);
+      assert.match(String(out.raw), /挺好/);
+    });
+  });
+
+  it('提示词带上 id / 现名 / 提问 / 内容片段，并要求原样回抄 id', () => {
+    const { system, prompt } = kit.buildRetitlePrompt([
+      { id: 'a1', file: '你是一个.md', topic: '你是一个', ask: '你是一个什么', text: '这是一段正文' },
+    ]);
+    assert.match(system, /只输出一个 JSON 数组/);
+    assert.match(prompt, /id=a1/);
+    assert.match(prompt, /你是一个\.md/);
+    assert.match(prompt, /你是一个什么/);
+    assert.match(prompt, /这是一段正文/);
+    assert.match(prompt, /原样回抄/);
+  });
+});
+
+describe('三层配置（settings.json，DEC-030）', () => {
+  let kit;
+
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  it('设置层压过插件 config；没覆盖的键保留插件层', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-set-a-'));
+    try {
+      await kit.writeSettings(dir, { mdRoot: '~/FromSettings' });
+      const merged = kit.mergeSettingsConfig({ mdRoot: '~/FromPlugin', logPrefix: '[x]' }, kit.readSettingsSync(dir));
+      assert.equal(merged.mdRoot, '~/FromSettings');
+      assert.equal(merged.logPrefix, '[x]');
+      assert.equal(kit.resolveConfig(merged).mdRoot, '~/FromSettings');
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('dataRoot 不能被设置层覆盖（住址不能自己决定）', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-set-b-'));
+    try {
+      await kit.writeSettings(dir, { dataRoot: 'C:/evil' });
+      assert.equal(kit.readSettingsSync(dir).dataRoot, undefined);
+      const merged = kit.mergeSettingsConfig({ dataRoot: '~/.oblivion/data' }, kit.readSettingsSync(dir));
+      assert.equal(merged.dataRoot, '~/.oblivion/data');
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('organize 深合并：只翻一个开关不抹掉同块的其他键', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-set-c-'));
+    try {
+      await kit.writeSettings(dir, { organize: { enabled: true, model: 'm9' } });
+      const merged = kit.mergeSettingsConfig({ organize: { provider: 'p1' } }, kit.readSettingsSync(dir));
+      const cfg = kit.resolveConfig(merged);
+      assert.equal(cfg.organize.enabled, true);
+      assert.equal(cfg.organize.model, 'm9');
+      assert.equal(cfg.organize.provider, 'p1');
+      assert.equal(cfg.organize.timeoutMs, kit.DEFAULT_CONFIG.organize.timeoutMs, '默认值该还在');
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('configSources 标出每个键最终是谁定的', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-set-d-'));
+    try {
+      await kit.writeSettings(dir, { mdRoot: '~/FromSettings' });
+      const sources = kit.configSources(
+        { logPrefix: '[p]', mdRoot: '~/plugin' },
+        kit.readSettingsSync(dir),
+        ['mdRoot', 'logPrefix', 'minAnswerLength'],
+      );
+      assert.equal(sources.mdRoot, 'settings');
+      assert.equal(sources.logPrefix, 'plugin');
+      assert.equal(sources.minAnswerLength, 'default');
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('未知键被丢掉（写错键名不该静默生效）', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-set-e-'));
+    try {
+      await kit.writeSettings(dir, { totally_unknown_key: 1, mdRoot: '~/ok' });
+      const values = kit.readSettingsSync(dir);
+      assert.equal(values.totally_unknown_key, undefined);
+      assert.equal(values.mdRoot, '~/ok');
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('null 可以删掉一个键（回到下层配置）', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-set-f-'));
+    try {
+      await kit.writeSettings(dir, { mdRoot: '~/A', logPrefix: '[A]' });
+      await kit.writeSettings(dir, { mdRoot: null });
+      const values = kit.readSettingsSync(dir);
+      assert.equal(values.mdRoot, undefined);
+      assert.equal(values.logPrefix, '[A]');
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('坏文件 / 不存在都不炸，一律当空设置', () => {
+    const bad = mkdtemp(join(tmpdir(), 'obl-set-bad-'));
+    try {
+      writeFileSync(join(bad, 'settings.json'), '{ 这不是 JSON', 'utf8');
+      assert.deepEqual(kit.readSettingsSync(bad), {});
+    } finally {
+      cleanupDir(bad);
+    }
+    assert.deepEqual(kit.readSettingsSync(join(tmpdir(), 'obl-set-missing-' + Date.now())), {});
+    assert.equal(kit.settingsPathOf('~/x').endsWith('settings.json'), true);
   });
 });

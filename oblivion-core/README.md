@@ -242,13 +242,14 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
         dataRoot: '~/.oblivion/data'
 ```
 
-### 9.3 用九个模型面工具
+### 9.3 用十个模型面工具
 
 | 工具 | 用途 | 例 |
 | --- | --- | --- |
 | `oblivion_digest` | **整理当前对话**：模型产出结构（章节/决策/待办/未决/双链），插件落成**一篇整理笔记 + 一条可检索条目**（并建共现边） | 「整理一下当前对话」 |
 | `oblivion_retitle` | **给沉淀件改名打标签**：先给候选（现名/原问句/答案摘要），模型起内容名 + 标签，插件改名并同步条目与索引 | 「把这些笔记的名字改成讲什么」 |
 | `oblivion_wiki` | **把同一主题的笔记合成一页主题页**：先给候选（现名/原问句/状态/已属哪页），模型判簇 + 写概述，插件落 `02_Wiki页面/` 并在成员笔记里留一行回链 | 「把讲 cordis 作用域的笔记合成一页」 |
+| `oblivion_organize` | **自动整理（插件自己调模型）**：`status`（零请求）/ `preview`（只读，拿建议）/ `apply`（落地；省略 `items` 就落地上一次预览）。**默认关**，开了才发请求 | 「自动整理一下知识库的标题」 |
 | `oblivion_status` | **观测与调参入口**：生效配置 + 真实统计 + 「该改哪个键」建议 + 最近判定 | 「这几天的捕获率多少？该调什么？」 |
 | `oblivion_query` | 关键词 + 共现扩展检索，带来源 | 「库里关于 cordis 注入的记录」 |
 | `oblivion_capture` | 手工沉淀一条问答（走同一套四层筛选） | 把一段读书笔记沉淀成条目 |
@@ -367,6 +368,7 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 | --- | --- | --- |
 | `dataRoot` / `mdRoot` | `~/.oblivion/data` / **`~/OblivionKB`** | JSON 存储 / 笔记落盘根。**默认值是给新用户的**，本机私有路径一律靠 `config` 覆盖（本机既有知识库 `C:/Library/那些渐渐被遗忘` 在 profile 用户层按 id 覆盖 `mdRoot`，机器本地、不入库）；绝对路径或 `~/` 写法都行；**一经配置，装载时就自动创建**该根与全部分类目录 |
 | `mdClassify` | `session`·`qa_loop` → `01_问答沉淀`、`doc` → `00_导入文件`、`wiki` → `02_Wiki页面`、`content_creator` → `03_创作产物` | 来源类型 → 子目录；未命中落 `99_其他/`（§25.3）。目录名会**消毒**（去掉 `..`／盘符／非法字符），不会逃出 `mdRoot` |
+| `organize` | 下方「三层配置」一节，**默认全关** | **自动整理**（DEC-030）。`enabled` 总开关（`false` ⇒ **一个外部请求都不发**）；`digest` / `retitle` 两个作用域开关；`provider` / `model` 主路（留空 = 用宿主默认选路 `ctx.agentDefaultModel`）；`fallbacks[]` 备用路（**自动切换**）；`maxTokens` / `timeoutMs`；`everyTurns`（每 N 个 `turn/end` 自动产出建议，`0` = 不自动）；`minIntervalMs`（同会话防抖）；**`autoApply`（默认 `false`：自动路径只写建议文件，绝不碰知识库）**；`batchSize` |
 | `valueThreshold` | `0.3` | L4 价值闸门；**勿改回 0.5**（会让一切被丢弃） |
 | `enablePerspective` / `enableFeedback` | `true` | 认知陪伴 / 反馈微调开关 |
 | `perspectiveActiveSessionMax` | `3` | §25.4 主动触发只在最早 3 个会话 |
@@ -378,6 +380,34 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 | `enableStats` | `true` | 判定留痕开关（关掉就没有统计，也就没法调参） |
 | `statsRetentionDays` / `statsMaxEntries` / `statusRecentLimit` | `90` / `5000` / `20` | 留痕保留期（读取时惰性裁剪）、最多几条、`oblivion_status` 默认返回几条 |
 | `graphInitialWeight` / `graphReinforceDelta` / `graphWeightCap` / `graphDecayBase` / `graphDecayPeriodDays` | `0.3` / `0.05` / `1.0` / `0.95` / `30` | §25.6 共现图权重规则 |
+
+#### 三层配置：为什么还有一个 `settings.json`（DEC-030）
+
+**优先级**：`DEFAULT_CONFIG`（代码里的默认值） < **插件 config**（profile 补丁那条 `config:`） <
+**`<dataRoot>/settings.json`**（**设置页写这一层**）。
+
+前两层都要「改文件 + 重启 DSH」，所以「在设置里改路径 / 选模型」没法落在它们身上；第三层点一下即生效，
+而且**压过 profile** —— 否则「界面里改了、profile 又盖回去」会变成查不出来的 bug。
+两条刻意边界：
+
+- **`dataRoot` 不能由 `settings.json` 覆盖**（本文件就住在 `<dataRoot>/` 下面，「住址」不能由「住址」自己决定）；
+- **只接受已知键**：写错键名会被丢掉，而不是静默生效。
+
+`oblivion` 门面额外暴露 `configSources`：每个键最终是谁定的（`settings` / `plugin` / `default`），
+面板据此显示「生效值 + 来源」。
+
+#### 自动整理（`oblivion_organize`，DEC-030）：三条不变量
+
+1. **默认零请求** —— `organize.enabled === false` 时连 prompt 都不构造、`ctx.llm` 一次都不碰；
+2. **先预览再落地** —— `preview` **一个字都不改知识库**；自动路径只写 `<dataRoot>/organize-proposals.json`。
+   改名不可逆（知识库不是 git 仓库），所以 `autoApply` 默认 `false`；
+3. **失败不阻塞** —— 全路失败只记留痕；触发路径 fire-and-forget，模型再慢也不拖住问答链路。
+
+**密钥不由插件经手**：插件只报 `provider` / `model`，密钥与地址由宿主 provider 适配器内部经
+`ctx.credentials` 解析 —— 这正是「复用 DSH 里可用的地址与密钥」，且比插件自己去读凭据文件更安全。
+宿主**没有** `llm` 服务时只**降级**（工具报不可用），插件其余部分照常。
+
+> 尚未编码：**设置页 UI**（路径 / 模型选择 / 自动切换三项）与 `organize.digest` 作用域。
 
 ### 9.5 观测与调参（先跑够几天，再动阈值）
 

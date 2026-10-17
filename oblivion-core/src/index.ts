@@ -16,15 +16,18 @@
  */
 
 import type { AppContext } from './core-types.js';
-import { DEFAULT_CONFIG, type Config } from './config.js';
+import { DEFAULT_CONFIG, resolveConfig, type Config } from './config.js';
 import { registerFeedback } from './feedback/index.js';
 import { registerGraph } from './graph/index.js';
 import { registerDigest } from './digest/index.js';
 import { registerKnowledge } from './knowledge/index.js';
+import { llmRuntimeOf } from './llm/client.js';
 import { buildChannelDiag, createMcpEndpoint, publishMcp, writeChannelDiag } from './mcp/index.js';
 import type { ChannelReport } from './mcp/index.js';
+import { createOrganizeService } from './organize/index.js';
 import { createRetitleService } from './knowledge/retitle.js';
 import { createWikiService } from './knowledge/wiki.js';
+import { configSources, mergeSettingsConfig, readSettingsSync } from './settings-file.js';
 import { registerPerspective } from './perspective/index.js';
 import { OBLIVION_SYSTEM_PROMPT, resolveSectionOrder } from './prompt.js';
 import { attachAgentFromPayload, readRelatedHint, setAgentInstaller } from './prompt-inject.js';
@@ -85,17 +88,36 @@ declare const __OBLIVION_CORE_VERSION__: string;
  * `error` **照旧向上抛**：宿主必须知道这次装载失败了，不能吞成「装着好好的」。
  */
 export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
-  const config: Config = { ...DEFAULT_CONFIG, ...(rawConfig ?? {}) };
+  /**
+   * **三层配置**（DEC-030）：`DEFAULT_CONFIG` < **插件 config** < **`<dataRoot>/settings.json`**。
+   *
+   * 第三层是设置页写的（点一下即生效、且压过 profile），
+   * 理由与「为什么住址不能由住址自己决定」见 `settings-file.ts` 的模块注释。
+   */
+  const pluginConfig = (rawConfig ?? {}) as Record<string, unknown>;
+  const bootDataRoot =
+    typeof pluginConfig.dataRoot === 'string' && pluginConfig.dataRoot !== ''
+      ? pluginConfig.dataRoot
+      : DEFAULT_CONFIG.dataRoot;
+  const settings = readSettingsSync(bootDataRoot);
+  const config: Config = resolveConfig(
+    mergeSettingsConfig(pluginConfig, settings) as Partial<Config>,
+  );
   void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, null, 'apply:enter'));
   try {
-    applyInner(rawCtx, config);
+    applyInner(rawCtx, config, pluginConfig, settings);
   } catch (error: unknown) {
     void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, null, 'apply:failed', error));
     throw error;
   }
 }
 
-function applyInner(rawCtx: unknown, config: Config): void {
+function applyInner(
+  rawCtx: unknown,
+  config: Config,
+  pluginConfig: Record<string, unknown>,
+  settings: Record<string, unknown>,
+): void {
   // Cordis 传入的 ctx 是框架自己的 Context；这里按实际用到的成员收敛成结构化类型，
   // 因此不需要把 @deepseek-ai/cordis 放进依赖。
   const ctx = rawCtx as AppContext;
@@ -133,6 +155,22 @@ function applyInner(rawCtx: unknown, config: Config): void {
   };
   const host: AppContext = usableHost(rootCtx) ? rootCtx : ctx;
 
+  /**
+   * **裸读未声明服务会抛**（`cannot get property "x" without inject`）——
+   * `0.1.12` 那次就是这么把整个 App 打崩的。所以可选服务一律经它读。
+   *
+   * 为什么不干脆写进 `inject`：`inject` 里列的是**必需**服务，缺了插件就不装载。
+   * 而 `llm` / `agentDefaultModel` 在极简宿主里可以没有（也不该有）—— 那种情况下
+   * 我们只该**降级**（自动整理不可用），而不是整个插件不工作。
+   */
+  const optionalService = (target: unknown, key: string): unknown => {
+    try {
+      return (target as Record<string, unknown>)[key] ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   const knowledge = registerKnowledge(ctx, config);
   const profile = registerProfile(ctx, config);
   const graph = registerGraph(ctx, config);
@@ -157,6 +195,21 @@ function applyInner(rawCtx: unknown, config: Config): void {
     classify: config.mdClassify,
     host: knowledge,
   });
+  /**
+   * 自动整理（DEC-030）：**默认全关**，开了才经 `ctx.llm` 调模型。
+   *
+   * `llm` / `agentDefaultModel` 都不在 `inject` 里 ⇒ 经 `optionalService` 读（缺了降级）。
+   * 模型选路优先级：`organize.provider/model` > 宿主默认选路（`currentSelection`）> 无（`preview` 会回「没选出模型」）。
+   */
+  const defaultModelService = optionalService(host, 'agentDefaultModel') ?? optionalService(ctx, 'agentDefaultModel');
+  const organize = createOrganizeService({
+    config,
+    retitle,
+    runtime: llmRuntimeOf({ llm: optionalService(host, 'llm') ?? optionalService(ctx, 'llm') }),
+    defaultRoute: () =>
+      (defaultModelService as { currentSelection?: () => unknown } | null)?.currentSelection?.(),
+    logger: ctx.logger,
+  });
 
   registerQaLoop(ctx, config, {
     knowledge,
@@ -166,6 +219,12 @@ function applyInner(rawCtx: unknown, config: Config): void {
     onCaptured: (info) => {
       // 覆盖记账与陪伴生成都在 fire-and-forget 链路里，不阻塞捕获本身。
       void perspective?.onTurn(info);
+    },
+    // 自动整理的节拍：到点才跑；**全程 fire-and-forget**，模型再慢也不拖住问答链路。
+    onTurnEnd: (info) => {
+      void organize.onTurn(info).catch((error: unknown) => {
+        ctx.logger?.warn?.(config.logPrefix + ' 自动整理失败：%o', error);
+      });
     },
   });
 
@@ -283,6 +342,7 @@ function applyInner(rawCtx: unknown, config: Config): void {
           digest,
           retitle,
           wiki,
+          organize,
           perspectiveStats: () => perspective?.stats() ?? null,
         });
       });
@@ -329,6 +389,7 @@ function applyInner(rawCtx: unknown, config: Config): void {
         digest,
         retitle,
         wiki,
+        organize,
         perspectiveStats: () => perspective?.stats() ?? null,
       });
       return () => {
@@ -379,6 +440,16 @@ function applyInner(rawCtx: unknown, config: Config): void {
     feedback,
     perspective,
     digest,
+    retitle,
+    wiki,
+    organize,
+    /**
+     * 每个键最终是谁定的（`settings` / `plugin` / `default`）。
+     *
+     * 面板/桥接据此显示「生效值 + 来源」—— 没有这一层，
+     * 「我明明在界面里改了怎么没生效」只能靠人猜三层配置的先后。
+     */
+    configSources: configSources(pluginConfig, settings),
     stats,
   } as const;
 

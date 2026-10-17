@@ -70,7 +70,58 @@ export {
 } from './mcp/index.js';
 export type { McpEndpoint, McpEndpointInfo, McpFacade, McpTool } from './mcp/index.js';
 export type { ChannelDiag, ChannelReport, ChannelScopeName, ChannelScopeReport } from './mcp/index.js';
-export { DEFAULT_CONFIG, resolveConfig } from './config.js';
+export { DEFAULT_CONFIG, resolveConfig, mergeOrganize } from './config.js';
+export type { OrganizeConfig } from './config.js';
+export {
+  SETTINGS_FILE,
+  configSources,
+  describeSettings,
+  mergeSettingsConfig,
+  organizeOf,
+  readSettings,
+  readSettingsSync,
+  sanitizeSettings,
+  settingsPathOf,
+  writableKeys,
+  writeSettings,
+} from './settings-file.js';
+export type { ConfigSource } from './settings-file.js';
+export {
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TIMEOUT_MS,
+  buildRoutes,
+  drainText,
+  generate,
+  listModels,
+  listProviders,
+  llmRuntimeOf,
+} from './llm/client.js';
+export type {
+  LlmAttempt,
+  LlmCallOptions,
+  LlmCallResult,
+  LlmModelInfo,
+  LlmProviderInfo,
+  LlmRequest,
+  LlmRoute,
+  LlmRuntimeLike,
+} from './llm/client.js';
+export {
+  EXCERPT_CHARS,
+  TAGS_MAX,
+  TITLE_MAX,
+  buildRetitlePrompt,
+  createOrganizeService,
+  parseProposals,
+} from './organize/index.js';
+export type {
+  OrganizeAutoResult,
+  OrganizeDeps,
+  OrganizePreview,
+  OrganizeService,
+  OrganizeStatus,
+  RetitleProposal,
+} from './organize/index.js';
 export { expandHome } from './util/paths.js';
 export { normalizeForHash, sha1, shortHash } from './util/hash.js';
 export { ageDays, newId, isoDate, MS_PER_DAY } from './util/time.js';

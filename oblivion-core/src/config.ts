@@ -100,6 +100,58 @@ export interface Config {
    * （不删除，写 `supersededBy`），并在笔记 frontmatter 里如实标注。
    */
   readonly autoSupersede: boolean;
+
+  /**
+   * **自动整理**（DEC-030，2026-10-17）。
+   *
+   * 旧约束「插件不调 LLM」**从硬约束降级为默认行为**：默认仍走确定性实现、**零外部请求**；
+   * 只有这里显式打开并选定模型后，才经 `ctx.llm` 调用（密钥由宿主适配器内部解析，
+   * 插件**不经手密钥**）。作用域、自动切换、配置分层见 `.design/自动整理与设置页.md`。
+   */
+  readonly organize: OrganizeConfig;
+}
+
+/**
+ * 自动整理（DEC-030）的配置块。
+ *
+ * **默认全关** —— 这是「插件不调 LLM」那条旧约束的落地形态：默认行为不变，
+ * 想开的人自己去设置页打开。任何一项没打开都**不会**产生外部请求。
+ */
+export interface OrganizeConfig {
+  /** 总开关。`false` ⇒ 一个外部请求都不发（设置页第一项，也是唯一的否决位）。 */
+  readonly enabled: boolean;
+  /** 作用域一：会话整理（`oblivion_digest`）的产出走模型。 */
+  readonly digest: boolean;
+  /** 作用域二：知识库级标题/标签回填（`oblivion_retitle`）走模型。 */
+  readonly retitle: boolean;
+  /** 主路 provider；留空 = 用宿主默认选路（`ctx.agentDefaultModel.currentSelection()`）。 */
+  readonly provider: string;
+  /** 主路模型；留空同上。 */
+  readonly model: string;
+  /**
+   * **自动切换**：主路失败时，按这个顺序依次顶上来的备用路。
+   *
+   * 「失败」= 抛错 / 终态 `finish` 含 error|abort / 空流，三种都算（见 `llm/client.ts`）。
+   * 全失败只记留痕，**绝不阻塞 turn**。
+   */
+  readonly fallbacks: ReadonlyArray<{ readonly provider: string; readonly model: string }>;
+  /** 单次生成的 token 上限。 */
+  readonly maxTokens: number;
+  /** 单条路的超时（毫秒）；超时算这条失败，换下一条。 */
+  readonly timeoutMs: number;
+  /** 每多少个 `turn/end` 自动产出一批建议；`0` = **不自动**（默认）。 */
+  readonly everyTurns: number;
+  /** 同一会话两次自动整理的最小间隔（毫秒），防抖。 */
+  readonly minIntervalMs: number;
+  /**
+   * 自动产出建议后**是否自动落地**。
+   *
+   * 默认 `false`：改名不可逆（知识库不是 git 仓库），所以自动路径**只产出建议**，
+   * 由人看过再落地 —— 这就是 DEC-030 定的「回填必须先出预览再落地」。
+   */
+  readonly autoApply: boolean;
+  /** 一次最多送几篇笔记给模型（控制 prompt 体积）。 */
+  readonly batchSize: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -197,7 +249,49 @@ export const DEFAULT_CONFIG: Config = {
 
   // 盲区修正：同主题新版本自动降级旧版本（不删，只标 superseded）
   autoSupersede: true,
+
+  /**
+   * 自动整理（DEC-030）：**默认全关** —— 把「插件不调 LLM」从硬约束降级成默认行为。
+   *
+   * 想开的人去设置页打开（写 `<dataRoot>/settings.json`，压过 profile 里的插件 config）。
+   * `everyTurns: 0` 表示「连建议都不自动产出」；`autoApply: false` 表示
+   * 「产出了也只写建议文件，不碰知识库」。
+   */
+  organize: {
+    enabled: false,
+    digest: true,
+    retitle: true,
+    provider: '',
+    model: '',
+    fallbacks: [],
+    maxTokens: 1024,
+    timeoutMs: 30_000,
+    everyTurns: 0,
+    minIntervalMs: 600_000,
+    autoApply: false,
+    batchSize: 8,
+  },
 };
+
+/**
+ * `organize` 是**嵌套对象**，部分覆盖必须深合并。
+ *
+ * 为什么单独写一个：`resolveConfig` / `apply` 的合并是**浅**的，`organize: { enabled: true }`
+ * 这种「只翻一个开关」的写法会把其余键整个抹掉 —— 症状是「打开开关后模型名莫名其妙空了」，
+ * 而配置里根本看不出哪一步丢的。
+ */
+export function mergeOrganize(
+  base: OrganizeConfig,
+  patch: Partial<OrganizeConfig> | undefined,
+): OrganizeConfig {
+  if (!patch) return base;
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined || v === null) continue;
+    out[k] = v;
+  }
+  return out as unknown as OrganizeConfig;
+}
 
 /** 部分覆盖：只接受显式给出的键，缺省落回 DEFAULT_CONFIG。 */
 export function resolveConfig(input?: Partial<Config>): Config {
@@ -206,5 +300,7 @@ export function resolveConfig(input?: Partial<Config>): Config {
   for (const [k, v] of Object.entries(input)) {
     if (v !== undefined && v !== null) out[k] = v;
   }
+  // 嵌套块要深合并：`organize: { enabled: true }` 不该抹掉同块里的其他键。
+  out.organize = mergeOrganize(DEFAULT_CONFIG.organize, input.organize);
   return out as unknown as Config;
 }

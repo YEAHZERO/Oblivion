@@ -72,4 +72,19 @@ export interface AppContext {
   /** 装载器（仅用于诊断：列出同一应用里的条目名）。 */
   loader?: { entries?(): Iterable<{ options?: { name?: unknown } }> };
   agents?: { list?(): unknown[] };
+  /**
+   * 宿主的 LLM 面（`ctx.llm`）。
+   *
+   * 这里写成 `unknown`：形状由 `llm/client.ts` 的 `LlmRuntimeLike` 结构化描述，
+   * 目的是**不把 `@deepseek-ai/dsh-llm` 放进依赖**（与其余服务同一条理由）。
+   * 缺了这个服务是正常情况（极简宿主、用户没配 provider），调用点必须优雅降级。
+   */
+  llm?: unknown;
+  /**
+   * 宿主的默认模型选路（`ctx.agentDefaultModel`）。
+   *
+   * `currentSelection()` 可能同步回、也可能回 Promise —— 调用点统一 `await Promise.resolve(...)`。
+   * 只在 `organize.provider/model` 留空时用它（「没显式配就用你默认的那个」）。
+   */
+  agentDefaultModel?: { currentSelection?(): unknown };
 }
