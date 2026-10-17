@@ -1275,13 +1275,29 @@ describe('自动整理（DEC-030）', () => {
    * 假宿主 LLM：`script` 的路 → 这一段流。
    *   `'throw'` = 适配器抛错；`'empty'` = 空流；其他字符串 = 一段 text-delta。
    * 同时记下**有没有真被调用**（「关着就不该发请求」这条断言全靠它）。
+   *
+   * 注册表里刻意留一个**用户自定义 provider**（`agnes`，自建 baseURL 的那种）：
+   * 「设置页也能选到它」这条需求的全部依据就是「宿主注册表里有它」，
+   * 插件不做白名单 —— 所以假宿主也必须能表现出「不止一个 provider」。
    */
-  function fakeLlm(script) {
+  const DEFAULT_REGISTRY = [
+    { id: 'fake', name: 'Fake', models: [{ provider: 'fake', id: 'm1' }] },
+    {
+      id: 'agnes',
+      name: 'Agnes',
+      models: [
+        { provider: 'agnes', id: 'agnes-2.5-flash', name: 'agnes-2.5-flash' },
+        { provider: 'agnes', id: 'agnes-3.0-flash' },
+      ],
+    },
+  ];
+
+  function fakeLlm(script, registry = DEFAULT_REGISTRY) {
     const calls = [];
     return {
       calls,
-      listProviders: () => [{ id: 'fake' }],
-      listModels: async () => [{ provider: 'fake', id: 'm1' }],
+      listProviders: () => registry.map((p) => ({ id: p.id, name: p.name })),
+      listModels: async (provider) => registry.find((p) => p.id === provider)?.models ?? [],
       stream(options) {
         calls.push(options);
         const key = options.provider + '/' + options.model;
@@ -1317,6 +1333,7 @@ describe('自动整理（DEC-030）', () => {
       runtime: deps.runtime === undefined ? fakeLlm({}) : deps.runtime,
       at: deps.at ?? (() => 1_000_000),
       proposalsPath: deps.proposalsPath,
+      defaultRoute: deps.defaultRoute,
     });
   }
 
@@ -1346,6 +1363,90 @@ describe('自动整理（DEC-030）', () => {
     assert.equal(out.ok, false);
     assert.match(out.reason, /没有 llm 服务/);
     assert.equal(svc.status().llmAvailable, false);
+  });
+
+  describe('选路来源与可选模型清单（设置页的数据源）', () => {
+    it('status 直接答出生效选路（关着也答，且不用先 preview）', () => {
+      const svc = organizeWith(
+        { enabled: false, provider: '', model: '' },
+        { runtime: fakeLlm({}), defaultRoute: () => ({ provider: 'agnes', model: 'agnes-2.5-flash' }) },
+      );
+      const st = svc.status();
+      assert.equal(st.enabled, false);
+      assert.deepEqual(st.routes, [{ provider: 'agnes', model: 'agnes-2.5-flash' }]);
+      assert.equal(st.routeSource, 'host-default', '没显式配 ⇒ 选路来自宿主默认');
+    });
+
+    it('显式配了主路：不再补宿主默认（routeSource=config）', () => {
+      const svc = organizeWith(
+        { enabled: true, provider: 'fake', model: 'm1' },
+        { runtime: fakeLlm({}), defaultRoute: () => ({ provider: 'agnes', model: 'agnes-2.5-flash' }) },
+      );
+      const st = svc.status();
+      assert.deepEqual(st.routes, [{ provider: 'fake', model: 'm1' }], '我明明配了 A，就不该跑 B');
+      assert.equal(st.routeSource, 'config');
+    });
+
+    it('catalog 列出宿主全部 provider（含自定义 agnes），且零请求', async () => {
+      const runtime = fakeLlm({});
+      const svc = organizeWith(
+        { enabled: false },
+        { runtime, defaultRoute: () => ({ provider: 'agnes', model: 'agnes-2.5-flash' }) },
+      );
+      const cat = await svc.catalog();
+      assert.equal(runtime.calls.length, 0, 'catalog 是注册表读取，不能发模型请求');
+      assert.equal(cat.llmAvailable, true);
+      assert.deepEqual(cat.providers.map((p) => p.id), ['fake', 'agnes']);
+      const agnes = cat.providers.find((p) => p.id === 'agnes');
+      assert.equal(agnes.name, 'Agnes', '显示名该用 displayName');
+      assert.deepEqual(agnes.models.map((m) => m.id), ['agnes-2.5-flash', 'agnes-3.0-flash']);
+      assert.deepEqual(cat.routes, [{ provider: 'agnes', model: 'agnes-2.5-flash' }]);
+      assert.equal(cat.routeSource, 'host-default');
+      // 关着也照样能列 —— 挑模型这件事本身不该要求先打开自动整理。
+      assert.equal(svc.status().enabled, false);
+    });
+
+    it('没有 llm 服务：catalog 空手返回，不抛', async () => {
+      const cat = await organizeWith({ enabled: false }, { runtime: null }).catalog();
+      assert.deepEqual(cat.providers, []);
+      assert.deepEqual(cat.routes, []);
+      assert.equal(cat.routeSource, 'none');
+      assert.equal(cat.llmAvailable, false);
+    });
+
+    it('某个 provider 的 listModels 抛错：它仍被列出，只是模型为空', async () => {
+      const runtime = {
+        calls: [],
+        listProviders: () => [{ id: 'fake' }, { id: 'broken' }],
+        listModels: async (provider) => {
+          if (provider === 'broken') throw new Error('nope');
+          return [{ provider: 'fake', id: 'm1' }];
+        },
+        stream() {
+          throw new Error('unused');
+        },
+      };
+      const cat = await organizeWith({ enabled: false }, { runtime }).catalog();
+      assert.deepEqual(cat.providers.map((p) => p.id), ['fake', 'broken']);
+      assert.deepEqual(cat.providers[1].models, []);
+      assert.equal(cat.providers[1].name, 'broken', '没给显示名就退回 id');
+    });
+
+    it('宿主默认选路是 Promise 时：status 不猜（none），catalog await 出来', async () => {
+      const svc = organizeWith(
+        { enabled: true, provider: '', model: '' },
+        {
+          runtime: fakeLlm({}),
+          defaultRoute: () => Promise.resolve({ provider: 'agnes', model: 'agnes-2.5-flash' }),
+        },
+      );
+      assert.equal(svc.status().routeSource, 'none', '同步面不能猜异步值');
+      const cat = await svc.catalog();
+      assert.deepEqual(cat.routes, [{ provider: 'agnes', model: 'agnes-2.5-flash' }]);
+      assert.equal(cat.routeSource, 'host-default');
+      // 解析过一次就缓存住：再问同步面也答得出。
+      assert.equal(svc.status().routeSource, 'host-default');
+    });
   });
 
   it('开着且配了模型：拿到建议，落地时 named_by=model', async () => {

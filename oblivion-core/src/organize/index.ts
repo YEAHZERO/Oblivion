@@ -29,6 +29,8 @@ import { contentSection, parseNote, type NoteRef, type RetitleResult, type Retit
 import {
   buildRoutes,
   generate,
+  listModels,
+  listProviders,
   type LlmAttempt,
   type LlmRoute,
   type LlmRuntimeLike,
@@ -67,13 +69,42 @@ export interface RetitleProposal {
   ask: string;
 }
 
+/** `routes` 是怎么来的：显式配的 / 宿主的默认选路 / 一个都没有。 */
+export type OrganizeRouteSource = 'config' | 'host-default' | 'none';
+
 export interface OrganizeStatus {
   enabled: boolean;
   scopes: { digest: boolean; retitle: boolean };
   routes: LlmRoute[];
+  routeSource: OrganizeRouteSource;
   llmAvailable: boolean;
   everyTurns: number;
   autoApply: boolean;
+}
+
+/** 宿主注册的一个 provider 及其模型（设置页下拉框的数据源）。 */
+export interface OrganizeProviderCatalog {
+  id: string;
+  /** 显示名（`displayName`），没给就是 id。 */
+  name: string;
+  models: Array<{ id: string; name: string }>;
+}
+
+/**
+ * 可选模型清单 —— **直接来自宿主注册表**（`ctx.llm.listProviders()` + `listModels()`）。
+ *
+ * 这里刻意不维护自己的白名单：用户自定义的 provider（`apiBaseURL` 指向自建服务的，
+ * 如 profile 里的 `agnes`）与官方 provider 在宿主里是同一份注册表，所以
+ * 「设置页能选 agnes」这件事**不需要插件做任何特判** —— 列出来就有了。
+ * 插件也不碰密钥：只报 `provider` / `model`，密钥与地址由宿主适配器解析。
+ */
+export interface OrganizeCatalog {
+  /** 全部 provider，含用户自定义的（空数组 = 宿主没装 `llm` 服务）。 */
+  providers: OrganizeProviderCatalog[];
+  /** 此刻若打开自动整理，会按序尝试的路。 */
+  routes: LlmRoute[];
+  routeSource: OrganizeRouteSource;
+  llmAvailable: boolean;
 }
 
 export interface OrganizePreview {
@@ -104,6 +135,8 @@ export interface OrganizeAutoResult {
 
 export interface OrganizeService {
   status(): OrganizeStatus;
+  /** 宿主可选的 provider/模型清单 + 当前生效选路（**本地注册表读取，不发请求**）。 */
+  catalog(): Promise<OrganizeCatalog>;
   /** 只读：拿一批候选给模型要建议。**不写知识库。** */
   preview(limit?: number): Promise<OrganizePreview>;
   /** 落地一批建议（走 `RetitleService.apply`，`named_by` 记 `'model'`）。 */
@@ -294,14 +327,70 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
     }
   }
 
+  /**
+   * 同步解析宿主默认选路。
+   *
+   * `status()` 是同步面，不能 await —— 但宿主 `agentDefaultModel.currentSelection()`
+   * **本身就是同步函数**，所以直连返回值就够。真碰上回 Promise 的宿主，这里**不猜**：
+   * 保持 `null`，交给 `catalog()` / `preview()` 里那条 `await` 的路去解析。
+   */
+  function syncDefaultRoute(): void {
+    if (cachedDefault !== null || !deps.defaultRoute) return;
+    if (cfg.provider !== '' && cfg.model !== '') return;
+    try {
+      const value = deps.defaultRoute();
+      if (value !== null && typeof value === 'object' && typeof (value as { then?: unknown }).then !== 'function') {
+        cachedDefault = asRoute(value);
+      }
+    } catch {
+      cachedDefault = null;
+    }
+  }
+
+  function routeSourceOf(): OrganizeRouteSource {
+    if (cfg.provider !== '' && cfg.model !== '') return 'config';
+    return routesNow().length > 0 ? 'host-default' : 'none';
+  }
+
   const status = (): OrganizeStatus => {
+    // 先同步解析宿主默认选路：关着的时候也要能答「打开会用哪条」，不能等某次 preview 之后才有。
+    syncDefaultRoute();
     return {
       enabled: cfg.enabled,
       scopes: { digest: cfg.digest, retitle: cfg.retitle },
       routes: routesNow(),
+      routeSource: routeSourceOf(),
       llmAvailable: deps.runtime !== null,
       everyTurns: cfg.everyTurns,
       autoApply: cfg.autoApply,
+    };
+  };
+
+  /**
+   * 列宿主可选模型。**只读注册表、不发请求**（`listProviders` 是同步注册表读取，
+   * `listModels` 对配置式 provider 也是读配置）—— 所以它可以在「关着」的时候随便调。
+   *
+   * `listModels` 是异步的（宿主签名如此），所以本方法也异步。
+   */
+  const catalog = async (): Promise<OrganizeCatalog> => {
+    const providers: OrganizeProviderCatalog[] = [];
+    for (const p of listProviders(deps.runtime)) {
+      if (p.id === '') continue;
+      const models = await listModels(deps.runtime, p.id);
+      providers.push({
+        id: p.id,
+        name: p.name !== undefined && p.name !== '' ? p.name : p.id,
+        models: models
+          .filter((m) => m.id !== '')
+          .map((m) => ({ id: m.id, name: m.name !== undefined && m.name !== '' ? m.name : m.id })),
+      });
+    }
+    await resolveDefaultRoute();
+    return {
+      providers,
+      routes: routesNow(),
+      routeSource: routeSourceOf(),
+      llmAvailable: deps.runtime !== null,
     };
   };
 
@@ -455,5 +544,5 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
     return { at: typeof stored.at === 'number' ? stored.at : null, proposals };
   };
 
-  return { status, preview, apply, onTurn, lastAuto: () => lastAuto, readProposals };
+  return { status, catalog, preview, apply, onTurn, lastAuto: () => lastAuto, readProposals };
 }

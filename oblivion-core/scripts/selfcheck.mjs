@@ -56,12 +56,16 @@ await check('导出形状符合 object 插件约定', () => {
   return 'name / inject / apply / default.apply 齐备';
 });
 
-/** 只注册、不做磁盘动作的桩 ctx。 */
-function makeCtx() {
-  const reg = { tools: [], effects: [], events: [], sections: [], sectionDefs: [], orderQueries: [] };
+/** 只注册、不做磁盘动作的桩 ctx。`extra` 用来补可选服务（如 `llm` / `agentDefaultModel`）。 */
+function makeCtx(extra = {}) {
+  const reg = { tools: [], effects: [], events: [], sections: [], sectionDefs: [], orderQueries: [], provides: {} };
   return {
     reg,
     ctx: {
+      provide: (name, value) => {
+        reg.provides[name] = value;
+      },
+      ...extra,
       tools: { register: (d) => reg.tools.push(d.name) },
       systemPrompt: {
         section: (d) => {
@@ -108,6 +112,46 @@ await check('apply 注册面完整（10 工具 / 1 段落 / 事件 / 各自 effe
   assert.ok(reg.events.some((e) => e.event === 'agent/created'), '必须在 agent 作用域补挂订阅');
   assert.ok(reg.effects.length >= 6, '每个模块都要有 effect 清理位');
   return reg.tools.join(', ');
+});
+
+// ---- 自动整理：可选模型清单走宿主注册表（DEC-030）----
+await check('自动整理的可选模型清单经门面露出，自定义 provider（agnes）也在（设置页据此填下拉框）', async () => {
+  const { ctx: oCtx, reg: oReg } = makeCtx({
+    // 宿主注册表：一个官方 provider + 一个**用户自定义**的（profile 里那种自建 baseURL）。
+    llm: {
+      listProviders: () => [
+        { id: 'deepseek', name: 'DeepSeek' },
+        { id: 'agnes', name: 'Agnes' },
+      ],
+      listModels: async (provider) =>
+        provider === 'agnes'
+          ? [
+              { provider: 'agnes', id: 'agnes-2.5-flash' },
+              { provider: 'agnes', id: 'agnes-3.0-flash' },
+            ]
+          : [{ provider: 'deepseek', id: 'deepseek-chat' }],
+      stream() {
+        throw new Error('自检不该真的调模型（organize.enabled 默认关）');
+      },
+    },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'agnes', model: 'agnes-2.5-flash' }) },
+  });
+  mod.apply(oCtx, { dataRoot: join(tmp, 'data-organize'), mdRoot: join(tmp, 'kb-organize') });
+  const facade = oReg.provides.oblivion;
+  assert.ok(facade?.organize, '门面必须露出 organize（桥接/面板据此填设置页）');
+
+  const cat = await facade.organize.catalog();
+  assert.deepEqual(cat.providers.map((p) => p.id), ['deepseek', 'agnes'], '自定义 provider 必须出现在清单里');
+  const agnes = cat.providers.find((p) => p.id === 'agnes');
+  assert.deepEqual(agnes.models.map((m) => m.id), ['agnes-2.5-flash', 'agnes-3.0-flash']);
+  // 没显式配 model ⇒ 选路来自宿主默认（profile 的 agent-default-model 指的就是 agnes）。
+  assert.deepEqual(cat.routes, [{ provider: 'agnes', model: 'agnes-2.5-flash' }]);
+  assert.equal(cat.routeSource, 'host-default');
+  // 默认关着也照样答得出「打开会用哪条」——不能要求先跑一次 preview。
+  const st = facade.organize.status();
+  assert.equal(st.enabled, false);
+  assert.deepEqual(st.routes, [{ provider: 'agnes', model: 'agnes-2.5-flash' }]);
+  return 'providers=' + cat.providers.map((p) => p.id).join(',') + ' route=agnes/agnes-2.5-flash';
 });
 
 // ---- 三层配置（DEC-030）----

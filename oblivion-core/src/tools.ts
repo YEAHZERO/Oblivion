@@ -356,15 +356,19 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): Disposable[] {
    *
    * 两段式与 `oblivion_retitle` 一致，但**预览是独立的一步**（DEC-030 的硬要求：
    * 回填必须先出预览再落地）：
-   *   `mode:'status'` → 开关/模型/可用性（**零请求**）
+   *   `mode:'status'` → 开关/模型/可用性 + **可选 provider 清单**（**零请求**）
    *   `mode:'preview'` → 让模型给建议（**只读，不改知识库**）
    *   `mode:'apply'`  → 落地（`items` 省略时，落地**上一次**产出的建议）
+   *
+   * 为什么 `status` 里要带 provider 清单：设置页的模型下拉框就是这份清单，
+   * 而它**直接来自宿主注册表** —— 用户自定义的 provider（如 profile 里的 `agnes`，
+   * 自建 `baseURL`）和官方 provider 一样会出现，插件不需要白名单。
    */
   register(defineTool({
     name: 'oblivion_organize',
     description:
       'Auto-organize the Oblivion knowledge base with a model (plugin-side LLM call). ' +
-      'mode:"status" (default) reports whether it is enabled and which model route would be used — no request is made. ' +
+      'mode:"status" (default) reports whether it is enabled, which model route would be used, and every provider/model the host offers (including custom providers) — no request is made. ' +
       'mode:"preview" asks the model for content-based titles/tags for existing notes (READ ONLY, nothing is written). ' +
       'mode:"apply" writes proposals back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). ' +
       'It is OFF by default: with organize.enabled=false nothing calls any model.',
@@ -392,7 +396,14 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): Disposable[] {
       }
       const mode = typeof args.mode === 'string' ? args.mode : 'status';
       if (mode === 'status') {
-        return asCanonical({ mode: 'status', ...deps.organize.status() });
+        const { providers, ...rest } = await deps.organize.catalog();
+        return asCanonical({
+          mode: 'status',
+          ...deps.organize.status(),
+          // 只报「有哪些 provider、各有哪些模型」，不把它们跟本次选路混在一起。
+          providers,
+          catalogRoutes: rest.routes,
+        });
       }
       if (mode === 'preview') {
         const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : undefined;

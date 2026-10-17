@@ -1444,7 +1444,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join4(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.15",
+    version: "0.2.16",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -3231,7 +3231,7 @@ function registerTools(ctx, deps) {
   }));
   register(defineTool({
     name: "oblivion_organize",
-    description: 'Auto-organize the Oblivion knowledge base with a model (plugin-side LLM call). mode:"status" (default) reports whether it is enabled and which model route would be used \u2014 no request is made. mode:"preview" asks the model for content-based titles/tags for existing notes (READ ONLY, nothing is written). mode:"apply" writes proposals back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). It is OFF by default: with organize.enabled=false nothing calls any model.',
+    description: 'Auto-organize the Oblivion knowledge base with a model (plugin-side LLM call). mode:"status" (default) reports whether it is enabled, which model route would be used, and every provider/model the host offers (including custom providers) \u2014 no request is made. mode:"preview" asks the model for content-based titles/tags for existing notes (READ ONLY, nothing is written). mode:"apply" writes proposals back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). It is OFF by default: with organize.enabled=false nothing calls any model.',
     parameters: {
       mode: { type: "string", description: 'One of "status" | "preview" | "apply" (default "status").' },
       limit: { type: "number", description: "How many notes to consider in preview mode (default = organize.batchSize)." },
@@ -3256,7 +3256,14 @@ function registerTools(ctx, deps) {
       }
       const mode = typeof args.mode === "string" ? args.mode : "status";
       if (mode === "status") {
-        return asCanonical({ mode: "status", ...deps.organize.status() });
+        const { providers, ...rest } = await deps.organize.catalog();
+        return asCanonical({
+          mode: "status",
+          ...deps.organize.status(),
+          // 只报「有哪些 provider、各有哪些模型」，不把它们跟本次选路混在一起。
+          providers,
+          catalogRoutes: rest.routes
+        });
       }
       if (mode === "preview") {
         const limit = typeof args.limit === "number" && args.limit > 0 ? Math.floor(args.limit) : void 0;
@@ -4261,14 +4268,51 @@ function createOrganizeService(deps) {
       cachedDefault = null;
     }
   }
+  function syncDefaultRoute() {
+    if (cachedDefault !== null || !deps.defaultRoute) return;
+    if (cfg.provider !== "" && cfg.model !== "") return;
+    try {
+      const value = deps.defaultRoute();
+      if (value !== null && typeof value === "object" && typeof value.then !== "function") {
+        cachedDefault = asRoute(value);
+      }
+    } catch {
+      cachedDefault = null;
+    }
+  }
+  function routeSourceOf() {
+    if (cfg.provider !== "" && cfg.model !== "") return "config";
+    return routesNow().length > 0 ? "host-default" : "none";
+  }
   const status = () => {
+    syncDefaultRoute();
     return {
       enabled: cfg.enabled,
       scopes: { digest: cfg.digest, retitle: cfg.retitle },
       routes: routesNow(),
+      routeSource: routeSourceOf(),
       llmAvailable: deps.runtime !== null,
       everyTurns: cfg.everyTurns,
       autoApply: cfg.autoApply
+    };
+  };
+  const catalog = async () => {
+    const providers = [];
+    for (const p of listProviders(deps.runtime)) {
+      if (p.id === "") continue;
+      const models = await listModels(deps.runtime, p.id);
+      providers.push({
+        id: p.id,
+        name: p.name !== void 0 && p.name !== "" ? p.name : p.id,
+        models: models.filter((m) => m.id !== "").map((m) => ({ id: m.id, name: m.name !== void 0 && m.name !== "" ? m.name : m.id }))
+      });
+    }
+    await resolveDefaultRoute();
+    return {
+      providers,
+      routes: routesNow(),
+      routeSource: routeSourceOf(),
+      llmAvailable: deps.runtime !== null
     };
   };
   const preview = async (limit) => {
@@ -4412,7 +4456,7 @@ function createOrganizeService(deps) {
     }
     return { at: typeof stored.at === "number" ? stored.at : null, proposals };
   };
-  return { status, preview, apply, onTurn, lastAuto: () => lastAuto, readProposals };
+  return { status, catalog, preview, apply, onTurn, lastAuto: () => lastAuto, readProposals };
 }
 export {
   CHANNEL_SCOPES,
