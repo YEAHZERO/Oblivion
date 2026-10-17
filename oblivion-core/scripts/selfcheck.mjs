@@ -56,16 +56,35 @@ await check('导出形状符合 object 插件约定', () => {
   return 'name / inject / apply / default.apply 齐备';
 });
 
-/** 只注册、不做磁盘动作的桩 ctx。`extra` 用来补可选服务（如 `llm` / `agentDefaultModel`）。 */
+/** 只注册、不做磁盘动作的桩 ctx。`extra.services` 用来补宿主服务（如 `llm` / `webServer`）。 */
 function makeCtx(extra = {}) {
-  const reg = { tools: [], effects: [], events: [], sections: [], sectionDefs: [], orderQueries: [], provides: {} };
+  const { services = {}, ...rest } = extra;
+  const reg = {
+    tools: [],
+    effects: [],
+    events: [],
+    sections: [],
+    sectionDefs: [],
+    orderQueries: [],
+    provides: {},
+    injected: [],
+  };
   return {
     reg,
     ctx: {
       provide: (name, value) => {
         reg.provides[name] = value;
       },
-      ...extra,
+      // `inject(['webServer'])` 是宿主真实动作（mount-diag.json 实测 inject 是 function）。
+      // 桩必须照做，否则「设置路由有没有真被挂上」这件事在自检里根本看不见。
+      inject: (deps, fn) => {
+        reg.injected.push(deps.join(','));
+        const scope = {};
+        for (const name of deps) if (services[name] !== undefined) scope[name] = services[name];
+        fn(scope);
+        return () => {};
+      },
+      ...rest,
       tools: { register: (d) => reg.tools.push(d.name) },
       systemPrompt: {
         section: (d) => {
@@ -91,6 +110,47 @@ function makeCtx(extra = {}) {
       },
     },
   };
+}
+
+/**
+ * 直接驱动一条已挂载的路由：假 req（下一 tick 递 body 再 `end`）+ 假 res（等到有 status 为止）。
+ *
+ * 为什么手搓而不是起一个真 HTTP 服务：自检的定位是「**产物 + 真实 apply 装配**」，
+ * 这里要证明的是「`apply()` 把路由挂上了、handler 能读能写」，真起服务只会更慢更脆。
+ */
+function callRoute(route, method, { origin, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const handlers = {};
+    const request = {
+      method,
+      headers: origin === undefined ? {} : { origin },
+      on(event, handler) {
+        (handlers[event] ??= []).push(handler);
+        return request;
+      },
+    };
+    const response = {
+      status: 0,
+      headers: null,
+      body: null,
+      writeHead(status, headers) {
+        response.status = status;
+        response.headers = headers;
+      },
+      end(text) {
+        response.body = text === undefined || text === '' ? null : JSON.parse(text);
+        resolve(response);
+      },
+    };
+    route.handler(request, response);
+    setImmediate(() => {
+      if (body !== undefined) for (const h of handlers.data ?? []) h(Buffer.from(JSON.stringify(body), 'utf8'));
+      for (const h of handlers.end ?? []) h();
+    });
+    setTimeout(() => {
+      if (response.status === 0) reject(new Error('路由没有回响应'));
+    }, 5000).unref?.();
+  });
 }
 
 await check('apply 注册面完整（10 工具 / 1 段落 / 事件 / 各自 effect）', () => {
@@ -152,6 +212,71 @@ await check('自动整理的可选模型清单经门面露出，自定义 provid
   assert.equal(st.enabled, false);
   assert.deepEqual(st.routes, [{ provider: 'agnes', model: 'agnes-2.5-flash' }]);
   return 'providers=' + cat.providers.map((p) => p.id).join(',') + ' route=agnes/agnes-2.5-flash';
+});
+
+// ---- 设置页的 HTTP 通路（DEC-030）----
+await check('设置路由真被 apply() 挂上：GET 出生效值+来源+自定义 provider；POST 落到 settings.json', async () => {
+  const dir = join(tmp, 'data-settings-route');
+  const routes = [];
+  const llmStub = {
+    listProviders: () => [
+      { id: 'deepseek', name: 'DeepSeek' },
+      { id: 'agnes', name: 'Agnes' },
+    ],
+    listModels: async (provider) =>
+      provider === 'agnes' ? [{ provider: 'agnes', id: 'agnes-2.5-flash' }] : [{ provider: 'deepseek', id: 'deepseek-chat' }],
+    stream() {
+      throw new Error('自检不该真的调模型（设置路由只读注册表）');
+    },
+  };
+  const { ctx, reg } = makeCtx({
+    services: {
+      webServer: {
+        register: (route) => {
+          routes.push(route);
+          return () => {};
+        },
+      },
+      llm: llmStub,
+      agentDefaultModel: { currentSelection: () => ({ provider: 'agnes', model: 'agnes-2.5-flash' }) },
+    },
+  });
+  mod.apply(ctx, { dataRoot: dir, mdRoot: join(tmp, 'kb-settings-route'), logPrefix: '[sc-set]' });
+  assert.equal(routes.length, 1, 'apply() 必须把设置路由挂上');
+  assert.equal(routes[0].path, '/oblivion-core/settings');
+
+  const got = await callRoute(routes[0], 'GET');
+  assert.equal(got.status, 200);
+  assert.equal(got.body.ok, true);
+  assert.equal(got.body.sources.mdRoot, 'plugin', 'mdRoot 来自插件 config');
+  // **机制**也要钉住：llm 只能经 inject 拿（裸读在真宿主会抛「without inject」）。
+  // 桩 ctx 把 llm 只放进 inject 的 scope 里，所以这里通过了就意味着那条路真的走通了。
+  assert.ok(reg.injected.includes('llm'), 'llm 必须经 ctx.inject 取，不能裸读：' + reg.injected.join('|'));
+  assert.equal(got.body.catalog.llmAvailable, true, '经 inject 拿到 llm 之后才算可用');
+  assert.equal(got.body.sources['organize.enabled'], 'default');
+  assert.deepEqual(got.body.pending, [], '设置层还没写东西 ⇒ 不该有待重启项');
+  assert.equal(
+    got.body.catalog.providers.map((p) => p.id).join(','),
+    'deepseek,agnes',
+    '自定义 provider 必须出现在设置页的清单里',
+  );
+
+  const posted = await callRoute(routes[0], 'POST', {
+    origin: 'http://127.0.0.1:19387',
+    body: { patch: { organize: { enabled: true, provider: 'agnes', model: 'agnes-2.5-flash' }, dataRoot: 'C:/evil' } },
+  });
+  assert.equal(posted.status, 200);
+  assert.deepEqual(posted.body.changed, ['organize.enabled', 'organize.model', 'organize.provider']);
+  assert.deepEqual(posted.body.rejected, ['dataRoot'], '不可写的键要如实报出来');
+  assert.equal(posted.body.restartRequired, true, '改了配置要重启才生效，必须说清');
+  const onDisk = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'));
+  assert.equal(onDisk.organize.enabled, true);
+  assert.equal(onDisk.organize.provider, 'agnes');
+  assert.equal(onDisk.dataRoot, undefined, 'dataRoot 永远不许被写进设置层');
+
+  const untrusted = await callRoute(routes[0], 'POST', { origin: 'https://evil.example', body: { mdRoot: 'C:/bad' } });
+  assert.equal(untrusted.status, 403, '写配置的路要有来源闸');
+  return 'route=' + routes[0].path + ' providers=deepseek,agnes 待重启=' + posted.body.pending.join(',');
 });
 
 // ---- 三层配置（DEC-030）----

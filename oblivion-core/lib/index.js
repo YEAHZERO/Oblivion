@@ -2440,6 +2440,7 @@ function createOrganizeService(deps) {
   const cfg = deps.config.organize;
   const at = deps.at ?? (() => Date.now());
   const proposalsPath = deps.proposalsPath ?? join10(expandHome(deps.config.dataRoot), "organize-proposals.json");
+  const runtimeNow = deps.runtime;
   let cachedDefault = null;
   let lastAuto = null;
   const turns = /* @__PURE__ */ new Map();
@@ -2485,16 +2486,17 @@ function createOrganizeService(deps) {
       scopes: { digest: cfg.digest, retitle: cfg.retitle },
       routes: routesNow(),
       routeSource: routeSourceOf(),
-      llmAvailable: deps.runtime !== null,
+      llmAvailable: runtimeNow() !== null,
       everyTurns: cfg.everyTurns,
       autoApply: cfg.autoApply
     };
   };
   const catalog = async () => {
+    const runtime = runtimeNow();
     const providers = [];
-    for (const p of listProviders(deps.runtime)) {
+    for (const p of listProviders(runtime)) {
       if (p.id === "") continue;
-      const models = await listModels(deps.runtime, p.id);
+      const models = await listModels(runtime, p.id);
       providers.push({
         id: p.id,
         name: p.name !== void 0 && p.name !== "" ? p.name : p.id,
@@ -2506,7 +2508,7 @@ function createOrganizeService(deps) {
       providers,
       routes: routesNow(),
       routeSource: routeSourceOf(),
-      llmAvailable: deps.runtime !== null
+      llmAvailable: runtime !== null
     };
   };
   const preview = async (limit) => {
@@ -2524,7 +2526,8 @@ function createOrganizeService(deps) {
     if (!cfg.enabled) {
       return { ...base, reason: "organize.enabled is false \u2014\u2014 \u81EA\u52A8\u6574\u7406\u6CA1\u5F00\uFF0C\u672A\u53D1\u51FA\u4EFB\u4F55\u8BF7\u6C42" };
     }
-    if (!deps.runtime) {
+    const runtime = runtimeNow();
+    if (!runtime) {
       return { ...base, reason: "\u5BBF\u4E3B\u6CA1\u6709 llm \u670D\u52A1\uFF08ctx.llm \u4E0D\u53EF\u7528\uFF09" };
     }
     await resolveDefaultRoute();
@@ -2548,7 +2551,7 @@ function createOrganizeService(deps) {
     );
     const allowed = new Set(notes.map((n) => n.id));
     const { system, prompt } = buildRetitlePrompt(enriched);
-    const result = await generate(deps.runtime, routes, { prompt, system }, {
+    const result = await generate(runtime, routes, { prompt, system }, {
       maxTokens: cfg.maxTokens,
       timeoutMs: cfg.timeoutMs,
       purpose: "oblivion-organize:retitle"
@@ -2925,6 +2928,36 @@ function readSettingsSync(dataRoot) {
     return {};
   }
 }
+async function readSettings(dataRoot) {
+  return sanitizeSettings(await readJsonSafe(settingsPathOf(dataRoot)));
+}
+async function writeSettings(dataRoot, patch) {
+  const path = settingsPathOf(dataRoot);
+  const current = await readSettings(dataRoot);
+  const merged = { ...current };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) {
+      delete merged[k];
+      continue;
+    }
+    if (v === void 0) continue;
+    if (k === "organize" && typeof v === "object") {
+      const base = merged.organize ?? {};
+      const sub = { ...base };
+      for (const [sk, sv] of Object.entries(v)) {
+        if (sv === void 0) continue;
+        if (sv === null) delete sub[sk];
+        else sub[sk] = sv;
+      }
+      merged.organize = sub;
+      continue;
+    }
+    merged[k] = v;
+  }
+  const clean = sanitizeSettings(merged);
+  await writeJsonAtomic(path, clean);
+  return { path, keys: Object.keys(clean) };
+}
 function mergeSettingsConfig(pluginConfig, settings) {
   const out = { ...pluginConfig };
   const clean = sanitizeSettings(settings);
@@ -2948,7 +2981,228 @@ function configSources(pluginConfig, settings, keys = writableKeys()) {
     else if (pluginConfig[key] !== void 0 && pluginConfig[key] !== null) out[key] = "plugin";
     else out[key] = "default";
   }
+  const subSettings = clean.organize;
+  const subPlugin = pluginConfig.organize;
+  for (const sub of Object.keys(DEFAULT_CONFIG.organize)) {
+    const full = "organize." + sub;
+    if (subSettings?.[sub] !== void 0) out[full] = "settings";
+    else if (subPlugin?.[sub] !== void 0 && subPlugin[sub] !== null) out[full] = "plugin";
+    else out[full] = "default";
+  }
   return out;
+}
+function stable(value) {
+  if (value === null || value === void 0) return "null";
+  if (typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return "[" + value.map(stable).join(",") + "]";
+  const rec = value;
+  return "{" + Object.keys(rec).sort().map((k) => JSON.stringify(k) + ":" + stable(rec[k])).join(",") + "}";
+}
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function changedPaths(before, after, keys) {
+  const out = [];
+  for (const key of keys) {
+    const a = before[key];
+    const b = after[key];
+    const nested = isPlainObject(DEFAULT_CONFIG[key]);
+    if (!nested) {
+      if (stable(a) !== stable(b)) out.push(key);
+      continue;
+    }
+    if (!isPlainObject(a) && !isPlainObject(b)) {
+      if (stable(a) !== stable(b)) out.push(key);
+      continue;
+    }
+    const aa = isPlainObject(a) ? a : {};
+    const bb = isPlainObject(b) ? b : {};
+    for (const sub of /* @__PURE__ */ new Set([...Object.keys(aa), ...Object.keys(bb)])) {
+      if (stable(aa[sub]) !== stable(bb[sub])) out.push(key + "." + sub);
+    }
+  }
+  return out.sort();
+}
+function rejectedKeys(input) {
+  if (!isPlainObject(input)) return [];
+  const known = new Set(writableKeys());
+  const organizeKeys = new Set(Object.keys(DEFAULT_CONFIG.organize));
+  const out = [];
+  for (const [key, value] of Object.entries(input)) {
+    if (key === "organize") {
+      if (value === null) continue;
+      if (!isPlainObject(value)) {
+        out.push(key);
+        continue;
+      }
+      for (const sub of Object.keys(value)) {
+        if (!organizeKeys.has(sub)) out.push("organize." + sub);
+      }
+      continue;
+    }
+    if (!known.has(key)) out.push(key);
+  }
+  return out.sort();
+}
+function createSettingsService(deps) {
+  const { pluginConfig, dataRoot, effective } = deps;
+  const snapshot = (values) => ({
+    path: settingsPathOf(dataRoot),
+    values,
+    sources: configSources(pluginConfig, values),
+    effective,
+    writable: writableKeys(),
+    // 「设置层要的」与「正在跑的」对不上 ⇒ 待重启。两侧都过 `resolveConfig`
+    // 才能公平比较（默认值/`~` 展开/嵌套块合并都在那里做）。
+    pending: changedPaths(
+      resolveConfig(mergeSettingsConfig(pluginConfig, values)),
+      effective,
+      writableKeys()
+    )
+  });
+  const describe = () => snapshot(readSettingsSync(dataRoot));
+  const patch = async (input) => {
+    const before = await readSettings(dataRoot);
+    const rejected = rejectedKeys(input);
+    let saved = true;
+    try {
+      await writeSettings(dataRoot, isPlainObject(input) ? input : {});
+    } catch {
+      saved = false;
+    }
+    const after = await readSettings(dataRoot);
+    const base = snapshot(after);
+    const changed = changedPaths(before, after, writableKeys());
+    return {
+      ...base,
+      saved,
+      changed,
+      rejected,
+      // 文件没写成功 ⇒ 「待重启」这句话别说得太满，但把当前不一致照实报出来。
+      restartRequired: base.pending.length > 0
+    };
+  };
+  return { describe, patch };
+}
+
+// src/settings-route.ts
+var SETTINGS_ROUTE = "/oblivion-core/settings";
+var MAX_BODY_BYTES = 64 * 1024;
+function isTrustedCaller(request) {
+  const origin = request.headers.origin;
+  if (origin === void 0 || origin === "") return true;
+  if (origin === "null" || origin.startsWith("dsh-app://")) return true;
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+    return host === "127.0.0.1" || host === "localhost" || host === "[::1]" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+function readBody(request) {
+  return new Promise((resolve2) => {
+    const chunks = [];
+    let size = 0;
+    let overflow = false;
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        overflow = true;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      resolve2({ body: overflow ? "" : Buffer.concat(chunks).toString("utf8"), overflow });
+    });
+    request.on("error", () => {
+      resolve2({ body: "", overflow: false });
+    });
+  });
+}
+function send(response, status, payload) {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  response.end(JSON.stringify(payload));
+}
+function installSettingsRoute(ctx, deps) {
+  const warn = deps.warn ?? (() => {
+  });
+  try {
+    if (typeof ctx.inject !== "function") {
+      warn("\u4E0A\u4E0B\u6587\u6CA1\u6709 inject\uFF1A\u8BBE\u7F6E\u8DEF\u7531\u672A\u6302\u8F7D\uFF08\u8BBE\u7F6E\u9875\u4F1A\u62FF\u4E0D\u5230\u6570\u636E\uFF0C\u63D2\u4EF6\u5176\u4F59\u90E8\u5206\u7167\u5E38\uFF09");
+      return false;
+    }
+    const inject2 = ctx.inject;
+    inject2(["webServer"], (scope) => {
+      const server = scope.webServer;
+      if (server === void 0 || typeof server.register !== "function") {
+        warn("webServer \u4E0D\u53EF\u7528\uFF1A\u8BBE\u7F6E\u8DEF\u7531\u672A\u6302\u8F7D");
+        return;
+      }
+      const handler = (request, response) => {
+        const method = (request.method ?? "GET").toUpperCase();
+        if (method === "GET") {
+          void (async () => {
+            const describe = deps.settings.describe();
+            const catalog = await deps.catalog().catch(() => null);
+            send(response, 200, { ok: true, version: deps.version, ...describe, catalog });
+          })().catch((error) => {
+            warn("\u8BBE\u7F6E\u5FEB\u7167\u5931\u8D25\uFF1A" + String(error));
+            send(response, 500, { ok: false, error: "describe failed" });
+          });
+          return;
+        }
+        if (method === "POST") {
+          if (!isTrustedCaller(request)) {
+            send(response, 403, { ok: false, error: "untrusted origin" });
+            return;
+          }
+          void readBody(request).then(async ({ body, overflow }) => {
+            if (overflow) {
+              send(response, 413, { ok: false, error: "body too large" });
+              return;
+            }
+            let payload = {};
+            try {
+              payload = body === "" ? {} : JSON.parse(body);
+            } catch {
+              send(response, 400, { ok: false, error: "invalid json" });
+              return;
+            }
+            if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+              send(response, 400, { ok: false, error: "body must be a JSON object" });
+              return;
+            }
+            const rec = payload;
+            const patch = rec.patch !== void 0 && rec.patch !== null && typeof rec.patch === "object" ? rec.patch : rec;
+            const result = await deps.settings.patch(patch);
+            const catalog = await deps.catalog().catch(() => null);
+            deps.log?.(
+              "\u8BBE\u7F6E\u5DF2\u5199\uFF1Achanged=[" + result.changed.join(",") + "] rejected=[" + result.rejected.join(",") + "] \u5F85\u91CD\u542F=[" + result.pending.join(",") + "]"
+            );
+            send(response, 200, { ok: true, version: deps.version, ...result, catalog });
+          }).catch((error) => {
+            warn("\u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF1A" + String(error));
+            send(response, 500, { ok: false, error: "patch failed" });
+          });
+          return;
+        }
+        response.writeHead(405, { allow: "GET, POST", "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: false, error: "method not allowed" }));
+      };
+      const dispose = server.register({ kind: "exact", path: SETTINGS_ROUTE, handler });
+      if (typeof dispose === "function") {
+        ctx.effect(() => dispose, "oblivion-core: \u8BBE\u7F6E\u8DEF\u7531");
+      }
+      deps.log?.("\u8BBE\u7F6E\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1AGET|POST " + SETTINGS_ROUTE);
+    });
+    return true;
+  } catch (error) {
+    warn("\u8BBE\u7F6E\u8DEF\u7531\u88C5\u8F7D\u5931\u8D25\uFF08\u4E0D\u5F71\u54CD\u5176\u4F59\u529F\u80FD\uFF09\uFF1A" + String(error));
+    return false;
+  }
 }
 
 // src/perspective/adapter.ts
@@ -3835,7 +4089,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join14(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.16",
+    version: "0.2.17",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -4494,14 +4748,7 @@ function registerTools(ctx, deps) {
       }
       const mode = typeof args.mode === "string" ? args.mode : "status";
       if (mode === "status") {
-        const { providers, ...rest } = await deps.organize.catalog();
-        return asCanonical({
-          mode: "status",
-          ...deps.organize.status(),
-          // 只报「有哪些 provider、各有哪些模型」，不把它们跟本次选路混在一起。
-          providers,
-          catalogRoutes: rest.routes
-        });
+        return asCanonical({ mode: "status", ...deps.organize.status(), catalog: await deps.organize.catalog() });
       }
       if (mode === "preview") {
         const limit = typeof args.limit === "number" && args.limit > 0 ? Math.floor(args.limit) : void 0;
@@ -4632,7 +4879,7 @@ function registerTools(ctx, deps) {
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt", "agents"];
 var provides = ["oblivion"];
-var VERSION = "0.2.16";
+var VERSION = "0.2.17";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const pluginConfig = rawConfig ?? {};
@@ -4659,13 +4906,35 @@ function applyInner(rawCtx, config, pluginConfig, settings) {
     return typeof candidate.on === "function" && typeof candidate.systemPrompt?.section === "function" && typeof candidate.tools?.register === "function";
   };
   const host = usableHost(rootCtx) ? rootCtx : ctx;
-  const optionalService = (target, key) => {
+  const directService = (target, key) => {
     try {
       return target[key] ?? null;
     } catch {
       return null;
     }
   };
+  const lazyService = (key) => {
+    let cached = null;
+    let registered = false;
+    return () => {
+      if (cached !== null) return cached;
+      cached = directService(host, key) ?? directService(ctx, key);
+      if (cached !== null) return cached;
+      if (!registered) {
+        registered = true;
+        try {
+          ctx.inject?.([key], (scope) => {
+            cached = directService(scope, key);
+          });
+        } catch (error) {
+          ctx.logger?.debug?.(config.logPrefix + " inject(" + key + ") \u5931\u8D25\uFF08\u964D\u7EA7\uFF09\uFF1A%o", error);
+        }
+      }
+      return cached;
+    };
+  };
+  const llmService = lazyService("llm");
+  const defaultModelService = lazyService("agentDefaultModel");
   const knowledge = registerKnowledge(ctx, config);
   const profile = registerProfile(ctx, config);
   const graph = registerGraph(ctx, config);
@@ -4685,13 +4954,17 @@ function applyInner(rawCtx, config, pluginConfig, settings) {
     classify: config.mdClassify,
     host: knowledge
   });
-  const defaultModelService = optionalService(host, "agentDefaultModel") ?? optionalService(ctx, "agentDefaultModel");
   const organize = createOrganizeService({
     config,
     retitle,
-    runtime: llmRuntimeOf({ llm: optionalService(host, "llm") ?? optionalService(ctx, "llm") }),
-    defaultRoute: () => defaultModelService?.currentSelection?.(),
+    runtime: () => llmRuntimeOf({ llm: llmService() }),
+    defaultRoute: () => defaultModelService()?.currentSelection?.(),
     logger: ctx.logger
+  });
+  const settingsService = createSettingsService({
+    pluginConfig,
+    dataRoot: config.dataRoot,
+    effective: config
   });
   registerQaLoop(ctx, config, {
     knowledge,
@@ -4842,6 +5115,13 @@ function applyInner(rawCtx, config, pluginConfig, settings) {
     wiki,
     organize,
     /**
+     * 设置页的读/写面（生效值 + 来源 + 写 `settings.json`）。
+     *
+     * 面板拿不到 Cordis 服务表里的它（跨插件取不到），实际走的是 core 自己挂的
+     * `GET|POST /oblivion-core/settings`；门面这里留着，便于同作用域的消费者与自检直接用。
+     */
+    settings: settingsService,
+    /**
      * 每个键最终是谁定的（`settings` / `plugin` / `default`）。
      *
      * 面板/桥接据此显示「生效值 + 来源」—— 没有这一层，
@@ -4868,6 +5148,13 @@ function applyInner(rawCtx, config, pluginConfig, settings) {
     }
   );
   ctx.effect(() => mcpDispose, "oblivion-core: mcp channel");
+  installSettingsRoute(ctx, {
+    settings: settingsService,
+    catalog: () => organize.catalog(),
+    version: VERSION,
+    log: (message) => ctx.logger?.info?.(config.logPrefix + " " + message),
+    warn: (message) => ctx.logger?.warn?.(config.logPrefix + " " + message)
+  });
   console.log("[oblivion-core] loaded");
   void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, channelReport, "apply:done"));
 }

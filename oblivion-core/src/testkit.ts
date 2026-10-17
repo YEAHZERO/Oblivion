@@ -75,17 +75,21 @@ export type { OrganizeConfig } from './config.js';
 export {
   SETTINGS_FILE,
   configSources,
+  createSettingsService,
   describeSettings,
   mergeSettingsConfig,
   organizeOf,
   readSettings,
   readSettingsSync,
+  rejectedKeys,
   sanitizeSettings,
   settingsPathOf,
   writableKeys,
   writeSettings,
 } from './settings-file.js';
-export type { ConfigSource } from './settings-file.js';
+export type { ConfigSource, SettingsPatchResult, SettingsService, SettingsSnapshot } from './settings-file.js';
+export { SETTINGS_ROUTE, installSettingsRoute } from './settings-route.js';
+export type { SettingsRouteDeps } from './settings-route.js';
 export {
   DEFAULT_MAX_TOKENS,
   DEFAULT_TIMEOUT_MS,

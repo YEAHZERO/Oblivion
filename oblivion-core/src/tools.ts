@@ -396,14 +396,9 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): Disposable[] {
       }
       const mode = typeof args.mode === 'string' ? args.mode : 'status';
       if (mode === 'status') {
-        const { providers, ...rest } = await deps.organize.catalog();
-        return asCanonical({
-          mode: 'status',
-          ...deps.organize.status(),
-          // 只报「有哪些 provider、各有哪些模型」，不把它们跟本次选路混在一起。
-          providers,
-          catalogRoutes: rest.routes,
-        });
+        // `catalog` 里也带一份 `routes` / `routeSource`（与顶层同值）：一个给「开关面」看，
+        // 一个给「选模型」看 —— 设置页只读 `catalog`，就不必再拼两处。
+        return asCanonical({ mode: 'status', ...deps.organize.status(), catalog: await deps.organize.catalog() });
       }
       if (mode === 'preview') {
         const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : undefined;

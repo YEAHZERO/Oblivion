@@ -21,13 +21,14 @@ import { registerFeedback } from './feedback/index.js';
 import { registerGraph } from './graph/index.js';
 import { registerDigest } from './digest/index.js';
 import { registerKnowledge } from './knowledge/index.js';
-import { llmRuntimeOf } from './llm/client.js';
+import { llmRuntimeOf, type LlmRuntimeLike } from './llm/client.js';
 import { buildChannelDiag, createMcpEndpoint, publishMcp, writeChannelDiag } from './mcp/index.js';
 import type { ChannelReport } from './mcp/index.js';
 import { createOrganizeService } from './organize/index.js';
 import { createRetitleService } from './knowledge/retitle.js';
 import { createWikiService } from './knowledge/wiki.js';
-import { configSources, mergeSettingsConfig, readSettingsSync } from './settings-file.js';
+import { configSources, createSettingsService, mergeSettingsConfig, readSettingsSync } from './settings-file.js';
+import { installSettingsRoute } from './settings-route.js';
 import { registerPerspective } from './perspective/index.js';
 import { OBLIVION_SYSTEM_PROMPT, resolveSectionOrder } from './prompt.js';
 import { attachAgentFromPayload, readRelatedHint, setAgentInstaller } from './prompt-inject.js';
@@ -156,20 +157,55 @@ function applyInner(
   const host: AppContext = usableHost(rootCtx) ? rootCtx : ctx;
 
   /**
-   * **裸读未声明服务会抛**（`cannot get property "x" without inject`）——
-   * `0.1.12` 那次就是这么把整个 App 打崩的。所以可选服务一律经它读。
+   * **裸读**一个服务：读得到就返回，读不到（或 Cordis 守卫抛错）回 `null`。
    *
-   * 为什么不干脆写进 `inject`：`inject` 里列的是**必需**服务，缺了插件就不装载。
-   * 而 `llm` / `agentDefaultModel` 在极简宿主里可以没有（也不该有）—— 那种情况下
-   * 我们只该**降级**（自动整理不可用），而不是整个插件不工作。
+   * 注意这只对**已声明**的服务成立 —— 见下面 `lazyService` 的说明。
    */
-  const optionalService = (target: unknown, key: string): unknown => {
+  const directService = (target: unknown, key: string): unknown => {
     try {
       return (target as Record<string, unknown>)[key] ?? null;
     } catch {
       return null;
     }
   };
+
+  /**
+   * **懒取一个可选服务**（`llm` / `agentDefaultModel`）。
+   *
+   * 为什么不能像原来那样「装载时裸读一份」——三条证据（2026-10-17）：
+   *   ① `mount-diag.json`：直接读 `ctx.webServer` **抛**「cannot get property … without inject」，
+   *      而 `inject` 本身是 function ⇒ **未在 `inject` 里声明过的服务，裸读就是抛**；
+   *   ② 上游 `vendor/cordis/src/reflect.ts` 的 get 代理逐级向上找 `fiber.store[prop]`，
+   *      isolate key 对不上就直接抛；声明过的才走 accessor 那条路；
+   *   ③ 宿主自己的插件**无一例外**把 `llm` 写进 `inject`（`llm-pi-ai`：`inject = ['llm']`）。
+   *
+   * ⇒ 真宿主上必须经 `ctx.inject([key])` 拿一个**声明过它的 scope**；而那个回调
+   * **可能在装载之后才兑现**，所以这里返回的是「每次现取」的取值函数，而不是一份快照。
+   * 原来的写法（裸读 + `?? null`）在真宿主里会静默拿到 `null`：整条自动整理路死掉，
+   * 而单测（桩 ctx 直接把服务挂在 ctx 上）全绿 —— 这正是「桩比宿主宽松」的典型坑。
+   */
+  const lazyService = (key: string): (() => unknown) => {
+    let cached: unknown = null;
+    let registered = false;
+    return () => {
+      if (cached !== null) return cached;
+      cached = directService(host, key) ?? directService(ctx, key);
+      if (cached !== null) return cached;
+      if (!registered) {
+        registered = true;
+        try {
+          ctx.inject?.([key], (scope) => {
+            cached = directService(scope, key);
+          });
+        } catch (error: unknown) {
+          ctx.logger?.debug?.(config.logPrefix + ' inject(' + key + ') 失败（降级）：%o', error);
+        }
+      }
+      return cached;
+    };
+  };
+  const llmService = lazyService('llm');
+  const defaultModelService = lazyService('agentDefaultModel');
 
   const knowledge = registerKnowledge(ctx, config);
   const profile = registerProfile(ctx, config);
@@ -198,17 +234,32 @@ function applyInner(
   /**
    * 自动整理（DEC-030）：**默认全关**，开了才经 `ctx.llm` 调模型。
    *
-   * `llm` / `agentDefaultModel` 都不在 `inject` 里 ⇒ 经 `optionalService` 读（缺了降级）。
+   * `llm` / `agentDefaultModel` 都**不**写进 `inject`（那里列的是**必需**服务，缺了插件就不装载），
+   * 而是经 `lazyService()` **懒取 + 优雅降级**（缺了只让自动整理不可用）。
    * 模型选路优先级：`organize.provider/model` > 宿主默认选路（`currentSelection`）> 无（`preview` 会回「没选出模型」）。
    */
-  const defaultModelService = optionalService(host, 'agentDefaultModel') ?? optionalService(ctx, 'agentDefaultModel');
   const organize = createOrganizeService({
     config,
     retitle,
-    runtime: llmRuntimeOf({ llm: optionalService(host, 'llm') ?? optionalService(ctx, 'llm') }),
+    runtime: () => llmRuntimeOf({ llm: llmService() }),
     defaultRoute: () =>
-      (defaultModelService as { currentSelection?: () => unknown } | null)?.currentSelection?.(),
+      (defaultModelService() as { currentSelection?: () => unknown } | null)?.currentSelection?.(),
     logger: ctx.logger,
+  });
+
+  /**
+   * **设置页的服务面**（读生效值 + 来源、写 `settings.json`）。
+   *
+   * 由 core 自己拥有（面板是只读数据面、且跨插件服务表取不到，见 `settings-route.ts` 的说明），
+   * 并通过 `GET|POST /oblivion-core/settings` 暴露给面板 —— 那条路由在下面装。
+   *
+   * 变量名刻意不叫 `settings`：本函数的入参 `settings` 是**读到的那层原始值**（第三层配置），
+   * 两者是两码事，重名会在这里埋一个「到底改的是哪个 settings」的坑。
+   */
+  const settingsService = createSettingsService({
+    pluginConfig,
+    dataRoot: config.dataRoot,
+    effective: config as unknown as Record<string, unknown>,
   });
 
   registerQaLoop(ctx, config, {
@@ -444,6 +495,13 @@ function applyInner(
     wiki,
     organize,
     /**
+     * 设置页的读/写面（生效值 + 来源 + 写 `settings.json`）。
+     *
+     * 面板拿不到 Cordis 服务表里的它（跨插件取不到），实际走的是 core 自己挂的
+     * `GET|POST /oblivion-core/settings`；门面这里留着，便于同作用域的消费者与自检直接用。
+     */
+    settings: settingsService,
+    /**
      * 每个键最终是谁定的（`settings` / `plugin` / `default`）。
      *
      * 面板/桥接据此显示「生效值 + 来源」—— 没有这一层，
@@ -492,6 +550,20 @@ function applyInner(
     },
   );
   ctx.effect(() => mcpDispose, 'oblivion-core: mcp channel');
+
+  /**
+   * **设置页的 HTTP 通路**（`GET|POST /oblivion-core/settings`）。
+   *
+   * 为什么不走 Cordis 服务表让面板来取：跨插件取不到（实测桥接 `inject: ['oblivion']` 从未激活）。
+   * 路由本身**永不抛**、缺 `webServer` 只记 warn —— 可选功能不该把装载弄崩。
+   */
+  installSettingsRoute(ctx, {
+    settings: settingsService,
+    catalog: () => organize.catalog(),
+    version: VERSION,
+    log: (message) => ctx.logger?.info?.(config.logPrefix + ' ' + message),
+    warn: (message) => ctx.logger?.warn?.(config.logPrefix + ' ' + message),
+  });
 
 
   console.log('[oblivion-core] loaded');

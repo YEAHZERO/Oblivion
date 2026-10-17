@@ -48,8 +48,20 @@ export const TAGS_MAX = 8;
 export interface OrganizeDeps {
   config: Config;
   retitle: RetitleService;
-  /** 宿主 LLM 面；缺 = 宿主没装 `llm` 服务（自动整理优雅降级，不报错）。 */
-  runtime: LlmRuntimeLike | null;
+  /**
+   * 宿主 LLM 面 —— **每次现取**（懒取），不是装载时抓一份快照。
+   *
+   * 为什么是函数（2026-10-17 实测 + 上游源码两条证据）：
+   *   ① `mount-diag.json`：直接读 `ctx.webServer` 抛「cannot get property … without inject」，
+   *      而 `inject` 本身是 function ⇒ **未声明的服务裸读会抛**；
+   *   ② `vendor/cordis/src/reflect.ts` 的 get 代理逐级向上找 `fiber.store[prop]`，
+   *      isolate key 对不上就直接抛；只有**声明过**的服务才走 accessor 那条路；
+   *   ③ 宿主自己的插件**无一例外**都写在 `inject` 里（`llm-pi-ai` 的 `inject = ['llm']`、
+   *      `agent-loop` 的 static inject 含 `'llm'` …）。
+   * ⇒ 真宿主上只能经 `ctx.inject(['llm'])` 拿，而那个回调**可能在装载之后**才兑现。
+   * 抓一份快照，就会把「稍后才可用的 llm」永久记成 `null`（整条自动整理路静默死掉）。
+   */
+  runtime: () => LlmRuntimeLike | null;
   /** 宿主默认选路（`ctx.agentDefaultModel`）。`provider` / `model` 留空时才用。 */
   defaultRoute?: () => unknown;
   logger?: { warn?: (...args: unknown[]) => void; debug?: (...args: unknown[]) => void };
@@ -299,6 +311,8 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
   const cfg: OrganizeConfig = deps.config.organize;
   const at = deps.at ?? (() => Date.now());
   const proposalsPath = deps.proposalsPath ?? join(expandHome(deps.config.dataRoot), 'organize-proposals.json');
+  /** 宿主 LLM 面：**每次现取**（`ctx.inject` 的回调可能装载后才兑现，见 `OrganizeDeps.runtime`）。 */
+  const runtimeNow = deps.runtime;
   /** 宿主默认选路的缓存：`status()` 是同步的，不能在那里 await。 */
   let cachedDefault: LlmRoute | null = null;
   let lastAuto: OrganizeAutoResult | null = null;
@@ -360,7 +374,7 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
       scopes: { digest: cfg.digest, retitle: cfg.retitle },
       routes: routesNow(),
       routeSource: routeSourceOf(),
-      llmAvailable: deps.runtime !== null,
+      llmAvailable: runtimeNow() !== null,
       everyTurns: cfg.everyTurns,
       autoApply: cfg.autoApply,
     };
@@ -373,10 +387,11 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
    * `listModels` 是异步的（宿主签名如此），所以本方法也异步。
    */
   const catalog = async (): Promise<OrganizeCatalog> => {
+    const runtime = runtimeNow();
     const providers: OrganizeProviderCatalog[] = [];
-    for (const p of listProviders(deps.runtime)) {
+    for (const p of listProviders(runtime)) {
       if (p.id === '') continue;
-      const models = await listModels(deps.runtime, p.id);
+      const models = await listModels(runtime, p.id);
       providers.push({
         id: p.id,
         name: p.name !== undefined && p.name !== '' ? p.name : p.id,
@@ -390,7 +405,7 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
       providers,
       routes: routesNow(),
       routeSource: routeSourceOf(),
-      llmAvailable: deps.runtime !== null,
+      llmAvailable: runtime !== null,
     };
   };
 
@@ -410,7 +425,8 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
       if (!cfg.enabled) {
         return { ...base, reason: 'organize.enabled is false —— 自动整理没开，未发出任何请求' };
       }
-      if (!deps.runtime) {
+      const runtime = runtimeNow();
+      if (!runtime) {
         return { ...base, reason: '宿主没有 llm 服务（ctx.llm 不可用）' };
       }
       await resolveDefaultRoute();
@@ -435,7 +451,7 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
       );
       const allowed = new Set(notes.map((n) => n.id));
       const { system, prompt } = buildRetitlePrompt(enriched);
-      const result = await generate(deps.runtime, routes, { prompt, system }, {
+      const result = await generate(runtime, routes, { prompt, system }, {
         maxTokens: cfg.maxTokens,
         timeoutMs: cfg.timeoutMs,
         purpose: 'oblivion-organize:retitle',

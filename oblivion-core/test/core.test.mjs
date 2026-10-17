@@ -1330,7 +1330,9 @@ describe('自动整理（DEC-030）', () => {
         organize: { ...kit.DEFAULT_CONFIG.organize, ...overrides },
       },
       retitle: deps.retitle ?? fakeRetitle(),
-      runtime: deps.runtime === undefined ? fakeLlm({}) : deps.runtime,
+      // `runtime` 是**取值函数**（懒取）：真宿主上 `ctx.llm` 只能经 `ctx.inject` 拿，
+      // 且回调可能装载后才兑现 —— 抓一份快照会把「稍后可用的 llm」永久记成 null。
+      runtime: () => (deps.runtime === undefined ? fakeLlm({}) : deps.runtime),
       at: deps.at ?? (() => 1_000_000),
       proposalsPath: deps.proposalsPath,
       defaultRoute: deps.defaultRoute,
@@ -1363,6 +1365,30 @@ describe('自动整理（DEC-030）', () => {
     assert.equal(out.ok, false);
     assert.match(out.reason, /没有 llm 服务/);
     assert.equal(svc.status().llmAvailable, false);
+  });
+
+  it('llm 面是**懒取**的：装载时拿不到、稍后才可用 ⇒ 之后照样能用', async () => {
+    const payload = JSON.stringify([{ id: 'a1', title: '甲', tags: [] }]);
+    const runtime = fakeLlm({ 'fake/m1': payload });
+    let available = null;
+    const svc = kit.createOrganizeService({
+      config: {
+        ...kit.DEFAULT_CONFIG,
+        organize: { ...kit.DEFAULT_CONFIG.organize, enabled: true, provider: 'fake', model: 'm1' },
+      },
+      retitle: fakeRetitle(),
+      // 真宿主上 `ctx.llm` 只能经 `ctx.inject(['llm'])` 拿，而那个回调**可能装载后才兑现**。
+      runtime: () => available,
+    });
+    assert.equal(svc.status().llmAvailable, false, '装载那一刻还没有 llm');
+    const early = await svc.preview();
+    assert.match(early.reason, /没有 llm 服务/);
+    assert.equal(runtime.calls.length, 0, '没有 llm 时一个请求都不该发');
+    available = runtime; // 「宿主把 llm 兑现了」
+    assert.equal(svc.status().llmAvailable, true);
+    const out = await svc.preview();
+    assert.equal(out.ok, true, out.reason);
+    assert.equal(runtime.calls.length, 1);
   });
 
   describe('选路来源与可选模型清单（设置页的数据源）', () => {
@@ -1762,5 +1788,310 @@ describe('三层配置（settings.json，DEC-030）', () => {
     }
     assert.deepEqual(kit.readSettingsSync(join(tmpdir(), 'obl-set-missing-' + Date.now())), {});
     assert.equal(kit.settingsPathOf('~/x').endsWith('settings.json'), true);
+  });
+
+  it('configSources 把 organize 拆到子键一级（只翻一个格子≠整块来自设置页）', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'obl-set-g-'));
+    try {
+      await kit.writeSettings(dir, { organize: { enabled: true } });
+      const sources = kit.configSources(
+        { organize: { provider: 'agnes', model: 'agnes-2.5-flash' } },
+        kit.readSettingsSync(dir),
+      );
+      assert.equal(sources['organize.enabled'], 'settings');
+      assert.equal(sources['organize.provider'], 'plugin');
+      assert.equal(sources['organize.model'], 'plugin');
+      assert.equal(sources['organize.maxTokens'], 'default');
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it('rejectedKeys：如实报出会被丢掉的键名，不静默', () => {
+    assert.deepEqual(
+      kit.rejectedKeys({ dataRoot: 'C:/evil', totally: 1, organize: { nope: 2, enabled: true } }),
+      ['dataRoot', 'organize.nope', 'totally'],
+    );
+    assert.deepEqual(kit.rejectedKeys({ organize: null, mdRoot: '~/ok' }), [], '整块删掉是合法操作');
+    assert.deepEqual(kit.rejectedKeys('not an object'), []);
+  });
+
+  /** 设置页的服务面：读（生效值 + 来源 + 待重启）与写（如实回报）。 */
+  describe('设置服务（describe / patch）', () => {
+    const PLUGIN = { logPrefix: '[p]', mdRoot: 'C:/PluginKB', organize: { provider: 'agnes', model: 'agnes-2.5-flash' } };
+
+    function svcFor(dir, plugin = PLUGIN) {
+      return kit.createSettingsService({
+        pluginConfig: plugin,
+        dataRoot: dir,
+        effective: kit.resolveConfig(plugin),
+      });
+    }
+
+    it('describe：设置层空 ⇒ 来源全落在 plugin/default，待重启为空', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-svc-a-'));
+      try {
+        const snap = svcFor(dir).describe();
+        assert.deepEqual(snap.values, {});
+        assert.equal(snap.path, kit.settingsPathOf(dir));
+        assert.equal(snap.sources.mdRoot, 'plugin');
+        assert.equal(snap.sources['organize.provider'], 'plugin');
+        assert.equal(snap.sources['organize.enabled'], 'default');
+        assert.ok(snap.writable.includes('mdRoot'));
+        assert.ok(!snap.writable.includes('dataRoot'), 'dataRoot 永远不可写');
+        assert.deepEqual(snap.pending, [], '设置层什么都没写 ⇒ 谈不上待重启');
+        assert.equal(snap.effective.mdRoot, 'C:/PluginKB');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('patch：落盘 + changed/rejected 如实报 + 与生效值不一致时列进待重启', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-svc-b-'));
+      try {
+        const svc = svcFor(dir);
+        const out = await svc.patch({ mdRoot: 'C:/NewKB' });
+        assert.equal(out.saved, true);
+        assert.deepEqual(out.changed, ['mdRoot']);
+        assert.deepEqual(out.rejected, []);
+        assert.deepEqual(out.pending, ['mdRoot'], '正在跑的还是旧路径 ⇒ 待重启');
+        assert.equal(out.restartRequired, true);
+        assert.equal(out.sources.mdRoot, 'settings');
+        assert.equal(kit.readSettingsSync(dir).mdRoot, 'C:/NewKB', '真的落盘了');
+        assert.equal(out.effective.mdRoot, 'C:/PluginKB', '生效值不动（要重启才换）');
+        assert.equal(svc.describe().values.mdRoot, 'C:/NewKB', '下一次 describe 读得到');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('patch：organize 只翻子键，changed/pending 报到子键一级', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-svc-c-'));
+      try {
+        const out = await svcFor(dir).patch({ organize: { enabled: true } });
+        assert.deepEqual(out.changed, ['organize.enabled']);
+        assert.deepEqual(out.pending, ['organize.enabled']);
+        assert.equal(out.values.organize.provider, undefined, '同块其他子键没被写进设置层');
+        assert.equal(kit.readSettingsSync(dir).organize.enabled, true);
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('patch：被拒的键一个都不落盘，且如实报出来', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-svc-d-'));
+      try {
+        const out = await svcFor(dir).patch({ dataRoot: 'C:/evil', totally: 1, organize: { nope: 2 } });
+        assert.deepEqual(out.rejected, ['dataRoot', 'organize.nope', 'totally']);
+        assert.deepEqual(out.changed, [], '一个合法键都没有 ⇒ 什么都没变');
+        assert.deepEqual(kit.readSettingsSync(dir), {}, '文件里不许出现这些键');
+        assert.equal(out.restartRequired, false);
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('patch：null 恢复默认 ⇒ 待重启清空（值回到下层，与生效值一致）', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-svc-e-'));
+      try {
+        const svc = svcFor(dir);
+        await svc.patch({ mdRoot: 'C:/NewKB' });
+        const back = await svc.patch({ mdRoot: null });
+        assert.deepEqual(back.changed, ['mdRoot']);
+        assert.equal(back.values.mdRoot, undefined);
+        assert.equal(back.sources.mdRoot, 'plugin');
+        assert.deepEqual(back.pending, [], '回到插件层，和正在跑的值一致 ⇒ 不需要重启');
+        assert.equal(back.restartRequired, false);
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('重启后（生效值已含设置层）⇒ describe 不再报待重启', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-svc-f-'));
+      try {
+        await svcFor(dir).patch({ mdRoot: 'C:/NewKB', organize: { enabled: true } });
+        // 模拟「重启后」：生效配置改成由设置层算出来的那份。
+        const after = kit.createSettingsService({
+          pluginConfig: PLUGIN,
+          dataRoot: dir,
+          effective: kit.resolveConfig(kit.mergeSettingsConfig(PLUGIN, kit.readSettingsSync(dir))),
+        });
+        assert.deepEqual(after.describe().pending, []);
+        assert.equal(after.describe().sources.mdRoot, 'settings');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+  });
+
+  /** 设置页的 HTTP 通路：core 自己挂路由，面板只 fetch。 */
+  describe('设置路由（/oblivion-core/settings）', () => {
+    const PLUGIN = { logPrefix: '[p]', mdRoot: 'C:/PluginKB' };
+
+    /** 假 req：`on` 收下 handler，下一 tick 递进 body 再 `end`。 */
+    function fakeReq(method, { origin, body } = {}) {
+      const handlers = {};
+      const req = {
+        method,
+        headers: origin === undefined ? {} : { origin },
+        on(event, handler) {
+          (handlers[event] ??= []).push(handler);
+          return req;
+        },
+      };
+      setImmediate(() => {
+        if (body !== undefined) for (const h of handlers.data ?? []) h(Buffer.from(body, 'utf8'));
+        for (const h of handlers.end ?? []) h();
+      });
+      return req;
+    }
+
+    function fakeRes() {
+      const res = {
+        status: 0,
+        headers: null,
+        payload: null,
+        writeHead(status, headers) {
+          res.status = status;
+          res.headers = headers;
+        },
+        end(text) {
+          res.payload = text === undefined || text === '' ? '' : JSON.parse(text);
+        },
+      };
+      return res;
+    }
+
+    async function settle(res, ms = 3000) {
+      const deadline = Date.now() + ms;
+      while (res.status === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+      assert.notEqual(res.status, 0, '路由没有回任何响应');
+      return res;
+    }
+
+    function routeCtx() {
+      const reg = { routes: [], injected: [], effects: [] };
+      const ctx = {
+        tools: { register: () => () => {} },
+        systemPrompt: { section: () => () => {} },
+        effect: (fn, label) => {
+          reg.effects.push(label);
+          return fn();
+        },
+        on: () => {},
+        inject: (deps, fn) => {
+          reg.injected.push(deps.join(','));
+          fn({
+            webServer: {
+              register: (route) => {
+                reg.routes.push(route);
+                return () => {};
+              },
+            },
+          });
+        },
+      };
+      return { ctx, reg };
+    }
+
+    function depsFor(dir, catalog) {
+      return {
+        settings: kit.createSettingsService({
+          pluginConfig: PLUGIN,
+          dataRoot: dir,
+          effective: kit.resolveConfig(PLUGIN),
+        }),
+        catalog: catalog ?? (async () => ({ providers: [{ id: 'agnes', name: 'Agnes', models: [{ id: 'agnes-2.5-flash', name: 'agnes-2.5-flash' }] }], routes: [], routeSource: 'none', llmAvailable: true })),
+        version: '9.9.9',
+      };
+    }
+
+    it('GET：一次给全生效值 + 来源 + 待重启 + 可选模型清单', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-route-a-'));
+      try {
+        const { ctx, reg } = routeCtx();
+        assert.equal(kit.installSettingsRoute(ctx, depsFor(dir)), true);
+        assert.equal(reg.routes.length, 1);
+        assert.equal(reg.routes[0].path, kit.SETTINGS_ROUTE);
+        const res = fakeRes();
+        reg.routes[0].handler(fakeReq('GET'), res);
+        await settle(res);
+        assert.equal(res.status, 200);
+        assert.equal(res.headers['cache-control'], 'no-store', '设置不能被缓存');
+        assert.equal(res.payload.version, '9.9.9');
+        assert.equal(res.payload.ok, true);
+        assert.equal(res.payload.sources.mdRoot, 'plugin');
+        assert.equal(res.payload.catalog.providers[0].id, 'agnes', '自定义 provider 要在清单里');
+        assert.equal(res.payload.catalog.providers[0].models[0].id, 'agnes-2.5-flash');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('POST：本机来源 → 落地并回报 changed/rejected/待重启', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-route-b-'));
+      try {
+        const { ctx, reg } = routeCtx();
+        kit.installSettingsRoute(ctx, depsFor(dir));
+        const res = fakeRes();
+        reg.routes[0].handler(
+          fakeReq('POST', { origin: 'http://127.0.0.1:19387', body: JSON.stringify({ patch: { mdRoot: 'C:/NewKB', bogus: 1 } }) }),
+          res,
+        );
+        await settle(res);
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.payload.changed, ['mdRoot']);
+        assert.deepEqual(res.payload.rejected, ['bogus']);
+        assert.deepEqual(res.payload.pending, ['mdRoot']);
+        assert.equal(res.payload.restartRequired, true);
+        assert.equal(kit.readSettingsSync(dir).mdRoot, 'C:/NewKB');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('POST：外来来源 403；非 JSON 400；超限 413；其他方法 405', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-route-c-'));
+      try {
+        const { ctx, reg } = routeCtx();
+        kit.installSettingsRoute(ctx, depsFor(dir));
+        const handler = reg.routes[0].handler;
+
+        const bad = fakeRes();
+        handler(fakeReq('POST', { origin: 'https://evil.example', body: '{}' }), bad);
+        await settle(bad);
+        assert.equal(bad.status, 403);
+        assert.deepEqual(kit.readSettingsSync(dir), {}, '不可信来源一个字都不许写');
+
+        const notJson = fakeRes();
+        handler(fakeReq('POST', { origin: 'http://localhost:1', body: '{nope' }), notJson);
+        await settle(notJson);
+        assert.equal(notJson.status, 400);
+
+        const tooBig = fakeRes();
+        handler(fakeReq('POST', { origin: 'http://localhost:1', body: 'x'.repeat(70 * 1024) }), tooBig);
+        await settle(tooBig);
+        assert.equal(tooBig.status, 413);
+
+        const wrong = fakeRes();
+        handler(fakeReq('DELETE', {}), wrong);
+        await settle(wrong);
+        assert.equal(wrong.status, 405);
+        assert.deepEqual(wrong.headers.allow, 'GET, POST');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('宿主没有 inject / webServer：不抛，回 false，插件其余照常', () => {
+      const bare = { tools: { register: () => {} }, systemPrompt: { section: () => {} }, effect: () => {}, on: () => {} };
+      assert.equal(kit.installSettingsRoute(bare, depsFor(tmpdir())), false);
+      const noServer = {
+        ...bare,
+        inject: (_deps, fn) => fn({}),
+      };
+      assert.equal(kit.installSettingsRoute(noServer, depsFor(tmpdir())), true, '没有 webServer 也只记 warn，不算失败');
+    });
   });
 });
