@@ -12,6 +12,28 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — 决策记录 **DEC-030**：插件**默认不调 LLM**，显式开启后经 `ctx.llm` 调用
+
+**范围裁定**（所有者 2026-10-17）：自动整理的**作用域** = ① 会话整理（`oblivion_digest`）的产出
+**+** ② **知识库级标题/标签回填**（`oblivion_retitle`）——**各一份开关**，可分别启用。
+②会动大量既有笔记 ⇒ **必须先出预览清单（dry-run）再确认落地**，并与规则管线共用 `named_by` 标记。
+
+**决策**：把旧约束「插件不调 LLM」从**硬约束**降级为**默认行为**：
+
+- 默认仍走**确定性实现**（token Jaccard + 规则打分），**不联网、不发任何外部请求**；
+- 只有设置页**显式开启并选定模型**后，才调 LLM：`ctx.llm.listProviders` / `listModels` 选路，
+  `ctx.llm.stream()` + 自带文本累加器收流，密钥经 `ctx.credentials.resolve(credentialRef('…'))`；
+- 旧理由「`ctx.llm` 稳定调用面未确认」**已被实测证伪**（除缺高层 `chat()` 外，方法全公开）；
+- **自动切换**：按 `provider/model` → `fallbacks[…]` 顺序尝试，失败即换下一个；全失败只记留痕、
+  **绝不阻塞 turn**（`enabled:false` 时零请求，见设计稿 §10 验收）；
+- **配置分层**：`DEFAULT_CONFIG` < 插件 config < **`<dataRoot>/settings.json`（设置页写，压过 profile）**
+  —— 否则「界面里改了却没生效」会变成查不出来的 bug。
+
+落点：设计书 [`.design/ARCHITECTURE.MD`](.design/ARCHITECTURE.MD) §31.2 / §33.6 增加 DEC-030 行；
+设计稿 [`.design/自动整理与设置页.md`](.design/自动整理与设置页.md) §8 三个未决问题全部结清。
+
+> **本条只记决策，不含实现**：`src/organize/` 与设置页**尚未编码**。
+
 ## [未发布] — `@oblivion/panel` v0.0.16：知识库条目的「日期」拆成**入库 + 更新于**；兜底知识库路径改为 `~/OblivionKB`
 
 两件事，都来自 2026-10-17 所有者反馈。
@@ -63,8 +85,14 @@ tool "oblivion_capture" is already registered (for a per-agent variant, register
 - 回归测试（`test/core.test.mjs`）：假宿主照抄「同名第二次注册就抛」的语义，断言
   `registerTools` 回交 9 个 disposer、**不注销就重装必抛**、注销后重装不抛且注册表复原。
 
-**已知边界**：这是**防御性修复**，只能证明「本插件这一侧可注销 / 单元级语义正确」；
-「改 profile 配置后重装一定不再失败」仍要在 DSH 完整重启后按 §同批文档的现场步骤复核。
+**现场复核（2026-10-17，DSH 完整重启后 —— 这条修复唯一的真实验收）**：
+
+- **修复前**：改 profile 配置 ⇒ `stage:'apply:failed'`（`already registered`）+ 桥接 `present:false` / `slots:0`；
+- **修复后**：**连续两次**真实触发的重装
+  （① 加 `logPrefix: '[reload-test]'`；② 再把它删掉）**都是**
+  `stage:'apply:done'`、`error` 为空、`present:true`、**`slots=1,1`**（每个作用域恰好一份、没有重复），
+  `mdRoot` 全程仍是 `C:/Library/那些渐渐被遗忘` ⇒ 「改配置触发重装」这条路**已不再让 `apply()` 失败**。
+- **复核笔记**：只改**注释**不会触发重装（监视器按**生效配置**判定）—— 所以复核必须改一个真实生效的键。
 
 ## [未发布] — `@oblivion/core` v0.2.13：`mdRoot` 默认值回到 **`~/OblivionKB`**（本机路径改由 profile 覆盖）
 

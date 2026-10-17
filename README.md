@@ -26,7 +26,7 @@
 | --- | --- | --- |
 | `.design/ARCHITECTURE.MD` | **设计书**（v4.1-baseline，2400+ 行；**§33 是「设计书 vs 落地」的对账入口**） | 权威规范 |
 | `.design/DSH-COMPAT.md` | **DSH 升级兼容台账**（契约声明 + 校验矩阵 + 升级 SOP） | 已运行（7 包全 PASS） |
-| `.design/自动整理与设置页.md` | **自动整理 + 插件设置页**设计稿（决策反转：默认不调 LLM → 显式开启后经 `ctx.llm`；含实测的宿主 LLM/凭据接口清单） | **Draft**（等所有者裁定三个未决问题） |
+| `.design/自动整理与设置页.md` | **自动整理 + 插件设置页**设计稿（**DEC-030**：默认不调 LLM → 显式开启后经 `ctx.llm`；含实测的宿主 LLM/凭据接口清单） | **Confirmed**（所有者已确认；**代码未开始**） |
 | `.action/` · `.memory/` | **AI Agent 协作框架**（工作流 / 业务规则 / 记忆库与版本规则） | 已入库（规则与模板） |
 | `oblivion-*/` | **6 个插件 + 1 个安装入口**（见下） | ✅ 已实现并上机 |
 | `tools/` | 运维脚本（`check-workspace.ps1` / `verify-dsh-compat.ps1` / `lint-ps1-bom.ps1` …） | 可用 |

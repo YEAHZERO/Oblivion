@@ -2245,6 +2245,7 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | **DEC-027** | **插件能否接管桌面图标** | **Confirmed：不能，且不做替身**（2026-10-04）。窗口/任务栏图标来自 **exe 的 PE 资源**，`resources/icon.png` 只喂 `setAboutPanelOptions`、`resources/tray.ico` 只喂托盘。**拒绝**改写官方安装目录内的资源（越界且升级即失效）。<br>**替代**：改快捷方式 `.lnk` 的 `IconLocation`（`tools/set-shortcut-icon.ps1`，支持 `-Restore`）——明确告知这是**壳层替代**，不是应用图标接管（RISK-129） |
 | **DEC-028** | **`@oblivion/core` 的挂载策略** | **Confirmed：走热挂**（2026-10-06）。用户层 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 的 insert 行，**不声明 `dsh.bundle`** —— 改 config 落盘即装载、不必重启（Host 侧 JS 代码改动仍需重启 App 才重新导入）。<br>**代价**：换机器 / 重置 profile 会静默失效（正命中 `DSH-COMPAT.md` 的 **R1**）。<br>**缓解**：安装片段随包提交（`oblivion-core/cordis.patch.yml` + `oblivion-core/README.md` §9.1）；`pnpm run verify:dsh` 的 `mount profile.dependencies` 断言会在装载缺失时报 FAIL。详见 §33.6 |
 | **DEC-029** | **知识库落盘位置与分类** | **Confirmed：写进既有知识库**（2026-10-06）。文档根 = **`C:/Library/那些渐渐被遗忘`**（**不再**单开 `oblivion_docs/`）；内部按编号目录分类：`01_问答沉淀/`（问答闭环）、`00_导入文件/`（文档导入）、`02_Wiki页面/`、`03_创作产物/`、`99_其他/`（兜底）。<br>**`mdRoot` 可由 config 自由自定义**（任何绝对路径或 `~/` 写法）；**一经配置，插件装载时即自动创建**该根与全部分类目录（不等第一次落盘）；目录名会消毒（去 `..`／盘符／非法字符），不会逃出 `mdRoot`。<br>**实现**：`config.mdRoot` + `config.mdClassify` + `ensureMdDirs()`，已在 `oblivion-core` v0.1.4 落地。<br>**安全约束**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，**绝不覆盖**。详见 §33.6 |
+| **DEC-030** | **插件默认不调 LLM，显式开启后经 `ctx.llm` 调用** | **Confirmed**（2026-10-17）。旧约束「插件不调 LLM」**降级为默认行为**：默认仍走确定性实现（token Jaccard + 规则打分）、**不联网、零外部请求**；只有设置页显式开启并选定模型后，才经 `ctx.llm` 调用（`listProviders` / `listModels` 选路，`stream()` + 自带文本累加器收流，密钥走 `ctx.credentials.resolve(credentialRef('…'))`）—— 旧理由「`ctx.llm` 稳定调用面未确认」**已被实测证伪**（除缺高层 `chat()` 外，方法全公开）。<br>**作用域**：`organize.digest`（会话整理产出）与 `organize.retitle`（知识库级标题/标签回填）**各一份开关**；后者会动大量既有笔记 ⇒ **必须先出预览（dry-run）再落地**，并与规则管线共用 `named_by` 标记。<br>**自动切换**：按 `provider/model` → `fallbacks[…]` 依次试，失败即换；全失败只记留痕、**绝不阻塞 turn**。<br>**配置分层**：`DEFAULT_CONFIG` < 插件 config < `<dataRoot>/settings.json`（设置页写、**压过 profile** —— 否则「界面里改了却没生效」查不出来）。<br>**设置页**：`mdRoot` 自定义 + 模型选择 + 自动切换。设计见 `.design/自动整理与设置页.md`；**本条只记决策，实现未落地** |
 
 ### 31.3 变更日志 delta 类型
 
@@ -2358,12 +2359,13 @@ dsh-ref/                        # 参考架构的实际名称（已存在）
 | ④ | **Phase 6/7 是否保留** | 保留（先补前置：notex 实测、服务存在性对账）／降级为 `Superseded` 并写明理由 |
 | ⑤ | **DSH-COMPAT 是否升格为设计书正式机制**（§8 Phase 8 的「破坏性变更契约」） | 是（推荐：它已在运行，含 PASS 矩阵与证据 `文件:行`）／否（仅作运维台账） |
 
-### 33.6 决策记录（2026-10-06）
+### 33.6 决策记录（2026-10-06；2026-10-17 增补 DEC-030）
 
 | ID | 决策 | 内容与代价 |
 | --- | --- | --- |
 | **DEC-028** | **`@oblivion/core` 走热挂** | 用户层 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 的 insert 行；**不声明 `dsh.bundle`**。收益：改代码落盘即装卸载载（Host 侧代码改动仍需重启 App 才重新导入）。代价：换机器 / 重置 profile 会**静默失效**（DSH-COMPAT R1）→ 缓解：安装片段随包提交（`oblivion-core/cordis.patch.yml` + README §9.1），并由 `pnpm run verify:dsh` 的 `mount profile.dependencies` 断言兜底 |
 | **DEC-029** | **知识库落盘位置与分类** | 文档根 = **`C:/Library/那些渐渐被遗忘`**（所有者既有知识库，不再单开 `oblivion_docs/`）；内部按编号目录分类：`01_问答沉淀/`（问答闭环）、`00_导入文件/`（文档导入）、`02_Wiki页面/`、`03_创作产物/`、`99_其他/`（兜底）。实现：`config.mdRoot` + `config.mdClassify`。**`mdRoot` 可自定义，装载时自动创建全部目录**（`ensureMdDirs`，v0.1.4）。**安全约束**：目标文件若不含 `oblivion:` 标记（= 用户自有笔记）则改写 `<topic>-oblivion.md`，绝不覆盖 |
+| **DEC-030** | **插件默认不调 LLM，显式开启后经 `ctx.llm`**（2026-10-17） | 默认仍走**确定性实现**（**零外部请求**）；显式开启并选定模型后才经 `ctx.llm.stream()` 调用，密钥 `ctx.credentials.resolve(credentialRef('…'))`。**作用域**：`organize.digest` + `organize.retitle` **各一份开关**（回填**先预览再落地**、与规则管线共用 `named_by`）。**自动切换**：`provider/model` → `fallbacks[…]` 依次试，全失败只留痕、**不阻塞 turn**。**配置分层**：`DEFAULT_CONFIG` < 插件 config < `<dataRoot>/settings.json`（设置页写）。**实现未落地** |
 
 ---
 
