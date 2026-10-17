@@ -12,6 +12,24 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/core` v0.2.12：`mcp-channel-diag.json` 落盘**串行化**（`apply:done` 不再被后发先至吞掉）+ 失败不再静默
+
+`<dataRoot>/mcp-channel-diag.json` 是「通道发布走到哪一步」的唯一证据位，但它的三处写入是**即发即忘**的
+（`src/index.ts` 的 `apply:enter`、`onReport` 里的 `apply:mcp`、收尾的 `apply:done`，都是 `void`），
+三笔都走「写临时文件 → rename」落到**同一个路径** ⇒ 并发写入时**后发的可能先落地**。真机现场：
+文件停在 `stage: 'apply:mcp'`（`at` 只比它自己的 `report.at` 晚 1ms），而 `apply:done` 明明在它之后
+被调用 —— 读这个文件的人正拿它判断「装载走到哪一步」，顺序错乱会把定位方向带偏（看起来像 `apply()` 没走完）。
+
+- **串行化**（`src/mcp/diag.ts`）：模块级队列，写入按**调用顺序**排队 ⇒ 盘上最后一笔一定是最后发出的那笔。
+  队列里的任务自己吞异常，队列永不 reject，调用点继续 `void` —— 诊断写盘不该拖住装载。
+- **失败不再静默**：每笔最多试 3 次（Windows 上临时文件/rename 被杀毒、索引器、同步盘**瞬时占用**是常态
+  风险，`util/fs.ts` 里有 2026-10-06 的实测原文），真写不进去就把原因记在**同一路径**上，由**下一笔**
+  成功写入带进文件（新字段 `writeError`）—— 诊断文件自己交代自己的缺口。
+- 单测（`test/mcp.test.mjs`）两条，都是这次真机故障的回归位：① 同一 tick 连发三阶段 ⇒ 盘上必须是
+  `apply:done`；② 写不进去时不抛，且下一次成功写入里带着上一次的失败原文（含 `3/3` 次尝试）。
+- 读法随之更新（[`WORKSPACE.md`](WORKSPACE.md) 复核配方 ②）：`writeError` 在 = 上一次落盘失败过；
+  而「看到 `apply:mcp`」**不再**意味着「没走到最后」。
+
 ## [未发布] — 工具：**构建守卫**（DSH 活着就拒绝构建）+ `tools/push-to-dsh.ps1`（每轮一条摘要推入 DSH 会话）
 
 两件都不改包内代码，改的是工具链与工作方式，所以**没有版本号变化**（`VERSION` 不动）。
@@ -29,6 +47,17 @@ client 产物**会让正在启动/刷新的界面手里全是旧 rev 的 URL ⇒
 `DeepSeek Harness` + 心跳/装载留痕里仍活着的插件宿主 pid（后者让「从 DSH 内部跑构建」也被拦下）。
 `typecheck` / `test` / `version` / `selfcheck` / `compat` / `install` 不受影响（不写 `lib/client.js`）。
 
+**①-b 判词算准（同日补）**：守卫拦的应当只是「**会重写插件 client 产物**」的构建，而不是「构建」本身 ——
+过度的规则会被绕过，那才是真风险。所以新增 `-Task build -Filter '@oblivion/core'`（逗号分隔的**精确包名**）：
+范围里没有 client 半边时（按 `exports["./client"]` 认；全工作区带它的正好是 brand / daily-life / panel / vimc）
+一个插件产物都不碰，DSH 活着也放行，落盘前会打印这句理由。**实测**：DSH 运行中构建 `@oblivion/core`
+（v0.2.11 → v0.2.12）通过，四个 `lib/client.js` 的 mtime 与大小**逐字节未变**。
+`-Filter` 喂给别的 task（如 `-Task typecheck`）会**报错**，不静默忽略。
+
+顺带修掉同一文件里一个 PS 5.1 老坑：`Get-Content` 不写 `-Encoding UTF8` 时按 ANSI/GBK 读，
+JSON 里的中文会变成乱码而让 `ConvertFrom-Json` 失败 —— 一处让 `-Filter` 的包名**一个都找不到**，
+另一处会让守卫**漏掉**「插件宿主 pid」这条证据（异常被 `catch { continue }` 吞掉）。
+
 **② `tools/push-to-dsh.ps1`** —— 所有者选定的「**每轮一条正式摘要**」工作流的执行端：把 OpenCode 侧
 这一轮的正式摘要作为**用户消息**推给 DSH 会话（走 brand 的注入路由，与界面「发送」同一条链），
 DSH 里即能看见。它自己认端口（`-Port` → 缓存 → 宿主 pid 的监听端口逐个探 `GET /obl-brand/plugins`，
@@ -43,6 +72,10 @@ DSH 里即能看见。它自己认端口（`-Port` → 缓存 → 宿主 pid 的
 
 配套文档：[`WORKSPACE.md`](WORKSPACE.md) 新增**已知限制 9**（运行中重建 ⇒ 界面起不来）与
 「每轮一条正式摘要」一节、「检查：四层闸门」补构建守卫；[`.memory/daily/2026-10-17.md`](.memory/daily/2026-10-17.md) 记本轮。
+
+上游侧的另一半（**不是**我们能改的）写成 issue 草稿：[`docs/上游问题报告-dsh-client-modules.md`](docs/上游问题报告-dsh-client-modules.md)
+（英文正文，两条可核的机制缺陷：一个脚本失败连坐整条 combo 批 + 只保留一代 batch 响应且不留上一代单包 URL；
+附 `ctimeMs` 参与 rev、失败文案不带 HTTP 状态两条更轻的）。**尚未提交给上游**。
 
 ## [未发布] — `@oblivion/brand` v0.1.7：会话**读回**（`GET /obl-brand/session/tail`）—— 闭环「注入 → 等一轮 → 读回」
 

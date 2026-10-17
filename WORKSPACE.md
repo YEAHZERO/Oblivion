@@ -260,7 +260,15 @@ powershell -File tools/check-workspace.ps1 -Task selfcheck# 只跑第 ④ 层
 > ```powershell
 > powershell -File tools/check-workspace.ps1 -Task build                  # DSH 开着 → 拒绝（并说明因果）
 > powershell -File tools/check-workspace.ps1 -Task build -AllowRunning    # 覆盖：跑完立刻完全重启 DSH
+> powershell -File tools/check-workspace.ps1 -Task build -Filter '@oblivion/core'   # 只构建无 client 半边的包
 > ```
+>
+> 守卫的判词是「**这次构建会不会重写插件产物**」，不是「是不是构建」：`-Filter`（逗号分隔的**精确包名**）
+> 把范围收窄到没有 client 半边的包时（纯 Host 插件只产出 `lib/*.js`），它一个插件产物都不碰，
+> DSH 活着也安全 —— 这不是豁免，是把判定算准（**过度的规则会被绕过**，那才是真风险）。
+> client 半边按 `exports["./client"]` 认（宿主找客户端就只认这一个字段），全工作区里带它的正好是
+> `brand` / `daily-life` / `panel` / `vimc` 四个。
+> `-Filter` 只对 `-Task build` 有意义，喂给别的 task 会**报错而不是静默忽略**。
 >
 > `typecheck` / `test` / `version` / `selfcheck` / `compat` / `install` 不受影响（它们不写 `lib/client.js`）。
 > 守卫认两类证据：进程名 `DeepSeek Harness`，以及心跳/装载留痕里那个还活着的插件宿主 pid
@@ -562,9 +570,14 @@ Invoke-RestMethod http://127.0.0.1:42081/oblivion/mcp/health | ConvertTo-Json -D
 Get-Content "$env:USERPROFILE\.oblivion\data\mcp-channel-diag.json" -Raw
 #    stage=apply:failed ⇒ error 就是装载死因（本轮靠它一句话定案）
 #    stage=apply:done 而 ① 仍 present:false ⇒ 两侧不同进程/作用域（比 pid）
-#    stage=apply:done **可能缺失**：末条写入走 temp→rename，撞上并发读会 EPERM，被 `void` 吞掉
-#    ⇒ 看到 apply:mcp 别急着判「没走到最后」；以 `at`/`pid` + 桥接 /health 为准（待 core 下次构建时补直写回退）
+#    writeError 字段 ⇒ **上一次**落盘失败过（原因原文就在字段里；这一笔是成功的）—— 0.2.12 起才有
 #    pid 应与 ① 的 endpoint.pid 相同；不同 ⇒ 这份文件是测试进程写的（见「假证据警报」）
+#
+#    历史坑（core **0.2.12 已修**，留档防复现）：三处调用是即发即忘的（`void`），两笔写入并发
+#    rename 到**同一路径**时后发的可能先落地，文件于是停在 apply:mcp 而 apply:done 明明已经发过；
+#    换句话说「看到 apply:mcp」曾经**不能**判「没走到最后」。现在落盘按调用顺序串行 + 失败重试 +
+#    失败留痕，文件里的 stage 就是最后发出的那一笔。复核：core 单测
+#    「MCP 通道诊断文件（diag.ts：串行落盘 + 失败留痕）」两条。
 
 # ③ 通道真活着的端到端证据（要 token；别把 token 打进日志/分享）
 $h = @{ 'Content-Type'='application/json'; 'Accept'='application/json, text/event-stream';
@@ -623,6 +636,19 @@ Invoke-WebRequest -UseBasicParsing -Method POST http://127.0.0.1:42081/oblivion/
 
 ⇒ **规则与谁在写无关**：任何插件（官方 / 第三方 / 我们的）的 client 产物在「界面启动或刷新」附近被重写，
 都会有这一幕。构建守卫只能管住我们自己那一半；第三方插件的更新要靠**「更新完立刻完全重启 DSH」**这条规程。
+
+**上游侧另有两条可核的机制缺陷**（issue 草稿： [`docs/上游问题报告-dsh-client-modules.md`](docs/上游问题报告-dsh-client-modules.md)，正文英文）：
+
+- **一个脚本失败连坐整条 combo 批** —— `failedBundleUrls` 记的是「整条批」，此后**所有**用这条批的行
+  都直接 `skipped after an earlier failure of this bundle`（`lib/client.js:629-637`）。于是「某一条 URL 陈旧」
+  会扩散成「四个无关包不激活」。
+- **只保留一代 batch 响应，且不留上一代的单包 URL** —— `previousBatchResponses` 只装上一代的 combo
+  （`lib/index.js:681`，查表在 `:962`），而单包 URL 只有**当前**一代（`:668-680` 只把 chunk 类带过去）。
+  页面手里的单包 URL 只要落后一代就是 404 —— 而它正是 `client.js:595-608` 注释里承诺的兜底路径。
+
+另外两条更轻的、也写进草稿里：`artifactRevision` 把 **`ctimeMs`** 算进去（`lib/index.js:193-199`），
+所以「字节完全相同的重写」也换 rev（`dsh-free-search` mtime 还是 10-06 却照样换了 rev 就是这个原因）；
+失败文案只说 `failed to load`，**不带 HTTP 状态**，404 与真脚本报错长得一模一样。
 
 **怎么办**：① 完全退出 DSH → 构建 → 再开（最稳）；② 或构建完**立刻完全重启** DSH（不是只刷新窗口）。
 弹了那张对话框时，先确认没有 node/pnpm 还在写文件，再点「**重启**」；
