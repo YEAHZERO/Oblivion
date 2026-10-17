@@ -249,7 +249,7 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
 | `oblivion_digest` | **整理当前对话**：模型产出结构（章节/决策/待办/未决/双链），插件落成**一篇整理笔记 + 一条可检索条目**（并建共现边） | 「整理一下当前对话」 |
 | `oblivion_retitle` | **给沉淀件改名打标签**：先给候选（现名/原问句/答案摘要），模型起内容名 + 标签，插件改名并同步条目与索引 | 「把这些笔记的名字改成讲什么」 |
 | `oblivion_wiki` | **把同一主题的笔记合成一页主题页**：先给候选（现名/原问句/状态/已属哪页），模型判簇 + 写概述，插件落 `02_Wiki页面/` 并在成员笔记里留一行回链 | 「把讲 cordis 作用域的笔记合成一页」 |
-| `oblivion_organize` | **自动整理（插件自己调模型）**：`status`（零请求）/ `preview`（只读，拿建议）/ `apply`（落地；省略 `items` 就落地上一次预览）。**默认关**，开了才发请求 | 「自动整理一下知识库的标题」 |
+| `oblivion_organize` | **自动整理（插件自己调模型）**：`status`（零请求，**并列出宿主全部 provider/模型** —— 含自定义 provider，设置页据此填下拉框）/ `preview`（只读，拿建议）/ `apply`（落地；省略 `items` 就落地上一次预览）。**默认关**，开了才发请求 | 「自动整理一下知识库的标题」 |
 | `oblivion_status` | **观测与调参入口**：生效配置 + 真实统计 + 「该改哪个键」建议 + 最近判定 | 「这几天的捕获率多少？该调什么？」 |
 | `oblivion_query` | 关键词 + 共现扩展检索，带来源 | 「库里关于 cordis 注入的记录」 |
 | `oblivion_capture` | 手工沉淀一条问答（走同一套四层筛选） | 把一段读书笔记沉淀成条目 |
@@ -407,7 +407,32 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 `ctx.credentials` 解析 —— 这正是「复用 DSH 里可用的地址与密钥」，且比插件自己去读凭据文件更安全。
 宿主**没有** `llm` 服务时只**降级**（工具报不可用），插件其余部分照常。
 
-> 尚未编码：**设置页 UI**（路径 / 模型选择 / 自动切换三项）与 `organize.digest` 作用域。
+#### 设置页的数据源：`catalog()`（0.2.16）
+
+设置页的**模型下拉框**（含「自动切换」的备用路）由 `OrganizeService.catalog()` 填 ——
+它**直接读宿主的 provider 注册表**（`ctx.llm.listProviders()` + `listModels()`），
+所以**用户自定义 provider 与官方 provider 一视同仁**：profile 里经 `dsh-llm-pi-ai` 的
+`config.providers` 登记、`baseURL` 指向自建服务的那些（本机的 `Agnes`），列出来就能选，
+**插件不做白名单**。
+
+```jsonc
+// oblivious_organize 的 status 模式（或门面 organize.catalog()）大致回这样：
+{
+  "enabled": false,
+  "routeSource": "host-default",             // 我配的(config) / 宿主默认的(host-default) / 都没有(none)
+  "routes": [{ "provider": "agnes", "model": "agnes-2.5-flash" }],
+  "providers": [
+    { "id": "deepseek", "name": "DeepSeek", "models": [{ "id": "deepseek-chat", "name": "deepseek-chat" }] },
+    { "id": "agnes",    "name": "Agnes",    "models": [{ "id": "agnes-2.5-flash", "name": "agnes-2.5-flash" },
+                                                       { "id": "agnes-3.0-flash", "name": "agnes-3.0-flash" }] }
+  ]
+}
+```
+
+两条边界：① **零请求** —— 读的是注册表，不是模型接口，所以**关着也能调**（挑模型不该要求先开自动整理）；
+② 某个 provider 的 `listModels` 抛错时它**仍被列出**（只是模型为空），不拖垮整份清单。
+
+> 尚未编码：**设置页 UI**（路径 / 模型选择 / 自动切换三项 —— 其数据源已在上面就位）与 `organize.digest` 作用域。
 
 ### 9.5 观测与调参（先跑够几天，再动阈值）
 

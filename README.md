@@ -37,7 +37,7 @@
 | --- | --- | --- |
 | [`@oblivion/brand`](oblivion-brand/README.md) | **0.1.7** | 品牌槽位接管（侧栏与会话 Hero 换成北极星，**零 Fork**）；可把「插件市场」这类面板挂到侧栏；设置页**一键重启 DSH** |
 | [`@oblivion/vimc`](oblivion-vimc/README.md) | **0.2.10** | 键盘导航（`w/s` 翻页 · `f` 链接提示 · `/` 查找 · `i`/`Esc` 输入框 · `Ctrl+方向键` 像素滚动）；按 [Vimium-C](https://github.com/gdh1995/vimium-c) 语义实现（**未复制代码**），**可直接导入 `vimium_c-*.json`**；自带设置页与开销自证 |
-| [`@oblivion/core`](oblivion-core/README.md) | **0.2.15** | **认知层内核**：knowledge / qa-loop / perspective / feedback / graph / profile + digest / retitle / wiki / stats / organize；**10 个模型面工具** + MCP 协议面（浏览器扩展那条路） |
+| [`@oblivion/core`](oblivion-core/README.md) | **0.2.16** | **认知层内核**：knowledge / qa-loop / perspective / feedback / graph / profile + digest / retitle / wiki / stats / organize；**10 个模型面工具** + MCP 协议面（浏览器扩展那条路） |
 | [`@oblivion/panel`](oblivion-panel/README.md) | **0.0.16** | 侧栏观测面板（嵌 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar)）：捕获率 / 判定曲线 / 调参建议 / **知识库单栏** |
 | [`@oblivion/http-bridge`](oblivion-http-bridge/README.md) | **0.1.3** | 浏览器扩展接入：固定端口 `42081` 上的 HTTP 传输层（鉴权 / CORS / 体积 / 健康路由），**不含 MCP 逻辑** |
 | [`@oblivion/daily-life`](oblivion-daily-life/README.md) | **0.0.1** | 「**有数**」物品服役账本：日均成本 / 服役进度 / 闲置天数 |
@@ -263,6 +263,7 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.14**：**工具注册可注销** —— 重新装载不再撞 `already registered`、不再让 `apply()` 整个失败（真机现场见 [`CHANGELOG.md`](CHANGELOG.md)） |
 | 未发版 | 2026-10-17 | `@oblivion/panel` **0.0.16**：知识库条目的日期**拆成「入库 + 更新于」两段**（各标来源）；兜底知识库路径改为 `~/OblivionKB` |
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.15**：**自动整理（DEC-030）第一片** —— `organize` 配置块（默认全关、零请求）+ `<dataRoot>/settings.json` 第三层配置（设置页可写）+ 自带 `ctx.llm` 客户端（含自动切换；密钥仍由宿主解析、插件不经手）+ `oblivion_organize` 工具（`status`/`preview`/`apply`，回填先预览再落地）。设置页 UI 与 `organize.digest` 未编码 |
+| 未发版 | 2026-10-17 | `@oblivion/core` **0.2.16**：设置页的**数据源** —— `OrganizeService.catalog()` 列出宿主全部 provider/模型（**自定义 provider 一视同仁**，如 profile 里的 `agnes`）、`status.routeSource` 分出「我配的 / 宿主默认的」；`oblivion_organize status` 带上清单。仍是**零请求**（读注册表，不调模型） |
 
 ## 许可证
 

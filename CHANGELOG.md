@@ -12,6 +12,40 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [0.2.16] — 设置页的**数据源**：可选模型清单经宿主注册表露出（自定义 provider 一视同仁）
+
+**起因**（所有者 2026-10-17，重启后）：设置页要能选 **Agnes** 这类**自定义 provider**
+（profile 里经 `dsh-llm-pi-ai` 的 `config.providers` 登记、`baseURL` 指向自建服务的那些），
+不能只列官方的那一个。
+
+**结论**：这条路**不需要插件做任何特判** —— 宿主把自定义 provider 与官方 provider 放在
+**同一份注册表**里，所以「列出来」就等于「能选」。本片补的是「**看得见**」这一半：
+此前 `oblivion_organize` 只报一个可能为空的 `routes`，谁也答不出「到底有哪些 provider/模型」。
+
+### 新增
+
+- **`OrganizeService.catalog()`** —— 列出宿主全部 provider 及各自模型
+  （`ctx.llm.listProviders()` + `listModels()`），并附带**当前生效选路**与它的**来源**。
+  **只读本地注册表、不发任何模型请求**，所以「关着」的时候也能随便调 ——
+  挑模型这件事本身就不该要求先打开自动整理。
+- **`OrganizeStatus.routeSource`**（`'config' | 'host-default' | 'none'`）——
+  把「这条选路是我配的、还是宿主默认给的」分开报。以前只有一个 `routes` 数组，
+  「我明明配了 A，怎么跑的是 B」只能靠猜。
+- `oblivion_organize` 的 `status` 模式**带上 provider 清单**（设置页下拉框的数据源）。
+  仍是**零请求**：读的是宿主注册表，不是模型接口。
+
+### 修复
+
+- `status()` 现在**同步解析**宿主默认选路（`agentDefaultModel.currentSelection()` 本就是同步函数），
+  于是**不必先跑一次 `preview`** 才能知道「打开会用哪条模型」。碰上真回 Promise 的宿主**不猜** ——
+  保持 `none`，留给 `catalog()` / `preview()` 里那条 `await` 的路（缓存后同步面也就答得出）。
+
+### 验证
+
+- typecheck ✅ / **单测 102 → 108**（+6：清单含自定义 provider、`listModels` 抛错不拖垮整个清单、
+  同步面不猜 Promise、显式配置不被宿主默认覆盖）/ **自检 35 → 36**（+1：经**门面**读到
+  `deepseek,agnes` 两个 provider，证明桥接/面板那条路真的拿得到）。
+
 ## [0.2.15] — 自动整理（DEC-030）第一片：**设置页可写配置层** + 插件自带 **LLM 客户端** + `oblivion_organize`
 
 **决策**（所有者 2026-10-17 确认「按建议来」）：旧约束「插件不调 LLM」**从硬约束降级为默认行为** ——
