@@ -25,69 +25,42 @@
 | 路径 | 内容 | 状态 |
 | --- | --- | --- |
 | `.design/ARCHITECTURE.MD` | **设计书**（v4.1-baseline，2400+ 行；**§33 是「设计书 vs 落地」的对账入口**） | 权威规范 |
-| `.design/DSH-COMPAT.md` | **DSH 升级兼容台账**（契约声明 + 校验矩阵 + 升级 SOP） | 已运行（三插件全 PASS） |
+| `.design/DSH-COMPAT.md` | **DSH 升级兼容台账**（契约声明 + 校验矩阵 + 升级 SOP） | 已运行（7 包全 PASS） |
 | `.action/` · `.memory/` | **AI Agent 协作框架**（工作流 / 业务规则 / 记忆库与版本规则） | 已入库（规则与模板） |
-| `oblivion-brand/` · `oblivion-vimc/` · `oblivion-core/` | **三个插件**（见下） | ✅ 已实现（core 待重启验证） |
+| `oblivion-*/` | **6 个插件 + 1 个安装入口**（见下） | ✅ 已实现并上机 |
 | `tools/` | 运维脚本（`check-workspace.ps1` / `verify-dsh-compat.ps1` / `lint-ps1-bom.ps1` …） | 可用 |
 
-**已实现的包（5 个：4 个插件 + 1 个安装入口）**：@oblivion/bundle 是安装入口（不是插件：没有 pply(ctx)，只有 cordis.patch.yml），一条命令装齐其余四个。
+**已实现的包（7 个目录：6 个插件 + 1 个安装入口）**：@oblivion/bundle 是安装入口（不是插件：没有 pply(ctx)，只有 cordis.patch.yml），一条命令装齐其余插件。
 
-① [`@oblivion/brand`](oblivion-brand/README.md) v0.1.0：
+| 包 | 版本 | 角色 |
+| --- | --- | --- |
+| [`@oblivion/brand`](oblivion-brand/README.md) | **0.1.7** | 品牌槽位接管（侧栏与会话 Hero 换成北极星，**零 Fork**）；可把「插件市场」这类面板挂到侧栏；设置页**一键重启 DSH** |
+| [`@oblivion/vimc`](oblivion-vimc/README.md) | **0.2.10** | 键盘导航（`w/s` 翻页 · `f` 链接提示 · `/` 查找 · `i`/`Esc` 输入框 · `Ctrl+方向键` 像素滚动）；按 [Vimium-C](https://github.com/gdh1995/vimium-c) 语义实现（**未复制代码**），**可直接导入 `vimium_c-*.json`**；自带设置页与开销自证 |
+| [`@oblivion/core`](oblivion-core/README.md) | **0.2.12** | **认知层内核**：knowledge / qa-loop / perspective / feedback / graph / profile + digest / retitle / wiki / stats；**9 个模型面工具** + MCP 协议面（浏览器扩展那条路） |
+| [`@oblivion/panel`](oblivion-panel/README.md) | **0.0.15** | 侧栏观测面板（嵌 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar)）：捕获率 / 判定曲线 / 调参建议 / **知识库单栏** |
+| [`@oblivion/http-bridge`](oblivion-http-bridge/README.md) | **0.1.3** | 浏览器扩展接入：固定端口 `42081` 上的 HTTP 传输层（鉴权 / CORS / 体积 / 健康路由），**不含 MCP 逻辑** |
+| [`@oblivion/daily-life`](oblivion-daily-life/README.md) | **0.0.1** | 「**有数**」物品服役账本：日均成本 / 服役进度 / 闲置天数 |
+| [`@oblivion/bundle`](oblivion-bundle/README.md) | **0.0.1** | 安装入口（插件清单 + 预设配置；**不是插件**） |
 
-- 侧栏与会话 Hero 的**品牌换成北极星**（占用官方槽位，**零 Fork**）
-- 品牌名文字可自定义；品牌图形可上传替换；**接管可完全关闭**（关闭后官方外观立即恢复）
-- 可把「插件市场」这类**可嵌入面板挂到侧栏**「插件」下方（支持多选）
-- 设置页**一键重启 DSH**（自动重新拉起，无控制台窗口，约 2.7 秒）
+> **`@oblivion/core` 的边界（一句话）**：设计书的 **Phase 2–6 合并进这一个包**。落盘写进既有知识库
+> `C:\Library\那些渐渐被遗忘`（`01_问答沉淀/` 分类，可由 config 改，装载时自动创建）；
+> **零侵入**（不阻塞主链路、无 cron/Worker/定时器，图衰减与保留期都是**读取时惰性计算**、防回灌）；
+> 挂载走**热挂**（DEC-028）。细节与闸门数字见 [`oblivion-core/README.md`](oblivion-core/README.md)。
 
-② [`@oblivion/vimc`](oblivion-vimc/README.md) v0.2.10（**清单外新增**，交互工具类）：
-
-- 把 DSH 当浏览器用：`w/s` 上/下翻页（距离 **0.6 屏**）、`a/d` 横向像素步进、`W/S` 到顶/到底、
-  `[`/`]` **上一条/下一条提问**、`/` **页面内查找**（`.`/`,` 前后跳，落点靠上 + 落点标记）、
-  `f` **链接提示**（**正文内联引用优先拿单字母**，消息操作按钮其次，外部按钮最后）、`i` 聚焦输入框、**`Esc` 退出输入框**；
-  `Ctrl+方向键` 像素级滚动
-- **焦点在输入框里时一个键都不接管**；键位与选项按 [Vimium-C](https://github.com/gdh1995/vimium-c) 语义实现
-  （**Apache-2.0，未复制代码**，对照表见其 README §11），**可直接导入 `vimium_c-*.json` 选项导出**
-- **自带设置页**（设置 → Oblivion 键盘导航）：键位文本、滚动、输入框、查找、链接提示、导入、排除规则与只读自检
-- **开销可自证**：真实页面里候选扫描 7.5–19ms（优化前 111.8ms）、按键平均 1.8ms/峰值 3ms；无轮询、无常驻注入 DOM
-
-③ [`@oblivion/core`](oblivion-core/README.md) v0.1.6（**认知层内核**，Host 侧 `object` 插件）：
-
-- 设计书的 **Phase 2–6 合并成一个包**：knowledge / qa-loop / perspective / feedback / graph / profile
-- **问答即生长**：`turn/end` 单触发 → 四层筛选（精确去重 / 语义重合 / L3 四条规则 / 价值打分）→ JSON 条目 + 笔记落盘 + 共现建边 + 档案更新
-- **落盘位置（所有者裁定）**：笔记写进既有知识库 **`C:\Library\那些渐渐被遗忘`**，**内部按 `01_问答沉淀/` 分类**
-  （`00_导入文件/` `02_Wiki页面/` `03_创作产物/` `99_其他/` 兜底）；**位置可由 config 自定义**，且**装载时自动创建**这些目录；
-  **同名外来笔记绝不覆盖**，改写 `<topic>-oblivion.md`
-- **认知陪伴**：主动（≤3 会话）/ 深度（连续同维度 ≥3 次 → ≥3 候选）/ 陪伴期三通道，走 `systemPrompt` 下一轮注入；档案置信度 <0.3 一律不发
-- **零侵入**：不阻塞主链路、无 cron/Worker/定时器（图衰减与反馈保留期都是**读取时惰性计算**）、防回灌
-- **观测与调参（v0.1.5）**：每轮判定留痕 `decisions.jsonl` + 装载快照 `status.json` + `oblivion_status` 工具
-  （生效配置 + 捕获率/拦截原因/分值分布 + 「该改哪个键、建议多少、依据」）—— **先在真实数据里看几天，再决定阈值**
-- 模型面 **6 个工具**：`oblivion_status` / `oblivion_query` / `oblivion_capture` / `oblivion_profile` / `oblivion_feedback` / `oblivion_graph_neighbors`
-- 挂载：**热挂**（profile 补丁插入行，落盘即装载，**无需重启**；决策 DEC-028）
-- 闸门：契约 **8/8**、test **13/13**、selfcheck **25/25**
-- 真机已验：`status.json` 跟着构建时间刷新（v0.1.6）、五个分类目录自动创建、只读路由可达
-- ⚠️ **未结案**：`turn/end` 是否真的送达本插件 —— 已加一次性事件探针（`events-probe.jsonl`），判读表见 [`HANDOFF.md`](HANDOFF.md) 坑清单 5.5
-
-④ [`@oblivion/panel`](oblivion-panel/README.md) v0.0.1（**认知面板**，client 双半）：
-
-- 把 core 的观测数据（**捕获率 / 拦截原因 / 调参建议 / 最近沉淀**）做成一个 tab，
-  嵌进第三方插件 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar) 的那一列 —— **不自己造文件树**
-- 架构：Node 半边给一条**只读** JSON 路由（`GET /oblivion-panel/status`），浏览器半边用
-  `ctx.betterSidebar.registerTab` 注册页；**不含会话原文**，仅计数、原因、标题与路径
-- 降级：`betterSidebar` 缺席时不注册、只记一条日志、**不抛错**
-- 闸门：契约 **5/5**（含新断言 `npmPkg dsh-better-sidebar`）、test **13/13**、selfcheck **8/8**、`dshx check` 全绿
-- 真机已验：**Node 半边路由 HTTP 200**（热挂，无需重启）+ `%TEMP%\oblivion-panel\host-mount.json`；浏览器半边待**硬刷新**目视
-
-> ⚠️ **本仓库目前没有 26 个 `oblivion-*` 能力包。** 那是 **v4.0 及更早**的计划；
-> v4.1 已把它**收敛为 8 个插件**（宿主提供的不再重造）。**不要把旧计划读成现状。**
+> ⚠️ **本仓库目前没有 26 个 `oblivion-*` 能力包。** 那是 **v4.0 及更早**的计划；v4.1 已把它**收敛**：
+> 原计划的 `knowledge` / `qa-loop` / `perspective` / `graph-growth` / `feedback`
+> **全部合并进 [`@oblivion/core`](oblivion-core/README.md) 一个包**（宿主提供的不再重造）。
+> **不要把旧计划读成现状。**
 >
 > **设计书写的 ≠ 已做的**：哪些做完了、哪些没做、哪些是设计书自己写错（例如 `session:complete` 这个钩子根本不存在），
 > 一律看 [设计书 §33 现状对账与缺口](.design/ARCHITECTURE.MD) 与 [HANDOFF.md](HANDOFF.md)。
-> 当前**未做**的主要是：文档导入解析（anydoc）、向量检索、`md_rules.yaml` 式 YAML 阈值配置、
-> MD frontmatter 与 `[[双链]]` 写回、健康度告警、评价入口 UI、内容创作（Phase 6）、Obsidian 适配（Phase 7）、
-> 真机 e2e（Phase 9）、根 `VERSION` 递增器。
+> 截至 **2026-10-17**，**已落地**的领域能力：问答沉淀、共现图谱、画像、反馈、会话整理（`oblivion_digest`）、
+> 笔记改名（`oblivion_retitle`）、主题页（`oblivion_wiki`）、观测与调参留痕（`oblivion_status` + 面板判定曲线）、
+> 浏览器扩展接入（`@oblivion/http-bridge`）。**仍缺**：文档导入解析（anydoc）、向量检索、
+> 内容创作（Phase 6）、Obsidian 适配（Phase 7）、真机 e2e（Phase 9）、根 `VERSION` 递增器。
 >
-> **已裁定（2026-10-06，设计书 §33.6）**：① 知识库**根 = `C:\Library\那些渐渐被遗忘`**、**内部按 `01_问答沉淀/` 分类**（DEC-029，已落地 core v0.1.3）；
-> ② `@oblivion/core` **走热挂**（DEC-028）。③④⑤（Phase 2 划界 / Phase 6·7 去留 / DSH-COMPAT 是否升格）仍待裁定。
+> **已裁定**：① 知识库**根 = `C:\Library\那些渐渐被遗忘`**、**内部按 `01_问答沉淀/` 分类**（DEC-029，已落地 core v0.1.3）；
+> ② `@oblivion/core` **走热挂**（DEC-028）；③ `@oblivion/vimc` 的挂载**从 bundle 层改回 profile 用户层热挂**（2026-10-06）。
 
 ---
 
@@ -102,19 +75,23 @@
 > ② **可编程组合**（一切皆插件 + YAML 声明 + 双形态共享）
 > ③ **长期可维护**（勘误不删 + 变更控制 + 发布工程学 + 源码沉淀）
 
-**Oblivion 要写的 8 个插件**（宿主没有的部分）：
+**Oblivion 要写的插件（宿主没有的部分）** —— 计划 8 个，**实际收敛成 6 个包**（右列才是现状）：
 
-| 插件 | 职责 |
-| --- | --- |
-| `@oblivion/brand` | 品牌槽位接管 ✅ **已落地** |
-| `@oblivion/vimc` | 键盘导航（**清单外新增**，交互工具类）✅ **已落地** |
-| `@oblivion/knowledge` | 知识库核心 + 文档解析 + 向量检索 |
-| `@oblivion/qa-loop` | 问答闭环（四层筛选 + 注入） |
-| `@oblivion/perspective` | 思维激荡（双模式触发） |
-| `@oblivion/graph-growth` | 图谱生长（共现建边 + 双链写回） |
-| `@oblivion/feedback` | 反馈画像（👍/👎/⏺） |
-| `@oblivion/content-creator` | 内容创作（播客/学习指南/FAQ/摘要） |
-| `@oblivion/adapter-obsidian` | Obsidian 适配 |
+| 计划中的插件 | 职责 | 实际 |
+| --- | --- | --- |
+| `@oblivion/brand` | 品牌槽位接管 | ✅ [`oblivion-brand/`](oblivion-brand/README.md) |
+| `@oblivion/vimc` | 键盘导航（**清单外新增**） | ✅ [`oblivion-vimc/`](oblivion-vimc/README.md) |
+| `@oblivion/knowledge` | 知识库核心 + 文档解析 + 向量检索 | ⚠️ 核心**并入 [`@oblivion/core`](oblivion-core/README.md)**；**文档解析 / 向量检索仍未做** |
+| `@oblivion/qa-loop` | 问答闭环（四层筛选 + 注入） | ✅ **并入 `@oblivion/core`** |
+| `@oblivion/perspective` | 思维激荡（双模式触发） | ✅ **并入 `@oblivion/core`** |
+| `@oblivion/graph-growth` | 图谱生长（共现建边 + 双链写回） | ✅ 共现建边 **并入 core**；双链回写见 `oblivion_wiki` |
+| `@oblivion/feedback` | 反馈画像（👍/👎/⏺） | ✅ **并入 `@oblivion/core`** |
+| `@oblivion/content-creator` | 内容创作（播客/学习指南/FAQ/摘要） | ⏳ 未做（Phase 6） |
+| `@oblivion/adapter-obsidian` | Obsidian 适配 | ⏳ 未做（Phase 7） |
+
+> 计划外还长出 4 个包（真实需要，不是原设计）：[`panel`](oblivion-panel/README.md)（观测面板）、
+> [`http-bridge`](oblivion-http-bridge/README.md)（浏览器扩展接入）、
+> [`daily-life`](oblivion-daily-life/README.md)（有数 · 物品服役账本）、[`bundle`](oblivion-bundle/README.md)（安装入口）。
 
 **Oblivion 明确不做的**（由宿主提供，见设计书 §2.2 A 组）：Cordis 容器、YAML Patch 组合引擎、
 插件加载器、LLM 适配器、会话与持久化、56 个 `ui-*` 包、沙箱/审批/权限、遥测……
@@ -131,6 +108,10 @@
 | **`@oblivion/brand` 插件怎么用/怎么改** | [`oblivion-brand/README.md`](oblivion-brand/README.md) |
 | **`@oblivion/vimc` 插件怎么用/怎么改** | [`oblivion-vimc/README.md`](oblivion-vimc/README.md)（设计意图/决策/验收见 [`.design/vimc-键盘导航.md`](.design/vimc-键盘导航.md)） |
 | **`@oblivion/core` 插件怎么用/怎么改** | [`oblivion-core/README.md`](oblivion-core/README.md)（设计书见 [`.design/core-认知内核.md`](.design/core-认知内核.md)，含现状对账） |
+| **`@oblivion/panel` 面板怎么用/怎么改** | [`oblivion-panel/README.md`](oblivion-panel/README.md) |
+| **`@oblivion/http-bridge` 浏览器扩展怎么接** | [`oblivion-http-bridge/README.md`](oblivion-http-bridge/README.md) |
+| **`@oblivion/daily-life`（有数）怎么用** | [`oblivion-daily-life/README.md`](oblivion-daily-life/README.md) |
+| **一条命令装齐所有插件（安装入口）** | [`oblivion-bundle/README.md`](oblivion-bundle/README.md) |
 | **Agent 协作规范与业务规则** | [`.action/`](.action/) |
 | **记忆库怎么用（每轮三步固定动作）** | [`.memory/README.md`](.memory/README.md) |
 | **对外版本说明** | [`CHANGELOG.md`](CHANGELOG.md) |
@@ -138,8 +119,9 @@
 | **怎么贡献 / 第三方复用登记** | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
 > **版本有两条轴，别混**：**产品版本**在根 [`VERSION`](VERSION) / [`CHANGELOG.md`](CHANGELOG.md)；
-> **插件版本**在 [`oblivion-brand/VERSION`](oblivion-brand/VERSION)、[`oblivion-vimc/VERSION`](oblivion-vimc/VERSION)
-> 与 [`oblivion-core/VERSION`](oblivion-core/VERSION)（各自 `pnpm run version:bump` 只加第三位）。
+> **插件版本**在各自包里的 `VERSION`（`oblivion-brand/` · `oblivion-vimc/` · `oblivion-core/` ·
+> `oblivion-panel/` · `oblivion-http-bridge/` · `oblivion-daily-life/` · `oblivion-bundle/`），
+> 各自 `pnpm run version:bump` **只加第三位**（patch-only）。
 > 两条轴独立递增（设计书 §12.13）。
 
 ---
@@ -159,6 +141,26 @@ Oblivion/
 ├── oblivion-vimc/           # @oblivion/vimc（键盘导航：w/s/a/d · W/S · i）
 │   ├── VERSION              #   插件版本单一真源
 │   ├── src/ · lib/ · scripts/ · tests/
+│   └── README.md
+├── oblivion-core/           # @oblivion/core（认知层内核：六模块 + digest/retitle/wiki/stats + MCP 面）
+│   ├── VERSION              #   插件版本单一真源
+│   ├── src/ · lib/ · scripts/ · test/
+│   └── README.md
+├── oblivion-panel/          # @oblivion/panel（侧栏观测面板，client 双半）
+│   ├── VERSION              #   插件版本单一真源
+│   ├── src/ · lib/ · scripts/ · test/
+│   └── README.md
+├── oblivion-http-bridge/    # @oblivion/http-bridge（浏览器扩展接入：固定端口 42081）
+│   ├── VERSION              #   插件版本单一真源
+│   ├── src/ · lib/ · scripts/ · test/
+│   └── README.md
+├── oblivion-daily-life/     # @oblivion/daily-life（「有数」物品服役账本）
+│   ├── VERSION              #   插件版本单一真源
+│   ├── src/ · lib/ · scripts/ · test/
+│   └── README.md
+├── oblivion-bundle/         # @oblivion/bundle（安装入口：清单 + 预设配置，**无 apply**）
+│   ├── VERSION              #   版本单一真源
+│   ├── lib/index.js · cordis.patch.yml
 │   └── README.md
 ├── tools/                   # 本机运维脚本
 ├── package.json             # pnpm workspace 根（packageManager: pnpm@11.7.0；脚本转 tools/check-workspace.ps1）
@@ -188,6 +190,13 @@ powershell -File tools/check-workspace.ps1 -Task test     # 只跑测试（compa
 powershell -File tools/check-workspace.ps1 -Task compat   # 只跑 DSH 宿主契约校验（升级后最该跑的一条）
 powershell -File tools/check-workspace.ps1 -Task selfcheck# 只跑每包端到端自检
 ```
+
+> ⚠️ **构建与 DSH 运行互斥（2026-10-17 起有守卫）**：`check` / `build` 会重写插件的 `lib/client.js`，
+> 而 DSH 在界面启动 / 刷新附近读到被重写的客户端产物，就会弹「应用无法启动」——
+> `web boot: N entries did not activate`。所以脚本在 DSH 活着时**直接拒绝**这两条任务，
+> 报错里带完整因果与两条出路（**完全退出 DSH 再构建** / `-AllowRunning` 后立刻**完全重启** DSH）。
+> 范围里没有 client 半边时可用精确包名放行：`-Task build -Filter '@oblivion/core'`。
+> 判据、四条逐条可核的机制与上机实测见 [`WORKSPACE.md`](WORKSPACE.md) 与 [`CHANGELOG.md`](CHANGELOG.md)。
 
 > **完整的检查规范见 [`docs/检查方法.md`](docs/检查方法.md)** —— 四层检查各抓什么故障、
 > 新建插件要凑齐哪些脚本、selfcheck 怎么写、当前检查台账与已知缺口。
@@ -243,6 +252,9 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 | **0.0.2** | 2026-10-04 | Phase 5 问答闭环落地（**旧范式**：26 个自建能力包） |
 | 未发版 | 2026-10-04 | **范式修正**：重新开仓，改为 DSH 宿主 + `@oblivion/*` 插件生态；只保留设计书、协作框架与已落地的 `@oblivion/brand` |
 | 未发版 | 2026-10-05 | 新增 `@oblivion/vimc`（键盘导航插件，已装机并附验收证据）。**产品版本未递增**：根 `scripts/bump-version.ps1` 不存在，工具待补（见 [`CHANGELOG.md`](CHANGELOG.md)） |
+| 未发版 | 2026-10-06 起 | 拆出 `@oblivion/core`（认知层内核，Phase 2–6 合并）+ `@oblivion/http-bridge`（浏览器扩展接入）；知识库根裁定为 `C:\Library\那些渐渐被遗忘`（DEC-029） |
+| 未发版 | 2026-10-06 起 | 新增 `@oblivion/panel`（侧栏观测面板）、`@oblivion/daily-life`（有数）、`@oblivion/bundle`（安装入口） |
+| 未发版 | 2026-10-17 | `@oblivion/core` **0.2.12**：`mcp-channel-diag.json` 落盘**串行化**（`apply:done` 不再被后发先至吞掉）+ 失败不再静默；工具链加**构建守卫**（DSH 活着拒绝构建）。**产品版本未递增**：patch-only 规则下各插件自行递增，见 [`CHANGELOG.md`](CHANGELOG.md) |
 
 ## 许可证
 
