@@ -578,6 +578,10 @@ Get-Content "$env:USERPROFILE\.oblivion\data\mcp-channel-diag.json" -Raw
 #    换句话说「看到 apply:mcp」曾经**不能**判「没走到最后」。现在落盘按调用顺序串行 + 失败重试 +
 #    失败留痕，文件里的 stage 就是最后发出的那一笔。复核：core 单测
 #    「MCP 通道诊断文件（diag.ts：串行落盘 + 失败留痕）」两条。
+#
+#    上机实测（2026-10-17，core 0.2.12 重启后）：version=0.2.12 且 stage=apply:done —— 此前这个文件长期
+#    停在 apply:mcp；同一时刻桥接 /oblivion/mcp/health 也回到 present:true / version 0.2.12 / ready:true。
+#    这是两侧对照第一次同时给出**正向**证据（不是靠推断排除）。
 
 # ③ 通道真活着的端到端证据（要 token；别把 token 打进日志/分享）
 $h = @{ 'Content-Type'='application/json'; 'Accept'='application/json, text/event-stream';

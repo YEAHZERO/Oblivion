@@ -29,6 +29,9 @@
   `apply:done`；② 写不进去时不抛，且下一次成功写入里带着上一次的失败原文（含 `3/3` 次尝试）。
 - 读法随之更新（[`WORKSPACE.md`](WORKSPACE.md) 复核配方 ②）：`writeError` 在 = 上一次落盘失败过；
   而「看到 `apply:mcp`」**不再**意味着「没走到最后」。
+- **上机实测（同日重启后）**：`mcp-channel-diag.json` = `version 0.2.12` + `stage "apply:done"`
+  （此前长期停在 `apply:mcp`）；同一时刻桥接 `/oblivion/mcp/health` 回 `present:true` /
+  `version 0.2.12` / `ready:true`，两个作用域（`globalThis` + `process`）都有槽。DSH 侧独立核验结论一致。
 
 ## [未发布] — 工具：**构建守卫**（DSH 活着就拒绝构建）+ `tools/push-to-dsh.ps1`（每轮一条摘要推入 DSH 会话）
 
