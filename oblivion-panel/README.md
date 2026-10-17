@@ -76,6 +76,58 @@ core v0.1.6 · 面板 v0.0.14 · 刷新于 刚刚            [刷新]
 判定与安全边界（只认 transport profile 命令行、`orphans` 模式只杀父进程已死的）全在 brand 的
 `src/orphans.ts`，面板这边只做按钮 + 文案 —— 机制只有一份。brand 未装/被停用时两条路由 404，会给出明确文案。
 
+### 设置页：**设置 → Oblivion 知识库**（0.0.17）
+
+同一个插件的**第四个注册**：官方 `settings.section` 座位（`id: oblivion-knowledge`，`order: 47` ——
+品牌 45 → 键盘导航 46 → 知识库 47）。面板那一列是**只读观测**，配置改在设置里，
+面板的知识库那一栏会指一句「路径与自动整理：设置 → Oblivion 知识库」。
+
+| 组 | 键 | 说明 |
+| --- | --- | --- |
+| 知识库位置 | `mdRoot` | 默认 `~/OblivionKB` |
+| 自动整理 | `organize.enabled` / `digest` / `retitle` / `autoApply` / `everyTurns` / `minIntervalMs` / `batchSize` / `maxTokens` / `timeoutMs` | 总开关默认关；`autoApply` 默认关（回填只出预览） |
+| 模型与自动切换 | `organize.provider` / `model` / `fallbacks` | 留空 = 跟随宿主默认选路；`fallbacks` 就是「主路失败按序试」 |
+| 判定阈值 | `semanticThreshold` / `valueThreshold` | 面板「调参建议」给候选值的就是这两个 |
+
+**读写的两条通路都在 core 那儿**（`oblivion-core/src/settings-route.ts` 的
+`GET|POST /oblivion-core/settings`），本插件只 `fetch` 同源路由：
+
+- core 的定位是「写语义只有一份」（`sanitizeSettings` + 深合并 + 原子写 + `null` = 恢复默认）；
+- 面板的定位是「**只读**数据面，绝不重写别人的文件」；
+- Cordis 服务表**跨插件取不到**（实测桥接 `inject: ['oblivion']` 从未激活）⇒ 面板也没法
+  `ctx.get('oblivion')` 反过来调 core。
+
+于是：**core 挂路由、面板只 fetch**。写下去的键压过 profile 的插件 config，但仍要**重启 DSH**
+才生效（配置在 `apply()` 那一刻就固化进各子模块了）。
+
+三条「如实显示」都是被真实 bug 推出来的（`settings-model.ts` 里逐条记了）：
+
+| 界面元素 | 解的问题 |
+| --- | --- |
+| 每个值旁的**来源**徽标（设置页 / 插件配置 / 默认值） | 「我改了怎么没生效」只能靠猜三层配置的先后 |
+| **待重启**徽标 + 一条待重启横幅（带重启按钮） | `pending` 非空是**常态**（写下去的值下一轮装载才生效），不说清就会被当成 bug |
+| provider / model 下拉框补一条「（不在宿主清单里）」 | 否则 `<select>` 找不到当前值会**静默跳到第一项**，用户一保存就把配置改了 |
+
+**模型候选来自宿主的 provider 注册表**（`catalog`），所以用户自定义 provider（profile 里经
+`dsh-llm-pi-ai` 的 `config.providers` 登记、`baseURL` 指向自建服务的，如本机的 `agnes` /
+`agnes-api`）与官方 provider **一视同仁**，插件不做白名单、也**不经手密钥**（只报 provider / model）。
+
+**降级**：core 版本 < 0.2.17（没有这条路由）→ 页面显示「这条路由是 0.2.17 起的」而不是白屏；
+宿主没有 `llm` 服务 → 下拉框为空并写明「要在 profile 的 `llm-pi-ai` 里登记 provider，本页不碰密钥」；
+`slots` 服务缺席 → 只记一条日志，**不影响**面板 tab（与左栏入口同一套渐进注册）。
+
+**怎么在真机上核对这一页真的挂上了**（自证据）：浏览器半边把自己的状态 POST 给 `/oblivion-panel/diag`，
+落盘 `<dataRoot>/panel-client-diag.json`。文件里永远是**最后一次**报告，看 `where` 分辨种类：
+
+| `where` | 什么时候发 | 里面有什么 |
+| --- | --- | --- |
+| `client` | 客户端 entry 装载时 | ctx 形状 + 各 UI 注册的 **`requested`**（`inject` 没抛，不代表已挂上） |
+| `settings-section` | **设置分节被真的挂载并 GET 过一次** | `id` / `order` / `version` / `providers` / `routeSource` / `routes` / `pending` / `values`；失败时是 `error` + HTTP `status` |
+| `open-note` / `leftbar-click` | 点了一下 | 那一次点击的 `outcome` |
+
+`settings-section` 那一条是这一页的**现场证据**：只有设置外壳把这个座位渲染出来，组件才会挂载、
+才会发它 —— 所以「座位改名了 / 外壳没装载」在这里表现为**这条缺失**，而不是一个乐观的 `true`。
+
 ## 二、架构（为什么是「Node 半边 + 浏览器半边」）
 
 ```
@@ -90,18 +142,30 @@ core v0.1.6 · 面板 v0.0.14 · 刷新于 刚刚            [刷新]
                                    │  fetch
                     ┌──────────────┴───────────────┐
                     │  @oblivion/panel · 浏览器半边 │  ctx.betterSidebar.registerTab(...)
-                    └──────────────────────────────┘
+                    └──────────────────────────────┘    + slots.register('settings.section', …)
+```
+
+设置页那条通路**不经过本插件的 Node 半边**（它只读，一个字节都不写）：
+
+```
+设置页（浏览器半边） ──fetch──▶ @oblivion/core 的 GET|POST /oblivion-core/settings
+                                        └── 写 <dataRoot>/settings.json（sanitize + 深合并 + 原子写）
 ```
 
 | 半边 | 做什么 | 不做什么 |
 | --- | --- | --- |
 | Node（`src/index.ts`） | 启动标记 + 自证据文件 + **一条只读路由** | 不写任何业务数据、不 import core |
-| 浏览器（`src/client/`） | 注册 side bar tab + 渲染 | 不读文件（没有 fs 权限） |
+| 浏览器（`src/client/`） | 注册 side bar tab + 设置分节 + 渲染 | 不读文件（没有 fs 权限）、**不重写别人的文件** |
 
 **为什么读 core 的文件而不是调 core 的服务**：两个插件解耦；core 不在时本插件仍能装载并显示「还没有数据」——
 否则一个可选依赖缺席就会让整行插件被静默禁用，那更难排查。
 
-**降级**：`ctx.betterSidebar` 不存在 → 只记一条日志、不注册 tab、**不抛错**（`registerPanelTab` 的三种结局都有测试钉住）。
+**为什么设置页只 `fetch` core 的路由**：写语义（sanitize / 深合并 / 原子写 / `null` = 恢复默认）
+只该有一份，而 Cordis 服务表**跨插件取不到**（实测桥接 `inject: ['oblivion']` 从未激活）
+⇒ 面板既不能自己写文件、也不能 `ctx.get('oblivion')` 去调 core，只剩同源 HTTP 这一条。
+
+**降级**：`ctx.betterSidebar` 不存在 → 只记一条日志、不注册 tab、**不抛错**（`registerPanelTab` 的三种结局都有测试钉住）；
+`slots` 服务不存在 → 左栏入口与设置分节一起降级，面板 tab 不受影响。
 
 ## 三、快速开始
 
@@ -111,7 +175,7 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 $panel = 'C:\Projects\Oblivion\oblivion-panel'
 
 & $node $pnpm -C $panel run build        # lib/index.js + lib/testkit.js + lib/client.js
-& $node $pnpm -C $panel run selfcheck    # 15 项：路由真跑 + 注册三态 + 三段落盘 + 无残留
+& $node $pnpm -C $panel run selfcheck    # 18 项：路由真跑 + 注册三态 + 三段落盘 + 无残留 + 设置分节跨包契约
 
 # 装链接（正斜杠！）
 & 'C:\Programs\AITech\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd' plugin --profile desktop add "link:$($panel -replace '\\','/')"
@@ -152,12 +216,12 @@ Invoke-WebRequest 'http://127.0.0.1:19387/oblivion-panel/status' -UseBasicParsin
 
 | 项 | 结果 |
 | --- | --- |
-| `pnpm run build` | ✅ `lib/index.js` + `lib/testkit.js` + `lib/client.js`（46.1 KB） |
+| `pnpm run build` | ✅ `lib/index.js` + `lib/testkit.js` + `lib/client.js` |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
-| `pnpm run test` | ✅ **34/34**（快照装配 / 坏行容忍 / 空态回退 / 注册三态 / 展示层纯函数 / 知识库合栏 / **文档下方三段** / 判定曲线） |
-| `pnpm run selfcheck` | ✅ **15/15**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放、合栏、**三段**、曲线） |
+| `pnpm run test` | ✅ **34 → 44/44**（快照装配 / 坏行容忍 / 空态回退 / 注册三态 / 展示层纯函数 / 知识库合栏 / **文档下方三段** / 判定曲线 / **设置分节：表单 → 补丁**） |
+| `pnpm run selfcheck` | ✅ **15 → 18/18**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放、合栏、**三段**、曲线、**设置分节的跨包契约**） |
 | `dshx check` | ✅ manifest / export / boot-marker / client-platform（**无 default export**） |
-| `pnpm run verify:dsh`（根） | ✅ 契约 **6/6**（host / `webServer` / `npmPkg dsh-better-sidebar` / `__ModuleLoader__` / `sidebar.footer.action` / mount dependencies） |
+| `pnpm run verify:dsh`（根） | ✅ 契约 **6 → 8/8**（host / `webServer` / `npmPkg dsh-better-sidebar` / `clientPkg dsh-client-ui-settings` / `__ModuleLoader__` / `sidebar.footer.action` / **`settings.section`** / mount dependencies） |
 | Node 半边真实装载 | ✅ **已验证**：路由 `HTTP 200` + `%TEMP%\oblivion-panel\host-mount.json` |
 | 浏览器半边渲染 | ✅ **已验证**（左栏入口 → 右侧 Oblivion 页；合栏与判定曲线由所有者目视复核） |
 
@@ -167,4 +231,8 @@ Invoke-WebRequest 'http://127.0.0.1:19387/oblivion-panel/status' -UseBasicParsin
    契约校验用 `npmPackages` 断言把「它在本 profile 里装着」钉住（见 `.design/DSH-COMPAT.md`）。
 2. **读的是文件不是服务**：core 的落盘格式变了要同步改 `src/snapshot.ts`（同一份仓，改动可控）。
 3. **不含会话原文**：路由只暴露计数、拦截原因、条目标题与路径；消息正文不进响应。
-4. 只读：面板不会替你做任何写操作（沉淀/调参都在 core 与 config 里）。
+4. **面板那一列只读**；配置只有一条写通路：设置页把补丁 POST 给 core 自己挂的
+   `/oblivion-core/settings`，由 **core** 写 `<dataRoot>/settings.json` —— 本插件自己不碰任何文件
+   （Node 半边一条只读路由，浏览器半边没有任何写文件的代码）。
+5. **设置页要重启才生效**：core 在 `apply()` 那一刻就把配置固化进各子模块，所以设置层写下的值
+   要下一轮装载才生效。界面用「待重启」徽标 + 横幅把这件事说清楚（`pending` 非空是常态）。

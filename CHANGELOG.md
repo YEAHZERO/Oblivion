@@ -12,6 +12,41 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/panel` v0.0.17：**设置页落地**（设置 → Oblivion 知识库）：知识库路径 / 自动整理 / 模型与自动切换
+
+core 0.2.15 起就有了 `<dataRoot>/settings.json` 这一层与 `GET|POST /oblivion-core/settings` 这条路由，
+0.2.17 又在真机上验过（11/11）。这一片是**把它接上界面** —— 面板的第四个注册：官方 `settings.section`
+座位（`id: oblivion-knowledge`，`order: 47`；品牌 45 → 键盘导航 46 → 知识库 47）。
+
+**它管什么**：`mdRoot`（知识库路径）；`organize.*` 九个键（总开关 / `digest` / `retitle` / 自动落地 /
+每几轮 / 最小间隔 / 每批篇数 / 最大 token / 超时）；`organize.provider` / `model` / `fallbacks`
+（模型与自动切换）；再加 `semanticThreshold` / `valueThreshold` —— 面板「调参建议」给候选值的就是这两个，
+不加这一组就会出现「看到建议却改不了」。
+
+**模型候选来自宿主注册表**（core 的 `catalog()`）⇒ 自定义 provider 与官方**一视同仁**：本机实测清单
+`[agnes, agnes-api, deepseek-official, deepseek-account, deepseek-web]`，「打开会用哪条路」显示
+`agnes-api / agnes-3.0-flash`（与 profile 的 `agent-default-model` 逐字一致）。插件**不经手密钥**、
+也不填地址：只报 provider / model，密钥与 `baseURL` 由宿主 provider 适配器解析。
+
+**三条「如实显示」**（都是被真实 bug 推出来的，`src/client/settings-model.ts` 里逐条记了原因）：
+
+1. 每个值旁边标**来源**（设置页 / 插件配置 / 默认值）—— 否则「我改了怎么没生效」只能靠猜三层配置的先后；
+2. **待重启**徽标 + 一条带重启按钮的横幅 —— `pending` 非空是**常态**（配置在 `apply()` 那一刻就固化进各子模块了）；
+3. provider / model 不在清单里时补一条「（不在宿主清单里）」—— 否则 `<select>` 找不到当前值会**静默跳到第一项**，
+   用户一保存就把配置改了，而他根本没点那个值。
+
+**纯逻辑与 JSX 分家**：字段表（唯一一份，界面与补丁都过它）、`buildPatch()`（三态：没碰 / 恢复默认 / 改值）、
+`editField()` / `resetField()`、`loadSettings()` / `postSettings()` 全在 `src/client/settings-model.ts`
+（零 React 依赖，经 `testkit.ts` 导出）⇒ 它们能被 Node 直接测。这是**写盘前的最后一公里**，
+一旦错不是抛错而是静默写歪配置，所以每个三态都单独钉了一条断言。
+
+**跨包契约由自检钉住**：字段表里每个键都必须过 `@oblivion/core` **真产物**的
+`writableKeys()` / `sanitizeSettings()` / `rejectedKeys()`（「设置页点了保存、值却被静默丢掉」这类 bug
+只能在两包之间发现）；`SETTINGS_ROUTE` 两侧各写一次字面量，由自检逐字比对（改一处忘一处当场红）。
+
+验证：typecheck ✅ / 单测 **34 → 44** / 自检 **15 → 18**（含跨包三项）/ 构建 v0.0.17 / check:version ✅ /
+`verify:dsh` 契约 **6 → 8/8**（新增 `settings.section` 座位与 `clientPkg dsh-client-ui-settings`）。
+
 ## [0.2.17] — 设置页的**读写通路**（core 自己挂 HTTP 路由）+ **修一个让自动整理整条死掉的缺陷**
 
 ### 🔴 修：`llm` / `agentDefaultModel` 在真宿主上**根本读不到**
