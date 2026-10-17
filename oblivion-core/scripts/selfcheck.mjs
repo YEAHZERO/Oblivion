@@ -16,6 +16,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync as mkdir, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,7 +58,7 @@ await check('导出形状符合 object 插件约定', () => {
 
 /** 只注册、不做磁盘动作的桩 ctx。 */
 function makeCtx() {
-  const reg = { tools: [], effects: [], events: [], sections: [] };
+  const reg = { tools: [], effects: [], events: [], sections: [], sectionDefs: [], orderQueries: [] };
   return {
     reg,
     ctx: {
@@ -65,9 +66,16 @@ function makeCtx() {
       systemPrompt: {
         section: (d) => {
           reg.sections.push(d.name);
+          reg.sectionDefs.push(d);
           return () => {};
         },
-        getSectionOrder: () => 50,
+        // **如实**模拟真宿主：DSH 的排位表只认识它自己的段落名，未知名一律 undefined。
+        // （旧桩这里回 50，替宿主回答了一个它根本不会给的数 —— 于是真宿主里
+        //  `section()` 因 order 不是有限数直接抛错，闸门却一直是绿的。见 src/prompt.ts。）
+        getSectionOrder: (name) => {
+          reg.orderQueries.push(name);
+          return undefined;
+        },
       },
       logger: { warn: () => {}, info: () => {}, debug: () => {} },
       effect: (fn, label) => {
@@ -89,6 +97,13 @@ await check('apply 注册面完整（9 工具 / 1 段落 / 事件 / 各自 effec
     assert.ok(reg.tools.includes(name), '缺少工具 ' + name);
   }
   assert.deepEqual(reg.sections, ['OBLIVION_COGNITION']);
+  // 回归位：DSH 的 `systemPrompt.section()` 对非有限 order **直接抛错**，
+  // 而宿主的排位表不认识我们的名字（桩现在也如实回 undefined）。
+  // 2026-10-17 就是这一条没被拦住：真宿主里 apply() 死在这里，9 个工具 + 认知段落
+  // + MCP 通道全都没发布，外部只看到「桥接 /health 一直 present:false」。
+  const order = reg.sectionDefs[0]?.order;
+  assert.ok(Number.isFinite(order), '段落 order 必须是有限数（宿主不认这个名字时要用兜底位 650），实际 ' + String(order));
+  assert.deepEqual(reg.orderQueries, ['OBLIVION_COGNITION'], '仍应先问一次宿主（宿主将来认识这个名字就听宿主的）');
   assert.ok(reg.events.some((e) => e.event === 'session/event'), '必须监听 session/event');
   assert.ok(reg.events.some((e) => e.event === 'agent/created'), '必须在 agent 作用域补挂订阅');
   assert.ok(reg.effects.length >= 6, '每个模块都要有 effect 清理位');
@@ -878,6 +893,114 @@ await check('MCP 端点：发布到进程内通道 → 协议应答 → 契约�
   dispose();
   assert.equal(kit.resolveMcp(), null, 'disposer 要清干净（重挂/卸载不留僵尸端点）');
   return '通道 键 ' + kit.MCP_CHANNEL + ' / 契约 v' + kit.MCP_API_VERSION + ' / 工具 2 / 未知工具 -32602 / 通知 null';
+});
+
+/** 独立进程探针：两种病态都要在「还没人发布过」的干净进程里才造得出来（见调用处注释）。 */
+const CHANNEL_PROBE = `
+import { runInNewContext } from 'node:vm';
+
+const kit = await import(process.argv[2]);
+const key = Symbol.for('@oblivion/core/mcp');
+const out = {};
+
+// ① 跨 realm 的表住在 process 作用域里 —— 读侧必须按结构认表，不能靠 instanceof
+const foreign = runInNewContext('new Map()');
+const endpoint = {
+  apiVersion: 1, owner: 'foreign-owner', version: () => '0.0.0-foreign',
+  describe: () => ({ apiVersion: 1, owner: 'foreign-owner', version: '0.0.0-foreign', tools: [], ready: true }),
+  handle: async () => null,
+};
+foreign.set('foreign-owner', { apiVersion: 1, owner: 'foreign-owner', endpoint, at: Date.now() });
+process[key] = foreign;
+out.foreignIsInstanceofMap = foreign instanceof Map;
+out.foreignFound = kit.resolveMcp() === endpoint;
+out.foreignOwner = kit.describeMcpChannel().owner;
+delete process[key];
+
+// ② 键被别的东西占住（不可配置、不可写）：旧实现在这里 defineProperty 抛错，
+//    而那一次抛错发生在 apply() 末尾 —— 插件其余部分照常装载，通道却永远没发布。
+Object.defineProperty(globalThis, key, { value: 42, enumerable: false, writable: false, configurable: false });
+let report = null;
+let dispose = () => undefined;
+try {
+  dispose = kit.publishMcp(
+    {
+      apiVersion: 1, owner: '@oblivion/core', version: () => '0.0.0-probe',
+      describe: () => ({ apiVersion: 1, owner: '@oblivion/core', version: '0.0.0-probe', tools: [], ready: true }),
+      handle: async () => null,
+    },
+    { onReport: (value) => { report = value; } },
+  );
+} catch (error) {
+  out.threw = String(error?.message ?? error);
+}
+const globalScope = report?.scopes?.find((scope) => scope.scope === 'globalThis');
+out.occupiedOutcome = globalScope?.outcome ?? '(没有报告)';
+out.occupiedTag = globalScope?.valueTag ?? '(没有 valueTag)';
+out.occupiedActive = report?.active ?? null;
+out.publishedWritten = report?.written ?? -1;
+out.presentAfterPublish = kit.describeMcpChannel().present;
+dispose();
+out.resolvedAfterDispose = kit.resolveMcp() !== null;
+
+console.log(JSON.stringify(out));
+`;
+
+await check('MCP 通道：候选作用域 + 跨 realm 的表 + 发布永不抛（独立进程探针）', async () => {
+  assert.deepEqual(
+    kit.CHANNEL_SCOPES,
+    ['globalThis', 'process'],
+    '候选作用域清单变了：读侧（oblivion-http-bridge）必须同步（那条契约由桥接自检逐字比对）',
+  );
+
+  // 诊断文件是这次修复的**证据位**：core 说「发布了」、桥接说「看不到」，中间就靠它对照。
+  // 这里直接调写入器（不等 `apply()` 里的 fire-and-forget），断一次完整往返。
+  const diagDir = join(tmp, 'channel-diag');
+  let diagReport = null;
+  const disposeDiag = kit.publishMcp(
+    {
+      apiVersion: 1,
+      owner: 'diag-owner',
+      version: () => '0.0.0-diag',
+      describe: () => ({ apiVersion: 1, owner: 'diag-owner', version: '0.0.0-diag', tools: [], ready: true }),
+      handle: async () => null,
+    },
+    { onReport: (value) => { diagReport = value; } },
+  );
+  disposeDiag();
+  assert.ok(diagReport, 'onReport 必须被调用（发布结果要留痕）');
+  await kit.writeChannelDiag(diagDir, kit.buildChannelDiag('0.0.0-selfcheck', diagReport, 'apply:done'));
+  const diag = JSON.parse(readFileSync(join(diagDir, 'mcp-channel-diag.json'), 'utf8'));
+  assert.equal(diag.version, '0.0.0-selfcheck');
+  assert.equal(diag.stage, 'apply:done', 'stage 是「装载走到哪一步」的解释位');
+  assert.equal(diag.pid, process.pid, 'pid 是跨进程定位的关键字段');
+  assert.equal(typeof diag.env.node, 'string');
+  assert.equal(diag.report.scopes.length, kit.CHANNEL_SCOPES.length, '每个候选作用域都要有一条');
+  assert.equal(typeof diag.report.active, 'string', '这个进程里至少有一个作用域能落上');
+
+  // 两种病态放进独立进程造：本文件里一旦有过 publishMcp()，
+  // 两个候选作用域上的键就都成了不可写/不可配置的 —— 之后既塞不进外来表、
+  // 也造不出「键被别的东西占住」。干净进程是唯一的造法。
+  const probePath = join(tmp, 'channel-probe.mjs');
+  writeFileSync(probePath, CHANNEL_PROBE, 'utf8');
+  const probe = spawnSync(process.execPath, [probePath, new URL('../lib/testkit.js', import.meta.url).href], {
+    encoding: 'utf8',
+  });
+  assert.equal(probe.status, 0, `探针退出码 ${probe.status}\nstdout=${probe.stdout}\nstderr=${probe.stderr}`);
+  const verdict = JSON.parse(String(probe.stdout).trim().split('\n').pop() ?? '{}');
+
+  assert.equal(verdict.threw, undefined, `publishMcp 不许抛，却抛了：${verdict.threw}`);
+  assert.equal(verdict.foreignIsInstanceofMap, false, '前提：vm 里造的表 instanceof 就是 false（否则测不到东西）');
+  assert.equal(verdict.foreignFound, true, '跨 realm 的表里的端点要能解析到（instanceof 假阴性会漏）');
+  assert.equal(verdict.foreignOwner, 'foreign-owner');
+  assert.equal(verdict.occupiedOutcome, 'occupied', `globalThis 被占时应报 occupied，实际 ${verdict.occupiedOutcome}`);
+  assert.equal(verdict.occupiedTag, '[object Number]', '要如实记下键上是什么东西');
+  assert.equal(verdict.occupiedActive, 'process', 'globalThis 落不下时 process 要顶上来');
+  assert.equal(verdict.publishedWritten, 1, '只该落进 process 一个作用域');
+  assert.equal(verdict.presentAfterPublish, true, '落在 process 上，通道仍要可用');
+  assert.equal(verdict.resolvedAfterDispose, false, 'disposer 要清掉落下的那个槽');
+
+  return '清单 globalThis→process · 诊断往返 · 跨 realm 表可解析 · 键被占时不抛且退到 process';
 });
 
 rmSync(tmp, { recursive: true, force: true });

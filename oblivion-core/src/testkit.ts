@@ -49,10 +49,12 @@ export { registerStats } from './stats/index.js';
 export { registerTools } from './tools.js';
 export type { ToolDeps } from './tools.js';
 export {
+  CHANNEL_SCOPES,
   MCP_API_VERSION,
   MCP_CHANNEL,
   MCP_OWNER,
   PROTOCOL_VERSION,
+  buildChannelDiag,
   channelKey,
   clearMcpChannel,
   createMcpEndpoint,
@@ -64,8 +66,10 @@ export {
   TOOLS as MCP_TOOLS,
   toolNames as mcpToolNames,
   toolSchemas as mcpToolSchemas,
+  writeChannelDiag,
 } from './mcp/index.js';
 export type { McpEndpoint, McpEndpointInfo, McpFacade, McpTool } from './mcp/index.js';
+export type { ChannelDiag, ChannelReport, ChannelScopeName, ChannelScopeReport } from './mcp/index.js';
 export { DEFAULT_CONFIG, resolveConfig } from './config.js';
 export { expandHome } from './util/paths.js';
 export { normalizeForHash, sha1, shortHash } from './util/hash.js';
