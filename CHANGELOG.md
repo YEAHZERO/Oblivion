@@ -12,6 +12,59 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [0.2.17] — 设置页的**读写通路**（core 自己挂 HTTP 路由）+ **修一个让自动整理整条死掉的缺陷**
+
+### 🔴 修：`llm` / `agentDefaultModel` 在真宿主上**根本读不到**
+
+0.2.15 把「插件自己调模型」写成了 `optionalService(host, 'llm')`（直接读属性）。这条在**真宿主上必失败**：
+
+- `mount-diag.json` 实测：裸读 `ctx.webServer` **抛** `cannot get property "…" without inject`，
+  而 `inject` 本身是 function ⇒ **未在 `inject` 里声明过的服务，裸读就是抛**；
+- 上游 `vendor/cordis/src/reflect.ts` 的 get 代理逐级向上找 `fiber.store[prop]`，isolate key 对不上直接抛，
+  只有声明过的才走 accessor 那条路；
+- 宿主自己的插件**无一例外**把 `llm` 写进 `inject`（`llm-pi-ai`：`export const inject = ['llm']`）。
+
+于是 `?? null` 把异常吞成了「宿主没有 llm 服务」⇒ **自动整理一次都跑不起来，且不报错**。
+单测全绿是因为桩 ctx 把服务直接挂在 ctx 上（**桩比宿主宽松**的典型坑）。
+
+**修法**：`llm` / `agentDefaultModel` 改经 `ctx.inject([key])` 拿一个**声明过它的 scope**，
+并把 `OrganizeDeps.runtime` 改成**取值函数**（懒取）—— 因为 inject 的回调**可能在装载之后才兑现**，
+抓一份快照会把「稍后才可用的 llm」永久记成 `null`。两条路都留：先试裸读（极简宿主/单测），
+失败再 `inject`。自检里新增一项，把**机制**钉住（`reg.injected` 必须含 `llm`）。
+
+### 新增：设置页的读写通路
+
+- **`src/settings-file.ts`**：`createSettingsService()` —— `describe()`（生效值 + 来源 + **待重启键**
+  + **可写键清单**）与 `patch()`（原子落盘 + `changed` / `rejected` / `restartRequired` 如实回报）。
+  - **`pending` / `restartRequired`**：配置在 `apply()` 时已固化进各子模块，设置层是**下一轮装载**才被读。
+    不把这句说出来，「我改了怎么没变」会被当成 bug（与设计稿 §10-A 的验收口径一致）。
+  - **`rejected`**：`sanitizeSettings()` 是静默丢弃（安全），但设置页需要**知道**自己刚丢了一个键 ——
+    否则「点了保存、界面回成功、值却没变」查不出来。
+- **`src/settings-route.ts`（新）**：`GET|POST /oblivion-core/settings`。**由 core 自己挂**，因为
+  面板的定位是「**只读**数据面，绝不重写别人的文件」，且 Cordis 服务表**跨插件取不到**
+  （实测桥接 `inject: ['oblivion']` 从未激活）⇒ 面板 `ctx.get('oblivion')` 那条路走不通，但可以 `fetch` 同源路由。
+  三处边界：`webServer` 只能经 `ctx.inject` 拿（缺了只 warn）；POST 校验来源（沿用 vimc 已验证那套，
+  桌面端转发会删 `Origin` ⇒ 缺省可信）；写的东西只能落在 `<dataRoot>/settings.json`。
+- **`configSources()` 拆到子键一级**：只翻了 `organize.enabled` 时，`organize.model` 不该也显示成「来自设置页」。
+  现在额外产出 `organize.<子键>` 条目。
+- 门面 `oblivion.settings` 暴露同一个服务（同作用域的消费者与自检可直接用）。
+
+### 修：`patch({ 某键: null })` 的「恢复默认」走不通
+
+`patch()` 原来把 `sanitizeSettings(input)` 的结果交给 `writeSettings()` —— 而 `null` 在 sanitize 里是
+「丢掉这一项」，在 `writeSettings` 里却是「**删掉这个键**，回到下层配置」。提前 sanitize 把 `null` 吃掉了，
+设置页的「恢复默认」永远不生效。改为传**原始输入**（未知键仍由 `writeSettings` 内部的 sanitize 拦掉）。
+
+### 形状统一
+
+`oblivion_organize` 的 `status` 从「顶层 `providers` + `catalogRoutes`」改为嵌套的 **`catalog`**（含
+`providers` / `routes` / `routeSource` / `llmAvailable`），与设置路由的响应同一份形状，设置页只读 `catalog`。
+
+### 验证
+
+- typecheck ✅ / **单测 108 → 121**（+13：设置服务 6 例含「恢复默认」「被拒键不落盘」、设置路由 4 例含
+  403/400/413/405 与缺 `webServer` 降级、懒取 llm 1 例、`configSources` 子键 1 例、`rejectedKeys` 1 例）/ **自检 36 → 37** ✅。
+
 ## [0.2.16] — 设置页的**数据源**：可选模型清单经宿主注册表露出（自定义 provider 一视同仁）
 
 **起因**（所有者 2026-10-17，重启后）：设置页要能选 **Agnes** 这类**自定义 provider**

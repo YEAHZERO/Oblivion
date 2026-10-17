@@ -407,32 +407,63 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 `ctx.credentials` 解析 —— 这正是「复用 DSH 里可用的地址与密钥」，且比插件自己去读凭据文件更安全。
 宿主**没有** `llm` 服务时只**降级**（工具报不可用），插件其余部分照常。
 
-#### 设置页的数据源：`catalog()`（0.2.16）
+> ⚠️ **`llm` 只能经 `ctx.inject(['llm'])` 拿**（0.2.17 修正）。未在 `inject` 里声明过的服务，
+> **裸读会抛** `cannot get property "…" without inject`（上游 `vendor/cordis/src/reflect.ts` 的 get 代理；
+> `mount-diag.json` 实测；宿主自己的插件诸如 `llm-pi-ai` 也都写 `inject = ['llm']`）。
+> 0.2.15 的 `optionalService('llm')` 正因此把异常吞成「宿主没有 llm 服务」——**整条自动整理静默死掉**，
+> 而单测全绿（桩 ctx 把服务直接挂在 ctx 上，比真宿主宽松）。现在走
+> `lazyService()`：先试裸读（极简宿主/单测），失败再 `ctx.inject`；且**每次现取**，
+> 因为 inject 的回调可能**装载之后**才兑现。
 
-设置页的**模型下拉框**（含「自动切换」的备用路）由 `OrganizeService.catalog()` 填 ——
+#### 设置页的**读写通路**（0.2.16 数据源 → 0.2.17 完整通路）
+
+**读**：设置页的模型下拉框（含「自动切换」的备用路）由 `OrganizeService.catalog()` 填 ——
 它**直接读宿主的 provider 注册表**（`ctx.llm.listProviders()` + `listModels()`），
 所以**用户自定义 provider 与官方 provider 一视同仁**：profile 里经 `dsh-llm-pi-ai` 的
 `config.providers` 登记、`baseURL` 指向自建服务的那些（本机的 `Agnes`），列出来就能选，
 **插件不做白名单**。
 
+**写**：`SettingsService.patch()` 写 `<dataRoot>/settings.json`（第三层配置）。
+两条通路由 core 自己拥有 —— 面板的定位是「**只读**数据面，绝不重写别人的文件」，
+且 Cordis 服务表**跨插件取不到**（实测桥接 `inject: ['oblivion']` 从未激活），
+所以面板不 `ctx.get('oblivion')`，而是 **`fetch` core 自己挂的同源路由**：
+
+```http
+GET  /oblivion-core/settings     # 生效值 + 来源 + 待重启键 + 可写键清单 + catalog（一次给全，零请求）
+POST /oblivion-core/settings     # { "patch": { "mdRoot": "…", "organize": { "enabled": true } } }
+```
+
 ```jsonc
-// oblivious_organize 的 status 模式（或门面 organize.catalog()）大致回这样：
+// GET 的响应（等于 SettingsSnapshot + catalog）：
 {
-  "enabled": false,
-  "routeSource": "host-default",             // 我配的(config) / 宿主默认的(host-default) / 都没有(none)
-  "routes": [{ "provider": "agnes", "model": "agnes-2.5-flash" }],
-  "providers": [
-    { "id": "deepseek", "name": "DeepSeek", "models": [{ "id": "deepseek-chat", "name": "deepseek-chat" }] },
-    { "id": "agnes",    "name": "Agnes",    "models": [{ "id": "agnes-2.5-flash", "name": "agnes-2.5-flash" },
-                                                       { "id": "agnes-3.0-flash", "name": "agnes-3.0-flash" }] }
-  ]
+  "ok": true, "version": "0.2.17",
+  "path": "C:/Users/…/.oblivion/data/settings.json",
+  "values":   { "organize": { "enabled": true } },              // 设置层原始值（就是这个文件）
+  "sources":  { "mdRoot": "plugin", "organize.enabled": "settings", "organize.maxTokens": "default" },
+  "effective": { "mdRoot": "C:/Library/…", "organize": { "enabled": false, … } },  // **正在跑**的那份
+  "writable": ["mdRoot", "organize", …],                        // dataRoot 不在其中
+  "pending":  ["organize.enabled"],                             // 要**重启 DSH** 才生效的键
+  "catalog":  { "providers": [ { "id": "agnes", "name": "Agnes", "models": [ … ] } ],
+                "routes": [ … ], "routeSource": "config", "llmAvailable": true }
 }
 ```
 
-两条边界：① **零请求** —— 读的是注册表，不是模型接口，所以**关着也能调**（挑模型不该要求先开自动整理）；
-② 某个 provider 的 `listModels` 抛错时它**仍被列出**（只是模型为空），不拖垮整份清单。
+```jsonc
+// POST 的响应（在前者之上加三项）：
+{ "saved": true, "changed": ["organize.enabled"], "rejected": ["bogus"], "restartRequired": true }
+```
 
-> 尚未编码：**设置页 UI**（路径 / 模型选择 / 自动切换三项 —— 其数据源已在上面就位）与 `organize.digest` 作用域。
+三处**刻意的边界**：
+
+① **零请求** —— `catalog` 读的是宿主注册表，不是模型接口，所以**关着也能调**（挑模型不该要求先开自动整理）；
+② **`pending` / `restartRequired` 必须报** —— 配置在 `apply()` 时就固化进各子模块了，设置层是**下一轮装载**才被读。
+不把这句说出来，「我改了怎么没变」会被当成 bug（设计稿 §10-A 的验收口径也是「取消/重启后 core 读到的是新值」）；
+③ **写的东西只能落在 `<dataRoot>/settings.json`** —— `dataRoot` 不可覆盖（住址不能由住址自己决定），
+被丢掉的键名**如实回报**（`rejected`），POST 校验来源（桌面端转发会删 `Origin` ⇒ 缺省可信，
+其余只放行本机与 `dsh-app://`）；缺 `webServer` 时**只记一条 warn**，插件其余部分照常。
+
+> 尚未编码：**设置页 UI**（路径 / 模型选择 / 自动切换三项 —— 其**读写通路已在上面就位**，
+> 停窗那一刀只剩「画界面 + `fetch` 这两条路由」）与 `organize.digest` 作用域。
 
 ### 9.5 观测与调参（先跑够几天，再动阈值）
 
