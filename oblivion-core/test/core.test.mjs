@@ -103,7 +103,7 @@ describe('产物形状', () => {
 
 /** 只注册计数用的最小 ctx：不碰磁盘，不产生副作用。 */
 function fakeCtx() {
-  const seen = { tools: [], effects: [], events: [], sections: [] };
+  const seen = { tools: [], effects: [], events: [], sections: [], sectionDefs: [] };
   return {
     seen,
     ctx: {
@@ -111,9 +111,13 @@ function fakeCtx() {
       systemPrompt: {
         section: (d) => {
           seen.sections.push(d.name);
+          seen.sectionDefs.push(d);
           return () => {};
         },
-        getSectionOrder: () => 50,
+        // 如实模拟真宿主：DSH 的排位表只认识它自己的段落名，未知名回 undefined
+        // （旧桩回 50，替宿主答了它不会给的数，于是真宿主里 section() 抛
+        //  `order must be a finite number` 而闸门全绿 —— 见 src/prompt.ts）。
+        getSectionOrder: () => undefined,
       },
       logger: {},
       effect: (fn, label) => {
@@ -123,6 +127,21 @@ function fakeCtx() {
       on: (event) => seen.events.push(event),
     },
   };
+}
+
+/**
+ * 在系统临时目录里 apply。
+ *
+ * **必须**：`mod.apply(ctx, {})` 会落到 `DEFAULT_CONFIG`（`~/.oblivion/data` +
+ * `C:/Library/那些渐渐被遗忘`），于是单元测试会往**真实数据目录**写
+ * `status.json` / `mount-diag.json` / `mcp-channel-diag.json`（2026-10-17 查到的
+ * `status.json` 撕裂根因：装载快照与本测试的交错写入），还会在真实知识库里建分类目录。
+ * 返回本次用的根目录，调用方负责 `cleanupDir()`。
+ */
+function applyInTemp(ctx, config = {}) {
+  const root = mkdtemp(join(tmpdir(), 'oblivion-apply-'));
+  mod.apply(ctx, { dataRoot: join(root, 'data'), mdRoot: join(root, 'kb'), ...config });
+  return root;
 }
 
 describe('装配（apply）', () => {
@@ -150,24 +169,42 @@ describe('装配（apply）', () => {
 
   it('注册一个 systemPrompt 段落（用于认知陪伴注入）', () => {
     const { ctx, seen } = fakeCtx();
-    mod.apply(ctx, {});
-    assert.deepEqual(seen.sections, ['OBLIVION_COGNITION']);
+    const root = applyInTemp(ctx);
+    try {
+      assert.deepEqual(seen.sections, ['OBLIVION_COGNITION']);
+      // 回归位：宿主的排位表不认识我们的名字（桩现在如实回 undefined），
+      // 而 DSH 的 section() 对非有限 order 直接抛错 —— 必须用兜底位。
+      assert.ok(
+        Number.isFinite(seen.sectionDefs[0]?.order),
+        `段落 order 必须是有限数，实际 ${String(seen.sectionDefs[0]?.order)}`,
+      );
+    } finally {
+      cleanupDir(root);
+    }
   });
 
   it('监听 session/event，且每个副作用都走 ctx.effect（卸载无残留）', () => {
     const { ctx, seen } = fakeCtx();
-    mod.apply(ctx, {});
-    assert.ok(seen.events.includes('session/event'));
-    assert.ok(seen.effects.length >= 6, '期望每个模块都有自己的 effect 清理位');
-    assert.ok(seen.effects.every((label) => /^oblivion-core: /.test(label)));
+    const root = applyInTemp(ctx);
+    try {
+      assert.ok(seen.events.includes('session/event'));
+      assert.ok(seen.effects.length >= 6, '期望每个模块都有自己的 effect 清理位');
+      assert.ok(seen.effects.every((label) => /^oblivion-core: /.test(label)));
+    } finally {
+      cleanupDir(root);
+    }
   });
 
   it('关闭开关后不再注册 feedback / perspective 相关副作用', () => {
     const withBoth = fakeCtx();
-    mod.apply(withBoth.ctx, { enableFeedback: false, enablePerspective: false });
-    const effects = withBoth.seen.effects.join('\n');
-    assert.ok(!effects.includes('feedback teardown'), 'enableFeedback=false 时不应注册 feedback');
-    assert.ok(!effects.includes('perspective teardown'), 'enablePerspective=false 时不应注册 perspective');
+    const root = applyInTemp(withBoth.ctx, { enableFeedback: false, enablePerspective: false });
+    try {
+      const effects = withBoth.seen.effects.join('\n');
+      assert.ok(!effects.includes('feedback teardown'), 'enableFeedback=false 时不应注册 feedback');
+      assert.ok(!effects.includes('perspective teardown'), 'enablePerspective=false 时不应注册 perspective');
+    } finally {
+      cleanupDir(root);
+    }
   });
 
   it('提示段落是惰性求值的函数（陪伴内容只在下一轮生效）', () => {
@@ -177,10 +214,14 @@ describe('装配（apply）', () => {
       captured = d;
       return () => {};
     };
-    mod.apply(ctx, {});
-    assert.equal(typeof captured.text, 'function');
-    assert.equal(captured.text({ agent: undefined }), '', '没有 agent 时不注入任何内容');
-    assert.ok(captured.text({ agent: {} }).includes('Oblivion 认知陪伴规则'));
+    const root = applyInTemp(ctx);
+    try {
+      assert.equal(typeof captured.text, 'function');
+      assert.equal(captured.text({ agent: undefined }), '', '没有 agent 时不注入任何内容');
+      assert.ok(captured.text({ agent: {} }).includes('Oblivion 认知陪伴规则'));
+    } finally {
+      cleanupDir(root);
+    }
   });
 
   it('装载即建目录：mdRoot 一经配置就自动创建 01_问答沉淀/ 等分类目录', async () => {
