@@ -18,6 +18,8 @@
  * 本文件是**纯函数**（不碰 DOM、不引 `node:`），因此 `lib/testkit.js` 能在 Node 里直接断言它。
  */
 
+import { relativeTime } from './format.js';
+
 /** 面板收到的条目形状（Node 半边 `ItemRow` 的宽松视图）。 */
 export interface KnowledgeItemLike {
   id?: string;
@@ -102,10 +104,16 @@ export interface KnowledgeRow {
   /** 归并到的主题页（来自笔记里的回链；条目行没有）。 */
   wiki: KnowledgePage[];
   /**
-   * 笔记自己写的日期（`updated_at` 优先，退化 `created_at`）；笔记没写就是空串。
-   * 显示时用 `dateText()`：空串按 `at` 折算成本地日期。
+   * 笔记自己写的**入库日**（frontmatter 的 `created_at`；整理件退化到 `>Date :` 行）；
+   * 笔记没写就是空串。显示时用 `dateText()`：空串按 `at` 折算成本地日期。
+   *
+   * 为什么是 `created_at` 而不是 `updated_at`（所有者 2026-10-17 裁定）：这一栏与「更新于」
+   * 并列显示，两个时间轴要各表一件事 —— 入库日回答「这条知识什么时候进来的」，
+   * 更新于（`updatedText()`）回答「最后一次动是什么时候」。早先两者合成一个 `date`
+   * （取 `updated_at`），而 `updated_at` 在批次重写（改名回填 / 标签治理）后**不会刷新**，
+   * 于是列表里出现「3 小时前 · 日期：2026-10-06」这种看着自相矛盾的一行。
    */
-  date: string;
+  createdDate: string;
 }
 
 function text(value: unknown): string {
@@ -199,9 +207,11 @@ function textList(value: unknown): string[] {
  * 匹配规则刻意保守：**只用「主题 == 笔记名」或「标题 == 笔记名」**（去扩展名、忽略大小写）。
  * 匹配不到就各成一行 —— 面板宁可多一行，也不把两个不相干的东西并到一起。
  *
- * 0.0.14 起每行还带「相关主题 / 关键词 / 日期」（所有者要求显示在每个文档下方）：
- * 关键词 = 笔记 tags ∪ 同主题条目 tags；日期 = 笔记自己写的（没写就留空，渲染时按 `at` 折算）；
- * 相关主题 = 笔记里 `> Wiki： [[标题]]` 的回链，用主题页列表把标题**解析成可点开的路径**。
+ * 0.0.14 起每行还带「相关主题 / 关键词 / 入库」+「更新于」（所有者要求显示在每个文档下方）：
+ * 关键词 = 笔记 tags ∪ 同主题条目 tags；入库 = 笔记自己写的 `created_at`（没写就按 `at` 折算）；
+ * 更新于 = 这一行最后一次动的时间（0.0.16 起把原先混在一起的「日期」拆成这两段，
+ * 见 `KnowledgeRow.createdDate` 的注释）；相关主题 = 笔记里 `> Wiki： [[标题]]` 的回链，
+ * 用主题页列表把标题**解析成可点开的路径**。
  */
 export function mergeKnowledge(input: {
   notes?: NoteLike[] | null;
@@ -260,7 +270,7 @@ export function mergeKnowledge(input: {
         const path = pages.get(lower(title));
         return path === undefined ? { title } : { title, path };
       }),
-      date: text(note.updatedAt) !== '' ? text(note.updatedAt) : text(note.createdAt),
+      createdDate: text(note.createdAt) !== '' ? text(note.createdAt) : text(note.updatedAt),
     });
   };
 
@@ -298,9 +308,9 @@ export function mergeKnowledge(input: {
       sources: num(primary?.sources),
       topic: text(primary?.topic),
       tags,
-      // 没有笔记文件就没有回链可解析；日期留空，渲染时按 `at` 折算。
+      // 没有笔记文件就没有回链可解析；入库日留空，渲染时按 `at` 折算。
       wiki: [],
-      date: '',
+      createdDate: '',
     });
   }
 
@@ -322,7 +332,7 @@ function isDigest(item: KnowledgeItemLike | undefined): boolean {
 }
 
 /**
- * 「文档下方」那一行的三段：相关主题 / 关键词 / 日期。
+ * 「文档下方」那一行的分段：相关主题 / 关键词 / 入库 / 更新于。
  *
  * 拆成 parts 而不是拼一个字符串，是因为**相关主题要能点开**（Panel 渲染成链接）；
  * `detailText()` 是它的纯文本形态，供测试与自检直接断言。
@@ -352,9 +362,9 @@ export function wikiText(row: KnowledgeRow): string {
   return shown.join('、') + (rest > 0 ? ' +' + rest : '');
 }
 
-/** `2026-10-06`：优先笔记自己写的日期，否则把 `at` 折算成本地日期（没有时间就是空串）。 */
+/** `2026-10-06`：这一行的**入库日**；笔记没写就按 `at` 折算成本地日期（没有时间就是空串）。 */
 export function dateText(row: KnowledgeRow): string {
-  const written = text(row.date);
+  const written = text(row.createdDate);
   if (written !== '') return written;
   if (!Number.isFinite(row.at) || row.at <= 0) return '';
   const at = new Date(row.at);
@@ -362,21 +372,34 @@ export function dateText(row: KnowledgeRow): string {
   return at.getFullYear() + '-' + pad(at.getMonth() + 1) + '-' + pad(at.getDate());
 }
 
+/**
+ * `3 小时前`：这一行**最后一次动**的时间（笔记 mtime 与条目时间的最大值，见 `mergeKnowledge`）。
+ *
+ * 与 `dateText()` 分工：`dateText()` 是入库日（绝对日期），这里是「更新于」（相对时间）。
+ * 两者并列才解释得清「3 小时前 与 2026-10-06 为什么同时成立」。
+ */
+export function updatedText(row: KnowledgeRow, now: number = Date.now()): string {
+  if (!Number.isFinite(row.at) || row.at <= 0) return '';
+  return relativeTime(row.at, now);
+}
+
 /** 「文档下方」那一行的分段；缺一段就不给那一段（不拿「暂无」凑数）。 */
-export function detailParts(row: KnowledgeRow): DetailPart[] {
+export function detailParts(row: KnowledgeRow, now: number = Date.now()): DetailPart[] {
   const parts: DetailPart[] = [];
   const wiki = wikiText(row);
   parts.push({ label: '相关主题', text: wiki !== '' ? wiki : '未归并', wiki: (row.wiki ?? []).slice(0, WIKI_MAX) });
   const tags = keywordText(row);
   if (tags !== '') parts.push({ label: '关键词', text: tags });
-  const date = dateText(row);
-  if (date !== '') parts.push({ label: '日期', text: date });
+  const created = dateText(row);
+  if (created !== '') parts.push({ label: '入库', text: created });
+  const updated = updatedText(row, now);
+  if (updated !== '') parts.push({ label: '更新于', text: updated });
   return parts;
 }
 
-/** 上面那一段的纯文本形态：`相关主题：X · 关键词：#a #b · 日期：2026-10-06`。 */
-export function detailText(row: KnowledgeRow): string {
-  return detailParts(row)
+/** 上面那一段的纯文本形态：`相关主题：X · 关键词：#a #b · 入库：2026-10-06 · 更新于：3 小时前`。 */
+export function detailText(row: KnowledgeRow, now: number = Date.now()): string {
+  return detailParts(row, now)
     .map((part) => part.label + '：' + part.text)
     .join(' · ');
 }

@@ -144,7 +144,7 @@ Invoke-WebRequest 'http://127.0.0.1:19387/oblivion-panel/status' -UseBasicParsin
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `dataRoot` | `~/.oblivion/data` | 读 core 落盘数据的位置 |
-| `fallbackMdRoot` | `C:/Library/那些渐渐被遗忘` | core 的 `status.json` 缺失时的知识库兜底位置 |
+| `fallbackMdRoot` | `~/OblivionKB` | core 的 `status.json` 缺失时的知识库兜底位置（**与 core 的 `mdRoot` 默认值保持一致**；`~/` 写法在组装快照时展开） |
 | `recentLimit` | `10` | 「最近判定」列表的**窗口**条数（1..50）；默认只显示最近 6 条，其余按需展开（判定曲线另有上限 240 点，不可配） |
 | `routePath` | `/oblivion-panel/status` | 只读路由路径 |
 

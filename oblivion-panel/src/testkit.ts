@@ -47,6 +47,7 @@ export {
   keywordText,
   wikiText,
   dateText,
+  updatedText,
   KEYWORD_MAX,
   WIKI_MAX,
   KNOWLEDGE_ITEM_LIMIT,

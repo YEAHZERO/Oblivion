@@ -162,14 +162,16 @@ function kpi(label: string, value: JSX.Element | string): JSX.Element {
 }
 
 /**
- * 一行的第二行说明：时间 · 状态 · 落地 · 版本 · 来源 · 主题。
+ * 一行的第二行说明：状态 · 落地 · 版本 · 来源 · 主题。
+ *
+ * 时间**不在这里**（0.0.16 起移到下面 `detailLine()` 的「更新于」）：早先这里显示相对时间、
+ * 下面显示入库日，两个时间轴并排却都叫「时间/日期」，读起来像自相矛盾（所有者 2026-10-17）。
  *
  * 合栏（方案 A）之后这一行才是条目栏的价值所在 —— 标题在笔记里已经有了，
  * 条目独有的是**版本与状态**（被降级的旧版、`impl` 落地状态、共几版）。
  */
 function rowMeta(row: KnowledgeRow): string {
   const parts: string[] = [];
-  if (row.at > 0) parts.push(relativeTime(row.at));
   const status = itemStatusLabel(row.status);
   if (status !== '') parts.push(status);
   const impl = implLabel(row.impl);
@@ -182,7 +184,7 @@ function rowMeta(row: KnowledgeRow): string {
 }
 
 /**
- * 一行的第三行：**相关主题 / 关键词 / 日期**（所有者 2026-10-06：显示在每个文档下方）。
+ * 一行的第三行：**相关主题 / 关键词 / 入库 / 更新于**（所有者 2026-10-06：显示在每个文档下方）。
  *
  * 文案只有一份（`detailParts()`，纯函数、可测），这里只负责把「相关主题」那一段变成链接：
  * 宿主已把笔记里的 `> Wiki： [[标题]]` 回链解析成主题页路径（见 `snapshot.ts` 的 `parseNoteHead`）。

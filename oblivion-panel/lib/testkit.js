@@ -545,7 +545,7 @@ function mergeKnowledge(input) {
         const path = pages.get(lower(title));
         return path === void 0 ? { title } : { title, path };
       }),
-      date: text(note.updatedAt) !== "" ? text(note.updatedAt) : text(note.createdAt)
+      createdDate: text(note.createdAt) !== "" ? text(note.createdAt) : text(note.updatedAt)
     });
   };
   for (const note of input.notes ?? []) collect(note, "note");
@@ -579,9 +579,9 @@ function mergeKnowledge(input) {
       sources: num(primary?.sources),
       topic: text(primary?.topic),
       tags,
-      // 没有笔记文件就没有回链可解析；日期留空，渲染时按 `at` 折算。
+      // 没有笔记文件就没有回链可解析；入库日留空，渲染时按 `at` 折算。
       wiki: [],
-      date: ""
+      createdDate: ""
     });
   }
   return rows.sort((left, right) => right.at - left.at || left.title.localeCompare(right.title));
@@ -610,25 +610,31 @@ function wikiText(row) {
   return shown.join("\u3001") + (rest > 0 ? " +" + rest : "");
 }
 function dateText(row) {
-  const written = text(row.date);
+  const written = text(row.createdDate);
   if (written !== "") return written;
   if (!Number.isFinite(row.at) || row.at <= 0) return "";
   const at = new Date(row.at);
   const pad = (value) => String(value).padStart(2, "0");
   return at.getFullYear() + "-" + pad(at.getMonth() + 1) + "-" + pad(at.getDate());
 }
-function detailParts(row) {
+function updatedText(row, now = Date.now()) {
+  if (!Number.isFinite(row.at) || row.at <= 0) return "";
+  return relativeTime(row.at, now);
+}
+function detailParts(row, now = Date.now()) {
   const parts = [];
   const wiki = wikiText(row);
   parts.push({ label: "\u76F8\u5173\u4E3B\u9898", text: wiki !== "" ? wiki : "\u672A\u5F52\u5E76", wiki: (row.wiki ?? []).slice(0, WIKI_MAX) });
   const tags = keywordText(row);
   if (tags !== "") parts.push({ label: "\u5173\u952E\u8BCD", text: tags });
-  const date = dateText(row);
-  if (date !== "") parts.push({ label: "\u65E5\u671F", text: date });
+  const created = dateText(row);
+  if (created !== "") parts.push({ label: "\u5165\u5E93", text: created });
+  const updated = updatedText(row, now);
+  if (updated !== "") parts.push({ label: "\u66F4\u65B0\u4E8E", text: updated });
   return parts;
 }
-function detailText(row) {
-  return detailParts(row).map((part) => part.label + "\uFF1A" + part.text).join(" \xB7 ");
+function detailText(row, now = Date.now()) {
+  return detailParts(row, now).map((part) => part.label + "\uFF1A" + part.text).join(" \xB7 ");
 }
 var KNOWLEDGE_ITEM_LIMIT = 5;
 function hasNote(row) {
@@ -828,5 +834,6 @@ export {
   summarizeDecisions,
   thresholdOf,
   topBlocker,
+  updatedText,
   wikiText
 };

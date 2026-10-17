@@ -450,10 +450,15 @@ describe('知识库合栏（笔记为骨架 + 条目状态/版本）', () => {
 /**
  * 每个文档下方那一行（所有者 2026-10-06）：「相关主题和关键词、日期」。
  *
- * 三段都来自**笔记头部**（frontmatter / `>Date` / `>Tags` / `> Wiki：`），解析在宿主半边
+ * 2026-10-17 所有者裁定把「日期」**拆成两段**：`入库`（笔记 `created_at`，绝对日期）+
+ * `更新于`（这一行最新动静，相对时间）—— 因为两者来源不同，并排却都叫「日期」时读起来自相矛盾。
+ *
+ * 四段都来自**笔记头部**（frontmatter / `>Date` / `>Tags` / `> Wiki：`），解析在宿主半边
  * （`parseNoteHead`），渲染文案在 `detailParts()` —— 这里把两边都钉住。
  */
-describe('文档下方：相关主题 / 关键词 / 日期', () => {
+describe('文档下方：相关主题 / 关键词 / 入库 / 更新于', () => {
+  /** 固定「现在」，让相对时间可断言（`rows[0].at` 就是 500）。 */
+  const NOW = 500;
   const items = [{ id: 'ts-a', topic: '同名主题', title: '同名主题', created_at: 100, status: 'active', tags: ['dsh', 'panel'] }];
   const wikis = [
     { name: '主题页甲.md', path: 'X:/kb/02_Wiki页面/主题页甲.md' },
@@ -513,44 +518,52 @@ describe('文档下方：相关主题 / 关键词 / 日期', () => {
     const rows = kit.mergeKnowledge({ notes, wikis, items });
     assert.equal(rows[0].wiki.length, 3);
     assert.equal(rows[0].wiki[0].path, 'X:/kb/02_Wiki页面/主题页甲.md');
-    const parts = kit.detailParts(rows[0]);
+    const parts = kit.detailParts(rows[0], NOW);
     assert.equal(parts[0].label, '相关主题');
     assert.equal(parts[0].text, '主题页甲、主题页乙 +1', '多于 2 个折成 +N');
     assert.deepEqual(parts[0].wiki.map((page) => page.title), ['主题页甲', '主题页乙'], '可点开的与文本一致（前两个）');
+    assert.equal(parts[2].label, '入库');
+    assert.equal(parts[2].text, '2026-10-05', '入库日取笔记的 created_at');
+    assert.equal(parts[3].label, '更新于');
+    assert.equal(parts[3].text, '刚刚');
 
     const unknown = { ...rows[0], wiki: [{ title: '没有文件的主题页' }] };
     assert.equal(kit.wikiText(unknown), '没有文件的主题页');
     assert.equal(
-      kit.detailText(unknown),
-      '相关主题：没有文件的主题页 · 关键词：#cordis #dsh #panel · 日期：2026-10-06',
-      '三段拼成一行（顺序固定）',
+      kit.detailText(unknown, NOW),
+      '相关主题：没有文件的主题页 · 关键词：#cordis #dsh #panel · 入库：2026-10-05 · 更新于：刚刚',
+      '四段拼成一行（顺序固定）',
     );
   });
 
-  it('日期：优先笔记写的，没有就把时间戳折算成本地日期；都没有就不显示这一段', () => {
+  it('入库日取笔记写的 created_at；没有就按时间戳折算；都没有就不显示这两段', () => {
     const rows = kit.mergeKnowledge({ notes, wikis, items });
-    assert.equal(rows[0].date, '2026-10-06', '笔记写了两天，取 updated_at');
-    assert.equal(kit.dateText(rows[0]), '2026-10-06');
-    const bare = { key: 'k', title: 't', at: new Date(2026, 9, 6, 12, 0, 0).getTime(), source: 'item', tags: [], wiki: [], date: '' };
+    assert.equal(rows[0].createdDate, '2026-10-05', '入库日取 created_at，不是 updated_at');
+    assert.equal(kit.dateText(rows[0]), '2026-10-05');
+    assert.equal(kit.updatedText(rows[0], NOW), '刚刚', '更新于取这一行的最新动静');
+    const bare = { key: 'k', title: 't', at: new Date(2026, 9, 6, 12, 0, 0).getTime(), source: 'item', tags: [], wiki: [], createdDate: '' };
     assert.equal(kit.dateText(bare), '2026-10-06', '没有笔记日期时按 at 折算（本地时区）');
-    assert.equal(kit.dateText({ ...bare, at: 0 }), '', '没有时间就不给日期');
+    assert.equal(kit.dateText({ ...bare, at: 0 }), '', '没有时间就不给入库日');
+    assert.equal(kit.updatedText(bare, bare.at), '刚刚');
+    assert.equal(kit.updatedText({ ...bare, at: 0 }), '', '没有时间就不给「更新于」');
     assert.equal(kit.detailText({ ...bare, at: 0 }), '相关主题：未归并', '没有主题页就说「未归并」（这是要跑一轮 wiki 的信号）');
   });
 
-  it('只有笔记、没有条目时也有全部三段（不依赖条目）', () => {
+  it('只有笔记、没有条目时也有全部四段（不依赖条目）', () => {
     const rows = kit.mergeKnowledge({ notes, wikis });
-    assert.equal(kit.detailText(rows[0]), '相关主题：主题页甲、主题页乙 +1 · 关键词：#cordis #dsh · 日期：2026-10-06');
+    assert.equal(kit.detailText(rows[0], NOW), '相关主题：主题页甲、主题页乙 +1 · 关键词：#cordis #dsh · 入库：2026-10-05 · 更新于：刚刚');
   });
 
-  it('仅入库的行也有关键词与日期（条目里的 tags / updated_at）', () => {
+  it('仅入库的行也有关键词、入库与更新于（条目里的 tags / created_at）', () => {
+    const at = new Date(2026, 9, 6, 12, 0, 0).getTime();
     const rows = kit.mergeKnowledge({
       items: [
-        { id: 'ts-z', topic: '孤条目', title: '孤条目', created_at: new Date(2026, 9, 6, 12, 0, 0).getTime(), status: 'active', tags: ['mcp', 'bridge'] },
+        { id: 'ts-z', topic: '孤条目', title: '孤条目', created_at: at, status: 'active', tags: ['mcp', 'bridge'] },
       ],
     });
     assert.equal(rows.length, 1);
     assert.deepEqual(rows[0].wiki, [], '没有笔记文件就没有回链');
-    assert.equal(kit.detailText(rows[0]), '相关主题：未归并 · 关键词：#mcp #bridge · 日期：2026-10-06');
+    assert.equal(kit.detailText(rows[0], at), '相关主题：未归并 · 关键词：#mcp #bridge · 入库：2026-10-06 · 更新于：刚刚');
   });
 });
 

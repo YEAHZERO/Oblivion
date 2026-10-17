@@ -365,7 +365,7 @@ await check('知识库合栏：笔记为骨架 + 条目状态/版本，无笔记
   return '单栏 ' + rows.length + ' 行（笔记骨架 / 版本聚合 / 仅入库补行 / 默认折叠 ' + view.hidden + ' 行）';
 });
 
-await check('文档下方：相关主题 / 关键词 / 日期（笔记头部解析 + 回链解析成路径）', async () => {
+await check('文档下方：相关主题 / 关键词 / 入库 / 更新于（笔记头部解析 + 回链解析成路径）', async () => {
   const kit = await import(pathToFileURL(kitPath).href);
   const head = kit.parseNoteHead(
     [
@@ -398,14 +398,14 @@ await check('文档下方：相关主题 / 关键词 / 日期（笔记头部解�
   assert.deepEqual(rows[0].tags, ['cordis', 'dsh'], '关键词 = 笔记 tags ∪ 同主题条目 tags');
   assert.equal(rows[0].wiki[0].path, 'K:/02_Wiki页面/主题页甲.md', '回链标题要解析成路径（这样才点得开）');
   assert.equal(
-    kit.detailText(rows[0]),
-    '相关主题：主题页甲 · 关键词：#cordis #dsh · 日期：2026-10-06',
-    '三段拼成文档下方那一行',
+    kit.detailText(rows[0], 2),
+    '相关主题：主题页甲 · 关键词：#cordis #dsh · 入库：2026-10-06 · 更新于：刚刚',
+    '四段拼成文档下方那一行',
   );
   assert.equal(kit.keywordText({ ...rows[0], tags: ['a', 'b', 'c', 'd', 'e', 'f'] }), '#a #b #c #d #e +1', '多于 5 个折成 +N');
   const bare = { key: 'k', title: 't', at: 0, source: 'item', tags: [], wiki: [] };
   assert.equal(kit.detailText(bare), '相关主题：未归并', '没有主题页就说「未归并」（要跑一轮 wiki 的信号）');
-  return '三段：' + kit.detailText(rows[0]);
+  return '四段：' + kit.detailText(rows[0], 2);
 });
 
 await check('判定曲线：纵轴 0..1 + 阈值线 + 趋势线，no-qa 不落点', async () => {

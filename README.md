@@ -38,7 +38,7 @@
 | [`@oblivion/brand`](oblivion-brand/README.md) | **0.1.7** | 品牌槽位接管（侧栏与会话 Hero 换成北极星，**零 Fork**）；可把「插件市场」这类面板挂到侧栏；设置页**一键重启 DSH** |
 | [`@oblivion/vimc`](oblivion-vimc/README.md) | **0.2.10** | 键盘导航（`w/s` 翻页 · `f` 链接提示 · `/` 查找 · `i`/`Esc` 输入框 · `Ctrl+方向键` 像素滚动）；按 [Vimium-C](https://github.com/gdh1995/vimium-c) 语义实现（**未复制代码**），**可直接导入 `vimium_c-*.json`**；自带设置页与开销自证 |
 | [`@oblivion/core`](oblivion-core/README.md) | **0.2.12** | **认知层内核**：knowledge / qa-loop / perspective / feedback / graph / profile + digest / retitle / wiki / stats；**9 个模型面工具** + MCP 协议面（浏览器扩展那条路） |
-| [`@oblivion/panel`](oblivion-panel/README.md) | **0.0.15** | 侧栏观测面板（嵌 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar)）：捕获率 / 判定曲线 / 调参建议 / **知识库单栏** |
+| [`@oblivion/panel`](oblivion-panel/README.md) | **0.0.16** | 侧栏观测面板（嵌 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar)）：捕获率 / 判定曲线 / 调参建议 / **知识库单栏** |
 | [`@oblivion/http-bridge`](oblivion-http-bridge/README.md) | **0.1.3** | 浏览器扩展接入：固定端口 `42081` 上的 HTTP 传输层（鉴权 / CORS / 体积 / 健康路由），**不含 MCP 逻辑** |
 | [`@oblivion/daily-life`](oblivion-daily-life/README.md) | **0.0.1** | 「**有数**」物品服役账本：日均成本 / 服役进度 / 闲置天数 |
 | [`@oblivion/bundle`](oblivion-bundle/README.md) | **0.0.1** | 安装入口（插件清单 + 预设配置；**不是插件**） |
@@ -260,6 +260,8 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 | 未发版 | 2026-10-06 起 | 新增 `@oblivion/panel`（侧栏观测面板）、`@oblivion/daily-life`（有数）、`@oblivion/bundle`（安装入口） |
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.12**：`mcp-channel-diag.json` 落盘**串行化**（`apply:done` 不再被后发先至吞掉）+ 失败不再静默；工具链加**构建守卫**（DSH 活着拒绝构建）。**产品版本未递增**：patch-only 规则下各插件自行递增，见 [`CHANGELOG.md`](CHANGELOG.md) |
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.13**：`mdRoot` 默认值回到 **`~/OblivionKB`**（C 方案原意），本机既有知识库改由 **profile 用户层覆盖**（DEC-029 的语义从「代码默认值」降级为「本机配置」） |
+| 未发版 | 2026-10-17 | `@oblivion/core` **0.2.14**：**工具注册可注销** —— 重新装载不再撞 `already registered`、不再让 `apply()` 整个失败（真机现场见 [`CHANGELOG.md`](CHANGELOG.md)） |
+| 未发版 | 2026-10-17 | `@oblivion/panel` **0.0.16**：知识库条目的日期**拆成「入库 + 更新于」两段**（各标来源）；兜底知识库路径改为 `~/OblivionKB` |
 
 ## 许可证
 

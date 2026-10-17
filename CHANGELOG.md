@@ -12,6 +12,29 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/panel` v0.0.16：知识库条目的「日期」拆成**入库 + 更新于**；兜底知识库路径改为 `~/OblivionKB`
+
+两件事，都来自 2026-10-17 所有者反馈。
+
+**① 「日期」显示 `2026-10-06` 看着不直观**：面板原来那一格取的是笔记 frontmatter 的 `created_at`，
+而旁边的「3 小时前」来自文件 mtime。上一轮批量回填只改 `title/tags/ask/named_by`、**不碰**
+`created_at/updated_at` ⇒ 一批既有笔记的 `created_at` 就是入库那一天，mtime 却变成了今天。
+两个来源不同的数并排放着，看起来像 bug。现在**拆成两段、各标各的来源**：
+
+- **入库** = 笔记 frontmatter 的 `created_at`（绝对日期；没有就按条目时间戳折算；都没有则两段都不显示）；
+- **更新于** = 该行最新动静的相对时间（「刚刚」/「3 小时前」）。
+
+`src/client/knowledge.ts`（`dateText` → `createdDate` + 新增 `updatedText`）、`src/client/Panel.tsx`
+（`rowMeta` 去掉重复的相对时间、`detailLine` 渲染四段）、`src/testkit.ts`（导出 `updatedText`）同步改造；
+`test/panel.test.mjs` 与 `scripts/selfcheck.mjs` 补断言，其中一条专门钉住
+**「入库取 `created_at`，不是 `updated_at`」**，防止两段又被混回去。
+
+**② 兜底知识库路径**：`fallbackMdRoot` 默认值改为 `~/OblivionKB`（与 core 的 `mdRoot` 默认值一致），
+并在组装快照时过 `expandHome()` —— 原先这个值是**直接当路径用**的，改成 `~/…` 写法会读不到。
+（该路径只在 core 的 `status.json` 缺失时才走。）
+
+验证：typecheck + 34 例单测 + 15 项自检 + check:version(0.0.16) 全绿。
+
 ## [未发布] — `@oblivion/core` v0.2.14：**工具注册可注销** —— 重新装载不再撞「already registered」、不再让 `apply()` 整个失败
 
 **真机现场（2026-10-17）**：给 profile 补一行 `- id: '@oblivion/core' config:` 之后，profile 补丁层被

@@ -67,7 +67,14 @@ interface Config {
 
 const DEFAULT_CONFIG: Config = {
   dataRoot: '~/.oblivion/data',
-  fallbackMdRoot: 'C:/Library/那些渐渐被遗忘',
+  /**
+   * 兜底知识库位置 —— 只在 core 的 `status.json` 读不到（或里面没有 `mdRoot`）时用。
+   *
+   * 默认值与 core 的 `config.mdRoot` **保持一致**（2026-10-17 起是 `~/OblivionKB`）；
+   * 本机既有知识库 `C:/Library/那些渐渐被遗忘` 同样由 profile 用户层覆盖。
+   * 用 `~/` 写法，所以下面组装 snapshot 时要过 `expandHome()`（面板不假设调用方已展开）。
+   */
+  fallbackMdRoot: '~/OblivionKB',
   recentLimit: 10,
   routePath: '/oblivion-panel/status',
   diagPath: '/oblivion-panel/diag',
@@ -173,7 +180,8 @@ function installStatusRoute(ctx: HostCtx, config: Config, warn: (message: string
         void buildSnapshot({
           dataRoot,
           recentLimit: config.recentLimit,
-          fallbackMdRoot: config.fallbackMdRoot,
+          // `~/…` 写法要在这里展开：面板不假设 config 里的路径已经展开过。
+          fallbackMdRoot: expandHome(config.fallbackMdRoot),
         })
           .then((snapshot) => {
             response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
