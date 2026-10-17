@@ -562,6 +562,8 @@ Invoke-RestMethod http://127.0.0.1:42081/oblivion/mcp/health | ConvertTo-Json -D
 Get-Content "$env:USERPROFILE\.oblivion\data\mcp-channel-diag.json" -Raw
 #    stage=apply:failed ⇒ error 就是装载死因（本轮靠它一句话定案）
 #    stage=apply:done 而 ① 仍 present:false ⇒ 两侧不同进程/作用域（比 pid）
+#    stage=apply:done **可能缺失**：末条写入走 temp→rename，撞上并发读会 EPERM，被 `void` 吞掉
+#    ⇒ 看到 apply:mcp 别急着判「没走到最后」；以 `at`/`pid` + 桥接 /health 为准（待 core 下次构建时补直写回退）
 #    pid 应与 ① 的 endpoint.pid 相同；不同 ⇒ 这份文件是测试进程写的（见「假证据警报」）
 
 # ③ 通道真活着的端到端证据（要 token；别把 token 打进日志/分享）
@@ -605,6 +607,22 @@ Invoke-WebRequest -UseBasicParsing -Method POST http://127.0.0.1:42081/oblivion/
 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-2026-10-17T01-48-07-569Z-web-boot.log`。
 
 **所以 `pnpm check` 本身就是高危动作**（它含 build）—— 现在构建前会被拦，见「检查：四层闸门」的构建守卫。
+
+**它不是我们插件独有的**：同一天 02:25Z 又崩了一次（`crash-2026-10-17T02-25-13-030Z-web-boot.log`），
+这次 4 个未激活 entry **全是第三方插件**（`billion-context` / `dsh-free-search` / `dsh-better-sidebar` /
+`dsh-cost-meter`），我们的四个一个都没事。对上时间线就看得很清楚：
+
+| 时刻 | 事情 |
+| --- | --- |
+| 10:21:50 / 10:22:05 | 第三方插件 `dsh-better-sidebar` / `dsh-cost-meter` 的 `lib/client.js` 被写入（更新插件） |
+| 10:25:13 | web 界面启动，手里是旧 rev ⇒ 404 ⇒ 4 个 entry 未激活 ⇒ 弹「无法使用」 |
+| 10:28:40 | 重启后一切正常（rev 按当前文件重算） |
+
+（`dsh-free-search` 的 `lib/client.js` mtime 还是 10-06，但同一次 install 会改 `ctime` —— 而 rev 把
+`ctimeMs` 也算进去，所以它照样换了 rev；这正是「别只看 mtime」的原因。）
+
+⇒ **规则与谁在写无关**：任何插件（官方 / 第三方 / 我们的）的 client 产物在「界面启动或刷新」附近被重写，
+都会有这一幕。构建守卫只能管住我们自己那一半；第三方插件的更新要靠**「更新完立刻完全重启 DSH」**这条规程。
 
 **怎么办**：① 完全退出 DSH → 构建 → 再开（最稳）；② 或构建完**立刻完全重启** DSH（不是只刷新窗口）。
 弹了那张对话框时，先确认没有 node/pnpm 还在写文件，再点「**重启**」；

@@ -35,6 +35,12 @@ DSH 里即能看见。它自己认端口（`-Port` → 缓存 → 宿主 pid 的
 缓存复用前也重探）、从文件读多行正文（`-TextFile`）、`requestId` 按**内容**算（同内容重推不会出现两条）、
 `-DryRun` 只认端口不注入。代价写在脚本抬头：注入一条 = 驱动 DSH 跑一轮 agent。
 
+**它不是我们插件独有的**（当天的第二次同型崩溃佐证，02:25Z）：那次 4 个未激活 entry 全是第三方插件
+（`billion-context` / `dsh-free-search` / `dsh-better-sidebar` / `dsh-cost-meter`），而
+`dsh-better-sidebar` 与 `dsh-cost-meter` 的 `lib/client.js` 正好在 10:21:50 / 10:22:05 被写入 ——
+崩溃发生在 10:25:13；我们的四个包 09:56 之后没被动过，一个都没事。
+⇒ 守卫只能管住我们这一半，第三方插件的更新要靠「**更新完立刻完全重启 DSH**」这条规程。
+
 配套文档：[`WORKSPACE.md`](WORKSPACE.md) 新增**已知限制 9**（运行中重建 ⇒ 界面起不来）与
 「每轮一条正式摘要」一节、「检查：四层闸门」补构建守卫；[`.memory/daily/2026-10-17.md`](.memory/daily/2026-10-17.md) 记本轮。
 
