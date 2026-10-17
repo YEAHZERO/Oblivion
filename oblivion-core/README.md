@@ -249,7 +249,7 @@ Get-Content   "$env:USERPROFILE\.oblivion\data\profile.json" -ErrorAction Silent
 | `oblivion_digest` | **整理当前对话**：模型产出结构（章节/决策/待办/未决/双链），插件落成**一篇整理笔记 + 一条可检索条目**（并建共现边） | 「整理一下当前对话」 |
 | `oblivion_retitle` | **给沉淀件改名打标签**：先给候选（现名/原问句/答案摘要），模型起内容名 + 标签，插件改名并同步条目与索引 | 「把这些笔记的名字改成讲什么」 |
 | `oblivion_wiki` | **把同一主题的笔记合成一页主题页**：先给候选（现名/原问句/状态/已属哪页），模型判簇 + 写概述，插件落 `02_Wiki页面/` 并在成员笔记里留一行回链 | 「把讲 cordis 作用域的笔记合成一页」 |
-| `oblivion_organize` | **自动整理（插件自己调模型）**：`status`（零请求，**并列出宿主全部 provider/模型** —— 含自定义 provider，设置页据此填下拉框）/ `preview`（只读，拿建议）/ `apply`（落地；省略 `items` 就落地上一次预览）。**默认关**，开了才发请求 | 「自动整理一下知识库的标题」 |
+| `oblivion_organize` | **自动整理（插件自己调模型）**：`status`（零请求，**并列出宿主全部 provider/模型** —— 含自定义 provider，设置页据此填下拉框）/ `preview`（只读）/ `apply`（落地），两段式。**两个作用域各自一个开关**：`scope:"retitle"`（默认）改存量笔记的名字/标签（省略 `items` 就落地上一次预览）；`scope:"digest"` 把**本会话已沉淀的问答**整理成一页会话整理（`apply` 落地的是 `<dataRoot>/organize-digest.json` 里那份草稿）。**默认关**，开了才发请求 | 「自动整理一下知识库的标题」「把这场会话整理一页」 |
 | `oblivion_status` | **观测与调参入口**：生效配置 + 真实统计 + 「该改哪个键」建议 + 最近判定 | 「这几天的捕获率多少？该调什么？」 |
 | `oblivion_query` | 关键词 + 共现扩展检索，带来源 | 「库里关于 cordis 注入的记录」 |
 | `oblivion_capture` | 手工沉淀一条问答（走同一套四层筛选） | 把一段读书笔记沉淀成条目 |
@@ -368,7 +368,7 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 | --- | --- | --- |
 | `dataRoot` / `mdRoot` | `~/.oblivion/data` / **`~/OblivionKB`** | JSON 存储 / 笔记落盘根。**默认值是给新用户的**，本机私有路径一律靠 `config` 覆盖（本机既有知识库 `C:/Library/那些渐渐被遗忘` 在 profile 用户层按 id 覆盖 `mdRoot`，机器本地、不入库）；绝对路径或 `~/` 写法都行；**一经配置，装载时就自动创建**该根与全部分类目录 |
 | `mdClassify` | `session`·`qa_loop` → `01_问答沉淀`、`doc` → `00_导入文件`、`wiki` → `02_Wiki页面`、`content_creator` → `03_创作产物` | 来源类型 → 子目录；未命中落 `99_其他/`（§25.3）。目录名会**消毒**（去掉 `..`／盘符／非法字符），不会逃出 `mdRoot` |
-| `organize` | 下方「三层配置」一节，**默认全关** | **自动整理**（DEC-030）。`enabled` 总开关（`false` ⇒ **一个外部请求都不发**）；`digest` / `retitle` 两个作用域开关；`provider` / `model` 主路（留空 = 用宿主默认选路 `ctx.agentDefaultModel`）；`fallbacks[]` 备用路（**自动切换**）；`maxTokens` / `timeoutMs`；`everyTurns`（每 N 个 `turn/end` 自动产出建议，`0` = 不自动）；`minIntervalMs`（同会话防抖）；**`autoApply`（默认 `false`：自动路径只写建议文件，绝不碰知识库）**；`batchSize` |
+| `organize` | 下方「三层配置」一节，**默认全关** | **自动整理**（DEC-030）。`enabled` 总开关（`false` ⇒ **一个外部请求都不发**）；`digest`（本会话的沉淀 → 一页会话整理）/ `retitle`（存量笔记 → 内容名 + 标签）**两个作用域各一个开关**；`provider` / `model` 主路（留空 = 用宿主默认选路 `ctx.agentDefaultModel`）；`fallbacks[]` 备用路（**自动切换**）；`maxTokens` / `timeoutMs`；`everyTurns`（每 N 个 `turn/end` 自动产出建议，`0` = 不自动）；`minIntervalMs`（同会话防抖）；**`autoApply`（默认 `false`：自动路径只写建议文件，绝不碰知识库）**；`batchSize` |
 | `valueThreshold` | `0.3` | L4 价值闸门；**勿改回 0.5**（会让一切被丢弃） |
 | `enablePerspective` / `enableFeedback` | `true` | 认知陪伴 / 反馈微调开关 |
 | `perspectiveActiveSessionMax` | `3` | §25.4 主动触发只在最早 3 个会话 |
@@ -398,8 +398,10 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 
 #### 自动整理（`oblivion_organize`，DEC-030）：三条不变量
 
-1. **默认零请求** —— `organize.enabled === false` 时连 prompt 都不构造、`ctx.llm` 一次都不碰；
-2. **先预览再落地** —— `preview` **一个字都不改知识库**；自动路径只写 `<dataRoot>/organize-proposals.json`。
+1. **默认零请求** —— `organize.enabled === false` 时连 prompt 都不构造、`ctx.llm` 一次都不碰
+   （作用域各自的开关没开也一样：`organize.digest === false` 时连「本会话有几条沉淀」都不去看）；
+2. **先预览再落地** —— `preview` / `previewDigest` **一个字都不改知识库**；自动路径只写
+   `<dataRoot>/organize-proposals.json`（改名建议）与 `<dataRoot>/organize-digest.json`（会话整理草稿）。
    改名不可逆（知识库不是 git 仓库），所以 `autoApply` 默认 `false`；
 3. **失败不阻塞** —— 全路失败只记留痕；触发路径 fire-and-forget，模型再慢也不拖住问答链路。
 
@@ -414,6 +416,35 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 > 而单测全绿（桩 ctx 把服务直接挂在 ctx 上，比真宿主宽松）。现在走
 > `lazyService()`：先试裸读（极简宿主/单测），失败再 `ctx.inject`；且**每次现取**，
 > 因为 inject 的回调可能**装载之后**才兑现。
+
+#### 作用域一：会话整理（`organize.digest`，0.2.18）
+
+`organize.retitle` 管**存量笔记**（按内容改名/补标签）；`organize.digest` 管**本会话的沉淀**
+（自动整理成一页 `04_会话整理/` 的笔记 + 一条条目）。两条路走同一个节拍
+（`everyTurns` + `minIntervalMs`），但**各跑各的、各报各的**（`lastAuto().digest`）——
+一个坏了不会看着像两个都坏了。
+
+**它整理的是「本会话已沉淀的问答」，不是对话原文**（这条路最重要的诚实边界）：插件拿不到
+对话原文（`session/event` 被 `qa-loop` 按轮消费、`TurnBuffer` 用完即删；插件不留一份会话文本 ——
+那是**新的**隐私面与常驻内存），手上真有的是**已经捕获进知识库**的那些问答。好在「这一场会话
+沉淀了什么」在条目里是**自证**的：捕获时 `sources[].ref = <sessionId>#turn-<n>`
+（`qa-loop/extract.ts`），按前缀筛即可，不必另建一张会话索引表。整场对话的整理仍然是
+**外层会话的模型**调 `oblivion_digest`（它本来就把对话握在上下文里），那条路不变、也依然更完整。
+
+三个刻意的取舍：
+
+- **成功才写草稿** —— `<dataRoot>/organize-digest.json` 里永远是**最后一份可用草稿**：
+  一次限流、一次解析失败不该把上一次能用的东西擦掉（与 `panel-client-diag.json` 覆盖式是同一个
+  取舍的正反面）。失败原因留在 `lastAuto().digest.reason` 与工具回包里，不咽掉。
+- **落地不吃 `items`** —— 草稿是一整份文档，让模型回抄一遍只会多一层出错面；
+  `apply scope:"digest"` 落地的就是 `previewDigest` 成功时落下的那一份（人看过的就是它）。
+- **解析宁缺毋滥** —— 回话不是 JSON 对象、没有 `title`、或一节正文都没有，就算**失败**并把
+  原话回带；不搞「逐个抠回来」的半成品（与改名那条路的容错策略相反，因为那是一条条独立建议，
+  这是一份整体文档）。
+
+> 时机的实话：`turn/end` 那边 `onTurn` 是 fire-and-forget，`qa-loop` 的捕获本身也是 ——
+> 所以**本轮刚沉淀的那一条可能还没进索引**。不影响正确性（下一拍就看到），
+> 但它决定了这条路看到的是「到此刻为止的沉淀」。
 
 #### 设置页的**读写通路**（0.2.16 数据源 → 0.2.17 完整通路）
 
@@ -438,7 +469,7 @@ POST /oblivion-core/settings     # { "patch": { "mdRoot": "…", "organize": { "
 // GET 的响应（等于 SettingsSnapshot + catalog）。
 // 下面这段是 2026-10-17 在一台真机上抓的原文（只删了无关的长字段），不是「大致形状」：
 {
-  "ok": true, "version": "0.2.17",
+  "ok": true, "version": "0.2.18",
   "path": "C:/Users/liveu/.oblivion/data/settings.json",
   "values":   {},                                    // 设置层还是空的（这个文件还没被创建过）
   "sources":  { "mdRoot": "plugin",                  // 来自 profile 的插件 config
@@ -483,8 +514,9 @@ POST /oblivion-core/settings     # { "patch": { "mdRoot": "…", "organize": { "
 被丢掉的键名**如实回报**（`rejected`），POST 校验来源（桌面端转发会删 `Origin` ⇒ 缺省可信，
 其余只放行本机与 `dsh-app://`）；缺 `webServer` 时**只记一条 warn**，插件其余部分照常。
 
-> 尚未编码：**设置页 UI**（路径 / 模型选择 / 自动切换三项 —— 其**读写通路已在上面就位**，
-> 停窗那一刀只剩「画界面 + `fetch` 这两条路由」）与 `organize.digest` 作用域。
+> 这两件**都已落地**：设置页 UI 在 [`@oblivion/panel`](../oblivion-panel/README.md) 0.0.17
+> （设置在「Oblivion 知识库」分节里，`fetch` 同源的 `GET|POST /oblivion-core/settings`）；
+> `organize.digest` 作用域在本包 0.2.18（见上面「作用域一」）。
 
 ### 9.5 观测与调参（先跑够几天，再动阈值）
 

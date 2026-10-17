@@ -37,7 +37,7 @@
 | --- | --- | --- |
 | [`@oblivion/brand`](oblivion-brand/README.md) | **0.1.7** | 品牌槽位接管（侧栏与会话 Hero 换成北极星，**零 Fork**）；可把「插件市场」这类面板挂到侧栏；设置页**一键重启 DSH** |
 | [`@oblivion/vimc`](oblivion-vimc/README.md) | **0.2.10** | 键盘导航（`w/s` 翻页 · `f` 链接提示 · `/` 查找 · `i`/`Esc` 输入框 · `Ctrl+方向键` 像素滚动）；按 [Vimium-C](https://github.com/gdh1995/vimium-c) 语义实现（**未复制代码**），**可直接导入 `vimium_c-*.json`**；自带设置页与开销自证 |
-| [`@oblivion/core`](oblivion-core/README.md) | **0.2.17** | **认知层内核**：knowledge / qa-loop / perspective / feedback / graph / profile + digest / retitle / wiki / stats / organize；**10 个模型面工具** + MCP 协议面（浏览器扩展那条路）+ 设置页读写路由（`/oblivion-core/settings`） |
+| [`@oblivion/core`](oblivion-core/README.md) | **0.2.18** | **认知层内核**：knowledge / qa-loop / perspective / feedback / graph / profile + digest / retitle / wiki / stats / organize；**10 个模型面工具** + MCP 协议面（浏览器扩展那条路）+ 设置页读写路由（`/oblivion-core/settings`）；自动整理**两个作用域**（存量笔记改名/标签 · 本会话沉淀 → 会话整理） |
 | [`@oblivion/panel`](oblivion-panel/README.md) | **0.0.17** | 侧栏观测面板（嵌 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar)）：捕获率 / 判定曲线 / 调参建议 / **知识库单栏**；并挂上 **设置 → Oblivion 知识库**（知识库路径 / 自动整理 / 模型与自动切换，读写走 core 的 `/oblivion-core/settings`） |
 | [`@oblivion/http-bridge`](oblivion-http-bridge/README.md) | **0.1.3** | 浏览器扩展接入：固定端口 `42081` 上的 HTTP 传输层（鉴权 / CORS / 体积 / 健康路由），**不含 MCP 逻辑** |
 | [`@oblivion/daily-life`](oblivion-daily-life/README.md) | **0.0.1** | 「**有数**」物品服役账本：日均成本 / 服役进度 / 闲置天数 |
@@ -266,6 +266,7 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.16**：设置页的**数据源** —— `OrganizeService.catalog()` 列出宿主全部 provider/模型（**自定义 provider 一视同仁**，如 profile 里的 `agnes`）、`status.routeSource` 分出「我配的 / 宿主默认的」；`oblivion_organize status` 带上清单。仍是**零请求**（读注册表，不调模型） |
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.17**：**修一个让自动整理整条死掉的缺陷** —— `llm` / `agentDefaultModel` 裸读在真宿主必抛（「without inject」），改为经 `ctx.inject` **懒取**；新增设置页的**读写通路** —— `SettingsService`（`describe`/`patch`，含「待重启键」与「被拒键如实回报」）+ core 自己挂的 `GET\|POST /oblivion-core/settings`（面板保持只读，只 `fetch` 它）。另修 `patch({某键:null})` 的「恢复默认」走不通 |
 | 未发版 | 2026-10-17 | `@oblivion/panel` **0.0.17**：**设置页落地** —— 挂官方 `settings.section`（设置 → **Oblivion 知识库**）：知识库路径 / 自动整理（9 个 `organize.*` 键）/ 模型与自动切换（`provider`+`model`+`fallbacks`，候选直接来自宿主 provider 注册表，自定义 provider 一视同仁）/ 两个判定阈值。每条值标**来源**（设置页 / 插件配置 / 默认值）、待重启的键标**待重启**并给重启按钮；面板那一列仍是**只读观测**（写通路只有 core 的 `/oblivion-core/settings` 一条） |
+| 未发版 | 2026-10-17 | `@oblivion/core` **0.2.18**：**自动整理的作用域一落地** —— `organize.digest` 把**本会话已沉淀进知识库的问答**（`sources[].ref` 带 `<sessionId>#turn-`）整理成一页会话整理，落地复用 `DigestService.save()`（笔记 + 条目 + 互链）；与作用域二**各跑各的、各报各的**；草稿落 `<dataRoot>/organize-digest.json`（**成功才写**，失败不覆盖上一份可用草稿）；`oblivion_organize` 增 `scope` / `session_id`。**说不清的地方如实说**：插件看不到对话原文，整场对话的整理仍归外层模型的 `oblivion_digest` |
 
 ## 许可证
 

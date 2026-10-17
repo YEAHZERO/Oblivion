@@ -12,6 +12,46 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/core` v0.2.18：**自动整理的作用域一落地**（本会话的沉淀 → 一页会话整理）
+
+`organize.digest` 这个键从 0.2.15 起就在配置里、开关也一直能读，但**摘要管线没接模型**
+（`status().scopes.digest` 只是如实报「开了」）。这一片把它接上：在同一个 `onTurn` 节拍里，
+插件经 `ctx.llm` 把**本会话已沉淀进知识库的问答**整理成一页会话整理，落地复用
+`DigestService.save()`（笔记落 `04_会话整理/` + 一条条目 + 互链 + 建边）。
+
+**诚实边界（这条路最重要的那句话）**：插件**看不到对话原文** —— `session/event` 被 `qa-loop`
+按轮消费、`TurnBuffer` 用完即删，插件不留一份会话文本（那是新的隐私面与常驻内存）。它手上真有的
+是**已捕获进库**的那些问答（条目 `sources[].ref` 形如 `<sessionId>#turn-<n>` ⇒「这一场沉淀了
+什么」在条目里是**自证**的，不必另建会话索引表）。整场对话的整理仍然归**外层会话的模型**调
+`oblivion_digest`（它把对话握在上下文里，那条路更完整、不变）。
+
+**两条路各跑各的**：`organize.digest`（本会话沉淀）与 `organize.retitle`（存量笔记改名/标签）
+共用一个节拍（`everyTurns` + `minIntervalMs`），但**各报各的**（`lastAuto().digest`）——
+一个坏了不会看着像两个都坏了。
+
+**几个刻意的取舍**：
+
+- **成功才写草稿**：`<dataRoot>/organize-digest.json` 里永远是**最后一份可用草稿** ——
+  一次限流/一次解析失败**不覆盖**上一次能用的（与 `panel-client-diag.json` 的覆盖式取舍相反）；
+  失败原因留在 `lastAuto().digest.reason` 与工具回包里，不咽掉。
+- **解析宁缺毋滥**：回话不是 JSON 对象 / 没 `title` / 一节正文都没有 ⇒ 判失败并回带原话，
+  不拼半成品（与改名那条路「逐个抠回来」的容错策略相反：那是一条条独立建议，这是一份整体文档）。
+- **落地不吃 `items`**：`apply scope:"digest"` 落地的就是 `previewDigest` 成功时那一份草稿
+  （人看过的就是它），不让模型回抄一整份文档。
+- 触发路径仍是 fire-and-forget；且 `turn/end` 的捕获本身也是 ⇒ 本轮刚沉淀的那条**可能还没进索引**
+  （下一拍就看到，不影响正确性，但决定了它看到的是「到此刻为止的沉淀」）。
+
+**工具面**：`oblivion_organize` 增 `scope: "retitle" | "digest"` 与 `session_id`
+（省略 = 挑「最近沉淀过的那一场」，回包如实标注 `sessionIdSource: explicit | latest-captured`）。
+
+**数字**：单测 **121 → 133**、自检 **37 → 38**；`lib/index.js` 192 KB → 204 KB。顺手把测试里那条
+「产物体积 < 200 KB」的断言改成**与框架包本身比**（`@deepseek-ai/dsh-tools` 实测 377 KB）——
+原来的绝对值已经变成「增长计速器」（0.2.17 就到 192 KB，任何一片新功能都会顶红），
+而它想抓的「框架被内联」一点没变。
+
+**真机待验**：Host 侧代码 HMR 不重导入 ⇒ 自动触发要**完全重启 DSH** 才生效；本轮不动机器配置
+（`organize.enabled` 不打开、`settings.json` 保持不存在）。
+
 ## [未发布] — `@oblivion/panel` v0.0.17：**设置页落地**（设置 → Oblivion 知识库）：知识库路径 / 自动整理 / 模型与自动切换
 
 core 0.2.15 起就有了 `<dataRoot>/settings.json` 这一层与 `GET|POST /oblivion-core/settings` 这条路由，
