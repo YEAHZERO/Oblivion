@@ -353,6 +353,10 @@ vendor/cordis/src/reflect.ts:144   cannot get property "x" without inject
 两条规矩由此而来：**① 作用域里只读 `inject` 声明过的东西**；**② 挂载期任何动作都要能把异常变成一条 warn**
 ——「路由静默消失」这种故障从外部看和「没装」一模一样，不留下痕迹就只能靠重启 + 猜测排查。
 
+> 同族的第二种死法见 **已知限制 8**：这次不是「读服务」抛，而是**宿主的接口按自己的表校验入参**时抛
+> （`systemPrompt.section()` 的 `order` 非有限数）—— 同样在 `apply` 半路掐断装载、同样在外部看只像
+> 「某条功能没装」。两处都指向同一条工程规矩：**`apply()` 半路的 action 必须有留痕**。
+
 ### 7. `billion-context`（lane）从自己那份会话库**重建每个请求**：Anthropic 形状会把一对 `tool_use`/`tool_result` 拆开（2026-10-17 收窄）
 
 现场：会话 `session-10837d9b` 在 `deepseek-account/deepseek-flash` 上**每轮 400**，报错永远指向同一次调用：
@@ -446,6 +450,61 @@ $db = "$env:USERPROFILE\.local\share\billion-context\sessions\index.db"
 upstreams (DeepSeek thinking mode) will reject the request`；以及每请求重复的
 `DIGEST DRIFT … migration parity broken`。报告草稿见
 [`docs/上游问题报告-billion-context.md`](docs/上游问题报告-billion-context.md)（lane 版本 **0.1.197**）。
+
+### 8. 「桥接一直 `present:false`」的两层死法：`apply()` 半路抛错（真机根因）+ 槽写不进候选作用域（2026-10-17 结案）
+
+**症状**：`GET http://127.0.0.1:42081/oblivion/mcp/health` 一直
+`endpoint.present:false, reason:"未找到通道"`，但 core 的捕获 / 图谱看着正常（照着「通道两端不同 realm」查了很久）。
+
+**真机根因**：`apply()` 死在**注册认知段落那一行** ——
+
+```js
+// core（旧）：把「宿主会认识我们的段落名」当了真
+order: host.systemPrompt.getSectionOrder('OBLIVION_COGNITION');   // → undefined
+// DSH：getSectionOrder 只是查它自己的表（HARNESS_IDENTITY / PLAN_POLICY / TOOL_* / …）
+//      section() 对非有限 order 直接抛：
+//      TypeError: prompt section "OBLIVION_COGNITION" order must be a finite number
+```
+
+抛错位置在**发布通道之前** ⇒ 9 个工具、认知段落、`provide('oblivion')`、MCP 通道全都没跑；
+宿主（Electron utility process）里读不到 `console` ⇒ 外部唯一可见的症状就是「通道不见了」。
+修法见 [`CHANGELOG.md`](CHANGELOG.md)（`resolveSectionOrder` + 兜底位 `650`），并给 `apply()` 加了
+`stage`/`error` 留痕。
+
+**为什么四层闸门全绿**：桩 ctx 把 `getSectionOrder` 写成 `() => 50`，替宿主答了一个它**不会给**的数。
+**教训：桩不许比真宿主更强** —— 未知名就回 `undefined`，并断言段落 `order` 是有限数（两处桩都已改，
+core 自检的这条现在是回归位）。
+
+**复核配方**（都不碰数据）：
+
+```powershell
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
+# ① 两侧对照之一 —— 桥接视角（健康路由故意公开、不需要 token）
+Invoke-RestMethod http://127.0.0.1:42081/oblivion/mcp/health | ConvertTo-Json -Depth 8
+#    present / owner / version / tools[] / pid / scopes[]{scope,available,hasKey,valueTag,mapLike,slots}
+#    两侧 hasKey 都 false ⇒ 发布侧根本没发布（往下看 ②）
+#    valueTag 不是 [object Map] ⇒ 键被别的东西占住了
+#    mapLike:true 而 slots:-1 ⇒ 表在、但读不出来（跨 realm 认表失败的旧病）
+
+# ② 两侧对照之二 —— core 视角（装载走到哪、抛了什么）
+Get-Content "$env:USERPROFILE\.oblivion\data\mcp-channel-diag.json" -Raw
+#    stage=apply:failed ⇒ error 就是装载死因（本轮靠它一句话定案）
+#    stage=apply:done 而 ① 仍 present:false ⇒ 两侧不同进程/作用域（比 pid）
+#    pid 应与 ① 的 endpoint.pid 相同；不同 ⇒ 这份文件是测试进程写的（见「假证据警报」）
+
+# ③ 通道真活着的端到端证据（要 token；别把 token 打进日志/分享）
+$h = @{ 'Content-Type'='application/json'; 'Accept'='application/json, text/event-stream';
+        'Authorization'="Bearer $([Environment]::GetEnvironmentVariable('OBLIVION_BRIDGE_TOKEN','User'))" }
+Invoke-WebRequest -UseBasicParsing -Method POST http://127.0.0.1:42081/oblivion/mcp -Headers $h `
+  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | Select-Object -Expand Content
+```
+
+**假证据警报**：`<dataRoot>` 下的诊断文件（`mcp-channel-diag.json` / `mount-diag.json` / `status.json`）
+**会被单元测试覆盖** —— `test/core.test.mjs` 原有 4 处 `mod.apply(ctx, {})` 走 `DEFAULT_CONFIG`
+（真数据目录 + 真知识库，面板上 `status.json` 撕裂的根因），现已改 `applyInTemp()`（系统临时目录）。
+即便如此，**看完 `pnpm test` 的任何诊断结论前，先核对文件里的 `pid`／`env.electron`**
+（测试进程的 `electron` 是空串）—— 本轮就被这条误导过一次。
 
 ## 应用图标：只能改快捷方式，改不了窗口/任务栏
 

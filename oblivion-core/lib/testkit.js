@@ -1435,7 +1435,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join4(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.10",
+    version: "0.2.11",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -1542,8 +1542,8 @@ function registerQaLoop(ctx, config, deps) {
   }
   let agentsScope;
   function reconcileAgents() {
-    const registry2 = agentsScope?.agents;
-    const live = registry2?.list?.() ?? [];
+    const registry = agentsScope?.agents;
+    const live = registry?.list?.() ?? [];
     diag.injectAgentCount = live.length;
     for (const agent of live) attachAgent(agent);
     diagDirty = true;
@@ -3312,45 +3312,160 @@ function registerTools(ctx, deps) {
 var MCP_CHANNEL = "@oblivion/core/mcp";
 var MCP_API_VERSION = 1;
 var MCP_OWNER = "@oblivion/core";
+var CHANNEL_SCOPES = ["globalThis", "process"];
 function channelKey() {
   return Symbol.for(MCP_CHANNEL);
 }
-function registry() {
-  const key = channelKey();
-  const scope = globalThis;
-  const existing = scope[key];
-  if (existing instanceof Map) return existing;
-  const created = /* @__PURE__ */ new Map();
-  Object.defineProperty(scope, key, {
-    value: created,
-    enumerable: false,
-    writable: false,
-    configurable: false
-  });
-  return created;
+function scopeOf(name) {
+  if (name === "globalThis") return globalThis;
+  const processLike = typeof process === "undefined" ? void 0 : process;
+  return processLike !== null && typeof processLike === "object" ? processLike : void 0;
 }
-function publishMcp(endpoint) {
+function isRegistryLike(value) {
+  if (value instanceof Map) return true;
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value;
+  return typeof candidate.get === "function" && typeof candidate.set === "function" && typeof candidate.values === "function" && typeof candidate.delete === "function" && typeof candidate.size === "number";
+}
+function errorText(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.length > 200 ? text.slice(0, 200) : text;
+}
+function tagOf(value) {
+  try {
+    return Object.prototype.toString.call(value);
+  } catch {
+    return "(tag throws)";
+  }
+}
+function registryAt(scopeName, report) {
+  const scope = scopeOf(scopeName);
+  if (scope === void 0) {
+    report.push({ scope: scopeName, outcome: "unavailable" });
+    return null;
+  }
+  const key = channelKey();
+  let existing;
+  try {
+    existing = scope[key];
+  } catch (error) {
+    report.push({ scope: scopeName, outcome: "failed", error: errorText(error) });
+    return null;
+  }
+  if (isRegistryLike(existing)) {
+    report.push({ scope: scopeName, outcome: "reused" });
+    return existing;
+  }
+  const created = /* @__PURE__ */ new Map();
+  try {
+    Object.defineProperty(scope, key, {
+      value: created,
+      enumerable: false,
+      writable: false,
+      configurable: false
+    });
+    report.push(
+      existing === void 0 ? { scope: scopeName, outcome: "created" } : { scope: scopeName, outcome: "assigned", valueTag: tagOf(existing) }
+    );
+    return created;
+  } catch (error) {
+    try {
+      scope[key] = created;
+      report.push({ scope: scopeName, outcome: "assigned", error: errorText(error), valueTag: tagOf(existing) });
+      return created;
+    } catch (assignError) {
+      report.push({
+        scope: scopeName,
+        outcome: existing === void 0 ? "failed" : "occupied",
+        error: errorText(assignError),
+        valueTag: tagOf(existing)
+      });
+      return null;
+    }
+  }
+}
+function allRegistries() {
+  const found = [];
+  for (const scopeName of CHANNEL_SCOPES) {
+    const scope = scopeOf(scopeName);
+    if (scope === void 0) continue;
+    try {
+      const raw = scope[channelKey()];
+      if (isRegistryLike(raw)) found.push(raw);
+    } catch {
+    }
+  }
+  return found;
+}
+function slotList() {
+  const slots = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const registry of allRegistries()) {
+    let values;
+    try {
+      values = registry.values();
+    } catch {
+      continue;
+    }
+    for (const value of values) {
+      if (value === null || typeof value !== "object" || seen.has(value)) continue;
+      seen.add(value);
+      slots.push(value);
+    }
+  }
+  return slots;
+}
+function publishMcp(endpoint, options = {}) {
+  const scopes = [];
+  const written = [];
   const slot = {
     apiVersion: endpoint.apiVersion,
     owner: endpoint.owner,
     endpoint,
     at: Date.now()
   };
-  registry().set(endpoint.owner, slot);
+  let active = null;
+  for (const scopeName of CHANNEL_SCOPES) {
+    const registry = registryAt(scopeName, scopes);
+    if (registry === null) continue;
+    try {
+      registry.set(endpoint.owner, slot);
+      written.push({ registry, slot });
+      if (active === null) active = scopeName;
+    } catch (error) {
+      scopes.push({ scope: scopeName, outcome: "failed", error: errorText(error) });
+    }
+  }
+  const report = { at: Date.now(), owner: endpoint.owner, scopes, written: written.length, active };
+  try {
+    options.onReport?.(report);
+  } catch {
+  }
   return () => {
-    const current = registry().get(endpoint.owner);
-    if (current !== void 0 && current.endpoint === endpoint) registry().delete(endpoint.owner);
+    for (const item of written) {
+      try {
+        const current = item.registry.get(endpoint.owner);
+        if (current !== void 0 && current.endpoint === endpoint) item.registry.delete(endpoint.owner);
+      } catch {
+      }
+    }
   };
 }
 function resolveMcp() {
-  const slots = [...registry().values()].filter((slot) => slot.apiVersion === MCP_API_VERSION);
+  const slots = slotList().filter((slot) => slot.apiVersion === MCP_API_VERSION);
   if (slots.length === 0) return null;
-  const ready = slots.filter((slot) => slot.endpoint.describe().ready);
+  const ready = slots.filter((slot) => {
+    try {
+      return slot.endpoint.describe().ready;
+    } catch {
+      return false;
+    }
+  });
   const pool = ready.length > 0 ? ready : slots;
   return pool.reduce((newest, slot) => slot.at >= newest.at ? slot : newest).endpoint;
 }
 function describeMcpChannel() {
-  const slots = [...registry().values()];
+  const slots = slotList();
   const fresh = slots.filter((slot) => slot.apiVersion === MCP_API_VERSION);
   if (fresh.length === 0) {
     return {
@@ -3368,7 +3483,38 @@ function describeMcpChannel() {
   return { present: true, apiVersion: info.apiVersion, owner: info.owner, at: newest.at, version: info.version, tools: info.tools, ready: info.ready };
 }
 function clearMcpChannel() {
-  registry().clear();
+  for (const registry of allRegistries()) {
+    try {
+      registry.clear();
+    } catch {
+    }
+  }
+}
+
+// src/mcp/diag.ts
+import { join as join12 } from "node:path";
+function buildChannelDiag(version, report, stage, error) {
+  const text = error === void 0 ? "" : error instanceof Error ? error.message : String(error);
+  return {
+    version,
+    at: Date.now(),
+    pid: process.pid,
+    stage,
+    ...text === "" ? {} : { error: text.length > 200 ? text.slice(0, 200) : text },
+    env: {
+      node: process.versions.node ?? "",
+      electron: process.versions.electron ?? "",
+      runAsNode: process.env.ELECTRON_RUN_AS_NODE !== void 0,
+      execArgv: [...process.execArgv]
+    },
+    report
+  };
+}
+async function writeChannelDiag(dataRoot, diag) {
+  try {
+    await writeJsonAtomic(join12(expandHome(dataRoot), "mcp-channel-diag.json"), diag);
+  } catch {
+  }
 }
 
 // src/mcp/tools.ts
@@ -3644,6 +3790,7 @@ function resolveConfig(input) {
   return out;
 }
 export {
+  CHANNEL_SCOPES,
   CONFLICTS_DIR,
   DEFAULT_CONFIG,
   DIMENSIONS,
@@ -3666,6 +3813,7 @@ export {
   analyzeCoverage,
   appendRelatedLinks,
   applyRetitle,
+  buildChannelDiag,
   channelKey,
   checkL3Rules,
   classifyDir,
@@ -3741,6 +3889,7 @@ export {
   topicFromQuestion,
   tune,
   userMessageSourceKind,
+  writeChannelDiag,
   writeIndexNote,
   writeMD,
   writebackWikiLink

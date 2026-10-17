@@ -114,10 +114,33 @@ function readBody(request, maxBytes) {
 // src/channel.ts
 var MCP_CHANNEL = "@oblivion/core/mcp";
 var MCP_API_VERSION = 1;
+var CHANNEL_SCOPES = ["globalThis", "process"];
 function channelKey() {
   return Symbol.for(MCP_CHANNEL);
 }
-function emptyDescription(reason) {
+function scopeOf(name2) {
+  if (name2 === "globalThis") return globalThis;
+  const processLike = typeof process === "undefined" ? void 0 : process;
+  return processLike !== null && typeof processLike === "object" ? processLike : void 0;
+}
+function isRegistryLike(value) {
+  if (value instanceof Map) return true;
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value;
+  return typeof candidate.get === "function" && typeof candidate.set === "function" && typeof candidate.values === "function" && typeof candidate.delete === "function" && typeof candidate.size === "number";
+}
+function tagOf(value) {
+  try {
+    return Object.prototype.toString.call(value);
+  } catch {
+    return "(tag throws)";
+  }
+}
+function errorText(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.length > 200 ? text.slice(0, 200) : text;
+}
+function emptyDescription(reason, scopes) {
   return {
     present: false,
     apiVersion: MCP_API_VERSION,
@@ -125,23 +148,54 @@ function emptyDescription(reason) {
     version: "",
     tools: [],
     ready: false,
-    reason
+    reason,
+    pid: typeof process === "undefined" ? -1 : process.pid,
+    scopes
   };
 }
-function readSlots() {
+function absentReason(scopes) {
+  const occupied = scopes.find((probe) => probe.hasKey && !probe.mapLike);
+  if (occupied) return `\u901A\u9053\u952E\u88AB ${occupied.valueTag || "\u672A\u77E5\u503C"} \u5360\u7528\uFF08\u4E0D\u662F\u901A\u9053\u8868\uFF09`;
+  const failed = scopes.find((probe) => probe.error !== void 0);
+  if (failed) return `\u8BFB\u53D6\u901A\u9053\u5931\u8D25\uFF1A${failed.error}`;
+  return "\u672A\u627E\u5230\u901A\u9053";
+}
+function probeScope(name2) {
+  const probe = {
+    scope: name2,
+    available: false,
+    hasKey: false,
+    valueTag: "",
+    mapLike: false,
+    slots: -1
+  };
+  const scope = scopeOf(name2);
+  if (scope === void 0) return { probe, slots: [] };
+  probe.available = true;
+  let raw;
   try {
-    const scope = globalThis;
-    const raw = scope[channelKey()];
-    if (!(raw instanceof Map)) return [];
-    const slots = [];
+    raw = scope[channelKey()];
+  } catch (error) {
+    probe.error = errorText(error);
+    return { probe, slots: [] };
+  }
+  if (raw === void 0) return { probe, slots: [] };
+  probe.hasKey = true;
+  probe.valueTag = tagOf(raw);
+  if (!isRegistryLike(raw)) return { probe, slots: [] };
+  probe.mapLike = true;
+  const slots = [];
+  try {
     for (const value of raw.values()) {
       if (value === null || typeof value !== "object") continue;
       slots.push(value);
     }
-    return slots;
-  } catch {
-    return [];
+  } catch (error) {
+    probe.error = errorText(error);
+    return { probe, slots: [] };
   }
+  probe.slots = slots.length;
+  return { probe, slots };
 }
 function isReady(slot) {
   try {
@@ -168,6 +222,18 @@ function pickSlot(slots) {
   }
   return { slot: newest, reason: "" };
 }
+function readSlots() {
+  const slots = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const name2 of CHANNEL_SCOPES) {
+    for (const slot of probeScope(name2).slots) {
+      if (seen.has(slot)) continue;
+      seen.add(slot);
+      slots.push(slot);
+    }
+  }
+  return slots;
+}
 function resolveOblivionEndpoint() {
   try {
     const slot = pickSlot(readSlots()).slot;
@@ -177,11 +243,22 @@ function resolveOblivionEndpoint() {
   }
 }
 function describeOblivionChannel() {
+  const scopes = [];
+  const slots = [];
   try {
-    const slots = readSlots();
-    if (slots.length === 0) return emptyDescription("\u672A\u627E\u5230\u901A\u9053");
+    const seen = /* @__PURE__ */ new Set();
+    for (const name2 of CHANNEL_SCOPES) {
+      const probed = probeScope(name2);
+      scopes.push(probed.probe);
+      for (const slot2 of probed.slots) {
+        if (seen.has(slot2)) continue;
+        seen.add(slot2);
+        slots.push(slot2);
+      }
+    }
+    if (slots.length === 0) return emptyDescription(absentReason(scopes), scopes);
     const { slot, reason } = pickSlot(slots);
-    if (slot === null) return emptyDescription(reason);
+    if (slot === null) return emptyDescription(reason, scopes);
     const info = slot.endpoint.describe();
     return {
       present: true,
@@ -190,10 +267,12 @@ function describeOblivionChannel() {
       version: info.version,
       tools: Array.isArray(info.tools) ? info.tools : [],
       ready: info.ready === true,
-      reason: ""
+      reason: "",
+      pid: typeof process === "undefined" ? -1 : process.pid,
+      scopes
     };
   } catch (error) {
-    return emptyDescription(`\u8BFB\u53D6\u901A\u9053\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
+    return emptyDescription(`\u8BFB\u53D6\u901A\u9053\u5931\u8D25\uFF1A${errorText(error)}`, scopes);
   }
 }
 
@@ -254,7 +333,7 @@ function normalizePositiveInt(value, fallback) {
 var name = "@oblivion/http-bridge";
 var inject = [];
 var MARKER = "[oblivion-http-bridge] loaded";
-var VERSION = true ? "0.1.1" : "0.0.0-unknown";
+var VERSION = true ? "0.1.2" : "0.0.0-unknown";
 function credentialSource(config) {
   if (config.token !== "") return "config.token";
   if (config.tokenFile !== "") return `file:${config.tokenFile}`;

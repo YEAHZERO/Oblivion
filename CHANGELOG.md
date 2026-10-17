@@ -12,6 +12,72 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/core` v0.2.11 + `@oblivion/http-bridge` v0.1.2：**结案「桥接一直 `present:false`」—— `apply()` 死在提示段落排序位**（`getSectionOrder()` 对未知名回 `undefined`，而 DSH 的 `section()` 对非有限数直接抛错）
+
+真宿主里 `GET http://127.0.0.1:42081/oblivion/mcp/health` 自 0.2.8 起一直是
+`endpoint.present:false, reason:"未找到通道"`，而 core 看起来「装好了」（捕获、图谱都在写）。
+收窄过程、四轮取证与复核配方见 [`WORKSPACE.md`](WORKSPACE.md) 已知限制 8。
+
+**根因（一行）**：core 拿宿主的 `systemPrompt.getSectionOrder('OBLIVION_COGNITION')` 当段落排序位，
+而那个函数只是查 DSH **自己的**表：
+
+```js
+// @deepseek-ai/dsh-system-prompt/lib/index.js
+getSectionOrder(name) { return SECTION_ORDERS[name]; }          // 只认 HARNESS_IDENTITY/PLAN_POLICY/TOOL_*/… → 未知名 undefined
+section(section) { if (!Number.isFinite(section.order)) throw …  // → TypeError，装载当场结束
+```
+
+于是 `apply()` 在**注册认知段落那一行**抛
+`TypeError: prompt section "OBLIVION_COGNITION" order must be a finite number`：后面 9 个工具、
+认知段落、`provide('oblivion')`、**MCP 通道发布**全都没跑。宿主（Electron utility process）里
+读不到任何 `console` 输出 ⇒ 外部唯一可见的症状就是「桥接找不到通道」。
+
+**为什么三道闸门都没拦住**：测试桩把 `getSectionOrder` 写成 `() => 50` —— 替宿主回答了一个它
+**根本不会给**的数。两处桩（`test/core.test.mjs`、`scripts/selfcheck.mjs`）现在**如实回 `undefined`**，
+并断言段落 `order` 是有限数；core 自检另加回归位（「order 必须是有限数」+「仍先问一次宿主」）。
+
+**修**：`src/prompt.ts` 新增 `OBLIVION_SECTION_ORDER = 650`（紧随 `PLAN_POLICY(500)` / `TEAM_POLICY(600)`，
+属「行为约定」同组）与 `resolveSectionOrder(name, systemPrompt)` —— 宿主认识这个名字就听宿主的，
+不认识就用兜底位；两个注册点（根上下文 + agent 作用域）都改走它。`core-types.ts` 的类型也**如实**
+改成 `number | undefined`（原来写 `number`，正是这个谎让人以为可以直接拿它当 `order`）。
+
+**顺带**：`apply()` 套了一层外壳，把「进来了 / 走到哪 / 抛了什么」写进 `<dataRoot>/mcp-channel-diag.json`
+（`stage: apply:enter | apply:mcp | apply:done | apply:failed` + `error` 原文 + `pid` + `env.electron`），
+`error` 照旧**向上抛**（不吞成「装着好好的」）。这次就是它一句话给出根因：
+
+```json
+{ "pid": 18436, "stage": "apply:failed",
+  "error": "prompt section \"OBLIVION_COGNITION\" order must be a finite number",
+  "env": { "node": "24.18.1", "electron": "44.0.0", "runAsNode": true } }
+```
+
+**通道侧一并加固**（core v0.2.11 / http-bridge v0.1.2）：
+
+- 候选作用域从「只认 `globalThis`」改成清单 `['globalThis','process']`：发布侧逐个尝试、读侧逐个找**同序**，
+  **认表按结构**（不看 `instanceof Map` —— 跨 realm 的表 `instanceof` 是假阴性）；两侧清单由桥接自检逐字比对；
+- `publishMcp()` **永不抛**（旧实现在键被别的东西占住时会在 `defineProperty` 抛错，把整个装载带走），
+  结果走 `onReport` 落盘，缺席原因细分为「键被占 / 读取失败 / 未找到通道」；
+- 桥接健康路由新增 `endpoint.pid` 与 `endpoint.scopes[]`（`scope/available/hasKey/valueTag/mapLike/slots`）——
+  一次 `GET` 就能分清「键在不在」「表认不认得出」「两侧是不是同一个进程」。
+
+**修复后实测**（重启后同一个进程内通道）：
+
+```
+GET /oblivion/mcp/health → {"present":true,"owner":"@oblivion/core","version":"0.2.11",
+  "tools":["oblivion_capture_page","oblivion_search"],"ready":true,"pid":18436,
+  "scopes":[{"scope":"globalThis","hasKey":true,"mapLike":true,"slots":1},
+            {"scope":"process",   "hasKey":true,"mapLike":true,"slots":1}]}
+<dataRoot>/mcp-channel-diag.json → stage:"apply:done"，两作用域 outcome:"created"，written:2，active:"globalThis"
+POST /oblivion/mcp tools/call oblivion_search → 200，返回 2 条真实知识库条目（不再是 503/-32603）
+```
+
+**另修一处**（core 测试）：`test/core.test.mjs` 里 4 处 `mod.apply(ctx, {})` 走的是 `DEFAULT_CONFIG`
+⇒ 单元测试把 `status.json` / `mount-diag.json` 写进了**真实数据目录**（面板上 `status.json` 撕裂的根因），
+还会在真实知识库里建分类目录，并让「测试进程的 `pid`」混进真机诊断文件（把 0.2.11 的诊断文件染成假证据）。
+现在统一走 `applyInTemp()`（系统临时目录 + `cleanupDir`）。
+
+**未完成**：路由级 `passthrough` 豁免的复测仍待会话模型切回 `deepseek-account/deepseek-flash`（见上一条）。
+
 ## [未发布] — 本机诊断：`billion-context`（lane）重建每个请求时**拆坏一对 `tool_use`/`tool_result`** —— `session-10837d9b` 每轮 400 的收窄结论 + 三条可回退的开关
 
 会话 `session-10837d9b` 在 `deepseek-account/deepseek-flash` 上**每轮 400**，报错永远指向同一次调用

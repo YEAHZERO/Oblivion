@@ -1625,35 +1625,139 @@ function deriveTags(qa) {
 var MCP_CHANNEL = "@oblivion/core/mcp";
 var MCP_API_VERSION = 1;
 var MCP_OWNER = "@oblivion/core";
+var CHANNEL_SCOPES = ["globalThis", "process"];
 function channelKey() {
   return Symbol.for(MCP_CHANNEL);
 }
-function registry() {
-  const key = channelKey();
-  const scope = globalThis;
-  const existing = scope[key];
-  if (existing instanceof Map) return existing;
-  const created = /* @__PURE__ */ new Map();
-  Object.defineProperty(scope, key, {
-    value: created,
-    enumerable: false,
-    writable: false,
-    configurable: false
-  });
-  return created;
+function scopeOf(name2) {
+  if (name2 === "globalThis") return globalThis;
+  const processLike = typeof process === "undefined" ? void 0 : process;
+  return processLike !== null && typeof processLike === "object" ? processLike : void 0;
 }
-function publishMcp(endpoint) {
+function isRegistryLike(value) {
+  if (value instanceof Map) return true;
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value;
+  return typeof candidate.get === "function" && typeof candidate.set === "function" && typeof candidate.values === "function" && typeof candidate.delete === "function" && typeof candidate.size === "number";
+}
+function errorText(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.length > 200 ? text.slice(0, 200) : text;
+}
+function tagOf(value) {
+  try {
+    return Object.prototype.toString.call(value);
+  } catch {
+    return "(tag throws)";
+  }
+}
+function registryAt(scopeName, report) {
+  const scope = scopeOf(scopeName);
+  if (scope === void 0) {
+    report.push({ scope: scopeName, outcome: "unavailable" });
+    return null;
+  }
+  const key = channelKey();
+  let existing;
+  try {
+    existing = scope[key];
+  } catch (error) {
+    report.push({ scope: scopeName, outcome: "failed", error: errorText(error) });
+    return null;
+  }
+  if (isRegistryLike(existing)) {
+    report.push({ scope: scopeName, outcome: "reused" });
+    return existing;
+  }
+  const created = /* @__PURE__ */ new Map();
+  try {
+    Object.defineProperty(scope, key, {
+      value: created,
+      enumerable: false,
+      writable: false,
+      configurable: false
+    });
+    report.push(
+      existing === void 0 ? { scope: scopeName, outcome: "created" } : { scope: scopeName, outcome: "assigned", valueTag: tagOf(existing) }
+    );
+    return created;
+  } catch (error) {
+    try {
+      scope[key] = created;
+      report.push({ scope: scopeName, outcome: "assigned", error: errorText(error), valueTag: tagOf(existing) });
+      return created;
+    } catch (assignError) {
+      report.push({
+        scope: scopeName,
+        outcome: existing === void 0 ? "failed" : "occupied",
+        error: errorText(assignError),
+        valueTag: tagOf(existing)
+      });
+      return null;
+    }
+  }
+}
+function publishMcp(endpoint, options = {}) {
+  const scopes = [];
+  const written = [];
   const slot = {
     apiVersion: endpoint.apiVersion,
     owner: endpoint.owner,
     endpoint,
     at: Date.now()
   };
-  registry().set(endpoint.owner, slot);
+  let active = null;
+  for (const scopeName of CHANNEL_SCOPES) {
+    const registry = registryAt(scopeName, scopes);
+    if (registry === null) continue;
+    try {
+      registry.set(endpoint.owner, slot);
+      written.push({ registry, slot });
+      if (active === null) active = scopeName;
+    } catch (error) {
+      scopes.push({ scope: scopeName, outcome: "failed", error: errorText(error) });
+    }
+  }
+  const report = { at: Date.now(), owner: endpoint.owner, scopes, written: written.length, active };
+  try {
+    options.onReport?.(report);
+  } catch {
+  }
   return () => {
-    const current = registry().get(endpoint.owner);
-    if (current !== void 0 && current.endpoint === endpoint) registry().delete(endpoint.owner);
+    for (const item of written) {
+      try {
+        const current = item.registry.get(endpoint.owner);
+        if (current !== void 0 && current.endpoint === endpoint) item.registry.delete(endpoint.owner);
+      } catch {
+      }
+    }
   };
+}
+
+// src/mcp/diag.ts
+import { join as join8 } from "node:path";
+function buildChannelDiag(version, report, stage, error) {
+  const text = error === void 0 ? "" : error instanceof Error ? error.message : String(error);
+  return {
+    version,
+    at: Date.now(),
+    pid: process.pid,
+    stage,
+    ...text === "" ? {} : { error: text.length > 200 ? text.slice(0, 200) : text },
+    env: {
+      node: process.versions.node ?? "",
+      electron: process.versions.electron ?? "",
+      runAsNode: process.env.ELECTRON_RUN_AS_NODE !== void 0,
+      execArgv: [...process.execArgv]
+    },
+    report
+  };
+}
+async function writeChannelDiag(dataRoot, diag) {
+  try {
+    await writeJsonAtomic(join8(expandHome(dataRoot), "mcp-channel-diag.json"), diag);
+  } catch {
+  }
 }
 
 // src/mcp/tools.ts
@@ -1836,7 +1940,7 @@ function createMcpEndpoint(options = {}) {
 
 // src/knowledge/retitle.ts
 import { readdir as readdir2, readFile as readFile6, rename as rename2, stat, unlink as unlink2 } from "node:fs/promises";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 var ID_RE = /<!--\s*oblivion:id=(\S+)\s+version=(\d+)\s*-->/;
 var FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 var SECTION_RE = /^##\s+/;
@@ -1936,7 +2040,7 @@ async function listNotes(dir, limit = 10) {
   const out = [];
   for (const file of files) {
     if (!file.endsWith(".md") || file.startsWith(".")) continue;
-    const path = join8(dir, file);
+    const path = join9(dir, file);
     const raw = await readFile6(path, "utf8").catch(() => "");
     if (raw === "") continue;
     const parsed = parseNote(raw);
@@ -1962,7 +2066,7 @@ async function freeName(dir, base, self, taken) {
   let candidate = base + ".md";
   let n = 2;
   for (; ; ) {
-    const busy = taken.has(candidate) || await stat(join8(dir, candidate)).then(() => true).catch(() => false);
+    const busy = taken.has(candidate) || await stat(join9(dir, candidate)).then(() => true).catch(() => false);
     if (!busy || candidate === self) return candidate;
     candidate = base + "-" + n + ".md";
     n += 1;
@@ -1992,10 +2096,10 @@ async function applyRetitle(deps, entries) {
     if (fileNameOf({ title, topic: note.topic }) + ".md" !== note.file) {
       target = await freeName(deps.mdDir, fileNameOf({ title, topic: note.topic }), note.file, taken);
       try {
-        await rename2(note.path, join8(deps.mdDir, target));
+        await rename2(note.path, join9(deps.mdDir, target));
       } catch {
         try {
-          await writeFile(join8(deps.mdDir, target), content, "utf8");
+          await writeFile(join9(deps.mdDir, target), content, "utf8");
           await unlink2(note.path);
         } catch {
           target = note.file;
@@ -2007,14 +2111,14 @@ async function applyRetitle(deps, entries) {
       }
     }
     let itemSynced = false;
-    const itemRaw = await readFile6(join8(deps.dataDir, note.id + ".json"), "utf8").catch(() => "");
+    const itemRaw = await readFile6(join9(deps.dataDir, note.id + ".json"), "utf8").catch(() => "");
     if (itemRaw !== "") {
       try {
         const item = JSON.parse(itemRaw);
         item.title = title;
         if (entry.tags && entry.tags.length > 0) item.tags = entry.tags;
         item.updated_at = Date.now();
-        await writeFile(join8(deps.dataDir, note.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
+        await writeFile(join9(deps.dataDir, note.id + ".json"), JSON.stringify(item, null, 2) + "\n", "utf8");
         itemSynced = true;
       } catch {
         itemSynced = false;
@@ -2028,7 +2132,7 @@ function createRetitleService(deps) {
   const mdRoot = expandHome(deps.mdRoot);
   const dataDir = expandHome(deps.dataRoot);
   const qaDir = deps.classify?.session ?? deps.classify?.qa_loop ?? "01_\u95EE\u7B54\u6C89\u6DC0";
-  const mdDir = join8(mdRoot, qaDir);
+  const mdDir = join9(mdRoot, qaDir);
   return {
     list: (limit = 10) => listNotes(mdDir, limit),
     async apply(entries) {
@@ -2050,7 +2154,7 @@ function createRetitleService(deps) {
 
 // src/knowledge/wiki.ts
 import { mkdir as mkdir7, readdir as readdir3, readFile as readFile7, stat as stat2 } from "node:fs/promises";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 var ID_MARKER2 = "oblivion:";
 var WIKI_MARKER = "oblivion:wiki";
 var WIKI_DIR_FALLBACK = "02_Wiki\u9875\u9762";
@@ -2174,7 +2278,7 @@ async function listWikiPages(dir) {
   const out = [];
   for (const file of files) {
     if (!file.endsWith(".md") || file.startsWith(".")) continue;
-    const path = join9(dir, file);
+    const path = join10(dir, file);
     const raw = await readFile7(path, "utf8").catch(() => "");
     if (raw === "" || !raw.includes(WIKI_MARKER)) continue;
     const marker = new RegExp(WIKI_MARKER + "[^>]*?members=(\\d+)").exec(raw);
@@ -2192,8 +2296,8 @@ async function listWikiPages(dir) {
 function createWikiService(deps) {
   const mdRoot = expandHome(deps.mdRoot);
   const qaDir = deps.classify?.session ?? deps.classify?.qa_loop ?? "01_\u95EE\u7B54\u6C89\u6DC0";
-  const mdDir = join9(mdRoot, qaDir);
-  const wikiDir = join9(mdRoot, safeDirName(deps.classify?.wiki ?? WIKI_DIR_FALLBACK) || WIKI_DIR_FALLBACK);
+  const mdDir = join10(mdRoot, qaDir);
+  const wikiDir = join10(mdRoot, safeDirName(deps.classify?.wiki ?? WIKI_DIR_FALLBACK) || WIKI_DIR_FALLBACK);
   void deps.dataRoot;
   async function memberOf(note) {
     const raw = await readFile7(note.path, "utf8").catch(() => "");
@@ -2243,13 +2347,13 @@ function createWikiService(deps) {
         const page = renderWikiPage({ cluster: { ...cluster, title }, members, at });
         const base = safeDirName(title).replace(/^[.\s]+/, "").replace(/[.\s]+$/, "").replace(/\//g, "_") || "untitled";
         let file = base + ".md";
-        const existing = await readFile7(join9(wikiDir, file), "utf8").catch(() => "");
+        const existing = await readFile7(join10(wikiDir, file), "utf8").catch(() => "");
         if (existing !== "" && !existing.includes(WIKI_MARKER)) {
           file = await freeName(wikiDir, base + "-oblivion", "", taken);
         } else if (existing === "") {
           file = await freeName(wikiDir, base, "", taken);
         }
-        await writeFile(join9(wikiDir, file), page, "utf8");
+        await writeFile(join10(wikiDir, file), page, "utf8");
         taken.add(file);
         const pageLink = file.replace(/\.md$/i, "");
         let wrote = 0;
@@ -2475,6 +2579,11 @@ function registerPerspective(ctx, config, deps) {
 }
 
 // src/prompt.ts
+var OBLIVION_SECTION_ORDER = 650;
+function resolveSectionOrder(name2, systemPrompt) {
+  const fromHost = systemPrompt?.getSectionOrder?.(name2);
+  return typeof fromHost === "number" && Number.isFinite(fromHost) ? fromHost : OBLIVION_SECTION_ORDER;
+}
 var OBLIVION_SYSTEM_PROMPT = [
   "## Oblivion \u8BA4\u77E5\u966A\u4F34\u89C4\u5219",
   "",
@@ -2580,7 +2689,7 @@ function readRelatedHint(now2 = Date.now()) {
 
 // src/profile/index.ts
 import { mkdir as mkdir8, readFile as readFile8 } from "node:fs/promises";
-import { dirname as dirname3, join as join10 } from "node:path";
+import { dirname as dirname3, join as join11 } from "node:path";
 
 // src/profile/schema.ts
 function defaultProfile() {
@@ -2616,7 +2725,7 @@ function mergeProfile(cur, signal) {
 // src/profile/index.ts
 var CONFIDENCE_FLOOR = 0.3;
 function registerProfile(ctx, config) {
-  const path = join10(expandHome(config.dataRoot), "profile.json");
+  const path = join11(expandHome(config.dataRoot), "profile.json");
   async function raw() {
     try {
       const parsed = JSON.parse(await readFile8(path, "utf8"));
@@ -2678,7 +2787,7 @@ function extractStyleSignal(qa) {
 
 // src/qa-loop/index.ts
 import { appendFile, mkdir as mkdir9, readFile as readFile9 } from "node:fs/promises";
-import { basename, dirname as dirname4, join as join11 } from "node:path";
+import { basename, dirname as dirname4, join as join12 } from "node:path";
 
 // src/util/ctx-shape.ts
 var PROBE_NAMES = [
@@ -2903,7 +3012,7 @@ function registerQaLoop(ctx, config, deps) {
       return void 0;
     }
   }
-  const probePath = join11(expandHome(config.dataRoot), "events-probe.jsonl");
+  const probePath = join12(expandHome(config.dataRoot), "events-probe.jsonl");
   async function probe(subject, event, sessionId, origin) {
     if (!config.enableEventProbe) return;
     try {
@@ -3155,9 +3264,9 @@ function registerQaLoop(ctx, config, deps) {
       loaderEntries
     };
   }
-  const diagPath = join11(expandHome(config.dataRoot), "mount-diag.json");
+  const diagPath = join12(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.10",
+    version: "0.2.11",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -3264,8 +3373,8 @@ function registerQaLoop(ctx, config, deps) {
   }
   let agentsScope;
   function reconcileAgents() {
-    const registry2 = agentsScope?.agents;
-    const live = registry2?.list?.() ?? [];
+    const registry = agentsScope?.agents;
+    const live = registry?.list?.() ?? [];
     diag.injectAgentCount = live.length;
     for (const agent of live) attachAgent(agent);
     diagDirty = true;
@@ -3300,7 +3409,7 @@ function registerQaLoop(ctx, config, deps) {
 }
 
 // src/stats/index.ts
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 
 // src/stats/summary.ts
 function ratio(part, whole) {
@@ -3433,9 +3542,9 @@ function suggest(summary, config, extra = {}) {
 
 // src/stats/trace.ts
 import { appendFile as appendFile2, mkdir as mkdir10, readFile as readFile10 } from "node:fs/promises";
-import { dirname as dirname5, join as join12 } from "node:path";
+import { dirname as dirname5, join as join13 } from "node:path";
 function createTraceStore(dataRoot, options) {
-  const path = join12(dataRoot, "decisions.jsonl");
+  const path = join13(dataRoot, "decisions.jsonl");
   const MS_PER_DAY3 = 864e5;
   async function readRaw() {
     try {
@@ -3522,7 +3631,7 @@ function registerStats(ctx, config, meta) {
     },
     async writeBootSnapshot(extra) {
       try {
-        const path = join13(dataRoot, "status.json");
+        const path = join14(dataRoot, "status.json");
         const stats = await summary();
         const payload = {
           version: meta.version,
@@ -3881,11 +3990,21 @@ function registerTools(ctx, deps) {
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt", "agents"];
 var provides = ["oblivion"];
-var VERSION = "0.2.10";
+var VERSION = "0.2.11";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
-  const ctx = rawCtx;
   const config = { ...DEFAULT_CONFIG, ...rawConfig ?? {} };
+  void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, null, "apply:enter"));
+  try {
+    applyInner(rawCtx, config);
+  } catch (error) {
+    void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, null, "apply:failed", error));
+    throw error;
+  }
+}
+function applyInner(rawCtx, config) {
+  const ctx = rawCtx;
+  let channelReport = null;
   const rootCtx = ctx.root;
   const usableHost = (value) => {
     if (value === null || typeof value !== "object") return false;
@@ -3924,7 +4043,7 @@ function apply(rawCtx, rawConfig) {
   ctx.effect(
     () => host.systemPrompt.section({
       name: OBLIVION_SECTION,
-      order: host.systemPrompt.getSectionOrder(OBLIVION_SECTION),
+      order: resolveSectionOrder(OBLIVION_SECTION, host.systemPrompt),
       text: (context) => {
         attachAgentFromPayload(context);
         if (context?.agent === void 0) return "";
@@ -3953,7 +4072,7 @@ function apply(rawCtx, rawConfig) {
         const scopeAny = scope;
         scopeAny.systemPrompt.section({
           name: OBLIVION_SECTION,
-          order: scopeAny.systemPrompt.getSectionOrder(OBLIVION_SECTION),
+          order: resolveSectionOrder(OBLIVION_SECTION, scopeAny.systemPrompt),
           text: (context) => {
             attachAgentFromPayload(context?.agent ?? context);
             const extra = perspective?.takePending() ?? "";
@@ -3988,8 +4107,8 @@ function apply(rawCtx, rawConfig) {
     }
   }
   try {
-    const registry2 = host.agents;
-    for (const agent of registry2?.list?.() ?? []) installForAgent(agent);
+    const registry = host.agents;
+    for (const agent of registry?.list?.() ?? []) installForAgent(agent);
   } catch {
   }
   host.on("agent/created", (...args) => {
@@ -4022,10 +4141,20 @@ function apply(rawCtx, rawConfig) {
     ctx.logger?.warn?.(config.logPrefix + " provide(oblivion) failed: %o", error);
   }
   const mcpDispose = publishMcp(
-    createMcpEndpoint({ facade, log: (message) => ctx.logger?.debug?.(config.logPrefix + " " + message) })
+    createMcpEndpoint({ facade, log: (message) => ctx.logger?.debug?.(config.logPrefix + " " + message) }),
+    {
+      onReport: (report) => {
+        channelReport = report;
+        void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, report, "apply:mcp"));
+        if (report.active === null) {
+          ctx.logger?.warn?.(config.logPrefix + " mcp channel unavailable: %o", report.scopes);
+        }
+      }
+    }
   );
   ctx.effect(() => mcpDispose, "oblivion-core: mcp channel");
   console.log("[oblivion-core] loaded");
+  void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, channelReport, "apply:done"));
 }
 var index_default = { name, inject, provides, apply };
 export {
