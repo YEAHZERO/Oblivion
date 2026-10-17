@@ -22,6 +22,8 @@
  *         —— 这是 0.1.0 的**根因修复**，理由见 `src/index.ts` 顶部注释
  *      4. 通道契约字面量与 `oblivion-core/src/mcp/channel.ts` **逐字相同**
  *         （防手脚不一致的关键断言：改一处忘另一处会当场红）
+ *      4b. 候选作用域清单 `CHANNEL_SCOPES` 两侧逐字相同（发布侧逐个尝试、读侧逐个找；
+ *          清单不一致 = 两侧看不见对方，2026-10-17 上机故障的形态之一）
  *      5. 契约字面量确实内联进了产物
  *      6. 传输面常量：端口 42081 / 只回环 / 1MB 上限 / 扩展白名单 /
  *         `::ffff:127.0.0.1`（Windows 上不加就全 401）
@@ -36,6 +38,7 @@
  *         —— 这条是新的「最关键的一条」：它证明请求真的交给了通道端点
  *     11. 通道为空 → 503 + `-32603` + 中文原因（不是静默不启动）
  *     12. 健康路由 200、`present` 跟随通道状态、非 GET → 405、**不需要 token**
+ *     12b. 表在**另一个作用域/realm** 时读侧照样找得到（端到端 200，探测如实回报）
  *     13. 鉴权三态：无 token 401 / 错 token 401 / 对 token 200
  *     14. 路由边界：404 / 405 / OPTIONS 204 + CORS
  *     15. 超 `maxBodyBytes` → 413
@@ -45,6 +48,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { runInNewContext } from 'node:vm';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const results = [];
@@ -84,6 +88,16 @@ function literals(source, label) {
   assert.ok(channel, `${label} 里找不到 MCP_CHANNEL 字面量`);
   assert.ok(version, `${label} 里找不到 MCP_API_VERSION 字面量`);
   return { channel: channel[1], version: Number(version[1]) };
+}
+
+/** 从源码文本里抠出候选作用域清单；顺序也算契约（读侧按同序找）。 */
+function scopeList(source) {
+  const match = source.match(/CHANNEL_SCOPES\s*=\s*\[([^\]]+)\]/);
+  assert.ok(match, '源码里找不到 CHANNEL_SCOPES 声明');
+  return match[1]
+    .split(',')
+    .map((part) => part.trim().replace(/^['"]|['"]$/g, ''))
+    .filter((part) => part !== '');
 }
 
 // ─────────────────────────── A. 形状与契约 ───────────────────────────
@@ -130,6 +144,16 @@ await check('通道契约与 core 逐字相同（MCP_CHANNEL + MCP_API_VERSION�
   assert.equal(mine.version, 1, `本包契约版本是 ${mine.version}`);
   assert.equal(mine.version, core.version, `契约版本不一致：本包 ${mine.version} vs core ${core.version}`);
   return `'${mine.channel}' · apiVersion=${mine.version}（与 core 逐字相同）`;
+});
+
+await check('候选作用域清单与 core 逐字相同（CHANNEL_SCOPES）', () => {
+  // 2026-10-17 上机修复：`Symbol.for` 跨 realm 相同，但槽挂在 `globalThis`/`process` 上，
+  // 而 `globalThis` 每个 realm 各一份。发布侧逐个尝试、读侧逐个找 —— 两侧清单必须同序同字面量。
+  const mine = scopeList(channelSource);
+  const core = scopeList(readFileSync(CORE_CHANNEL, 'utf8'));
+  assert.deepEqual(mine, core, `清单不一致：本包 [${mine}] vs core [${core}]`);
+  assert.deepEqual(mine, ['globalThis', 'process'], `清单变了：${mine.join(' → ')}`);
+  return `[${mine.join(' → ')}]（与 core 逐字相同）`;
 });
 
 await check('契约字面量已内联进产物', () => {
@@ -365,6 +389,12 @@ await check('端到端：健康路由（present 跟随通道 / 无需 token / �
     assert.equal(payload.endpoint.owner, 'selfcheck');
     assert.equal(payload.endpoint.version, '9.9.9-fake');
     assert.equal(payload.endpoint.ready, true);
+    assert.equal(payload.endpoint.pid, process.pid, '健康路由要回报本进程 pid（与 core 的 mcp-channel-diag.json 对照用）');
+    assert.ok(Array.isArray(payload.endpoint.scopes), '健康路由要带逐作用域探测');
+    const globalProbe = payload.endpoint.scopes.find((probe) => probe.scope === 'globalThis');
+    assert.ok(globalProbe, 'globalThis 探测缺席');
+    assert.equal(globalProbe.mapLike, true, 'globalThis 上就是那张表');
+    assert.equal(globalProbe.slots, 1, 'globalThis 上应有 1 个槽');
 
     const wrongMethod = await fetch(`${server.base}${TEST_HEALTH}`, { method: 'POST', body: '{}' });
     assert.equal(wrongMethod.status, 405);
@@ -373,6 +403,44 @@ await check('端到端：健康路由（present 跟随通道 / 无需 token / �
   } finally {
     await server.close();
     undo();
+    clearChannel();
+  }
+});
+
+await check('端到端：表在「另一个作用域/realm」时读侧照样找得到', async () => {
+  // 2026-10-17 上机故障的形态：发布侧写进别的 realm 的 `globalThis`，
+  // 读侧只看自己的 `globalThis` ⇒ 永远「未找到通道」。这里把表放进 `process`
+  // （每个进程一份），并且刻意用 vm 造 —— `instanceof Map` 假阴性，只有共形判定才认。
+  clearChannel();
+  const { endpoint, calls } = makeEndpoint();
+  const foreign = runInNewContext('new Map()');
+  assert.equal(foreign instanceof Map, false, '前提：vm 里造的表 instanceof 就是 false（否则这条测不到东西）');
+  const key = Symbol.for('@oblivion/core/mcp');
+  const hadKey = Object.prototype.hasOwnProperty.call(process, key);
+  const previous = process[key];
+  foreign.set(endpoint.owner, { apiVersion: 1, owner: endpoint.owner, endpoint, at: Date.now() });
+  process[key] = foreign;
+
+  const server = await listen({ port: TEST_PORT + 6 });
+  try {
+    const res = await post(server.url, JSON.stringify({ jsonrpc: '2.0', id: 21, method: 'tools/list' }));
+    assert.equal(res.status, 200, `表在 process 作用域时应 200，实际 ${res.status}（instanceof 假阴性会回 503）`);
+    const payload = await res.json();
+    assert.equal(payload.result.seenBy, 'selfcheck-endpoint', '跨 realm 的表里的端点要真的被调用');
+    assert.equal(calls.length, 1, '假端点没被调用');
+
+    const health = await (await fetch(`${server.base}${TEST_HEALTH}`)).json();
+    assert.equal(health.endpoint.present, true, '健康路由要认这张表');
+    const processProbe = health.endpoint.scopes.find((probe) => probe.scope === 'process');
+    assert.equal(processProbe.mapLike, true, 'process 探测要认成表（共形判定，不靠 instanceof）');
+    assert.equal(processProbe.slots, 1, 'process 上应有 1 个槽');
+    const globalProbe = health.endpoint.scopes.find((probe) => probe.scope === 'globalThis');
+    assert.equal(globalProbe.slots, 0, 'globalThis 上不该有槽（这条测的就是「去别的作用域找」）');
+    return '200 · 端点在 process 作用域（跨 realm 的表）· 探测如实回报';
+  } finally {
+    await server.close();
+    if (hadKey) process[key] = previous;
+    else delete process[key];
     clearChannel();
   }
 });
