@@ -42,8 +42,9 @@
 | [`@oblivion/daily-life`](oblivion-daily-life/README.md) | **0.0.1** | 「**有数**」物品服役账本：日均成本 / 服役进度 / 闲置天数 |
 | [`@oblivion/bundle`](oblivion-bundle/README.md) | **0.0.1** | 安装入口（插件清单 + 预设配置；**不是插件**） |
 
-> **`@oblivion/core` 的边界（一句话）**：设计书的 **Phase 2–6 合并进这一个包**。落盘写进既有知识库
-> `C:\Library\那些渐渐被遗忘`（`01_问答沉淀/` 分类，可由 config 改，装载时自动创建）；
+> **`@oblivion/core` 的边界（一句话）**：设计书的 **Phase 2–6 合并进这一个包**。落盘根**默认 `~/OblivionKB`**
+> （`01_问答沉淀/` 分类，**可由 config 改**，装载时自动创建）；本机（所有者）的既有知识库在
+> `C:\Library\那些渐渐被遗忘` —— 那是 **profile 用户层的覆盖**，不是代码里的默认值（见下方 DEC-029）；
 > **零侵入**（不阻塞主链路、无 cron/Worker/定时器，图衰减与保留期都是**读取时惰性计算**、防回灌）；
 > 挂载走**热挂**（DEC-028）。细节与闸门数字见 [`oblivion-core/README.md`](oblivion-core/README.md)。
 
@@ -59,7 +60,9 @@
 > 浏览器扩展接入（`@oblivion/http-bridge`）。**仍缺**：文档导入解析（anydoc）、向量检索、
 > 内容创作（Phase 6）、Obsidian 适配（Phase 7）、真机 e2e（Phase 9）、根 `VERSION` 递增器。
 >
-> **已裁定**：① 知识库**根 = `C:\Library\那些渐渐被遗忘`**、**内部按 `01_问答沉淀/` 分类**（DEC-029，已落地 core v0.1.3）；
+> **已裁定**：① 知识库**根默认 `~/OblivionKB`、一律可配置**、**内部按 `01_问答沉淀/` 分类**
+> （DEC-029；2026-10-17 把「默认值」与「本机私有路径」拆开：本机既有知识库 `C:\Library\那些渐渐被遗忘`
+> 改由 profile 用户层按 id 覆盖 `mdRoot`，机器本地、不入库）；
 > ② `@oblivion/core` **走热挂**（DEC-028）；③ `@oblivion/vimc` 的挂载**从 bundle 层改回 profile 用户层热挂**（2026-10-06）。
 
 ---
@@ -255,6 +258,7 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 | 未发版 | 2026-10-06 起 | 拆出 `@oblivion/core`（认知层内核，Phase 2–6 合并）+ `@oblivion/http-bridge`（浏览器扩展接入）；知识库根裁定为 `C:\Library\那些渐渐被遗忘`（DEC-029） |
 | 未发版 | 2026-10-06 起 | 新增 `@oblivion/panel`（侧栏观测面板）、`@oblivion/daily-life`（有数）、`@oblivion/bundle`（安装入口） |
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.12**：`mcp-channel-diag.json` 落盘**串行化**（`apply:done` 不再被后发先至吞掉）+ 失败不再静默；工具链加**构建守卫**（DSH 活着拒绝构建）。**产品版本未递增**：patch-only 规则下各插件自行递增，见 [`CHANGELOG.md`](CHANGELOG.md) |
+| 未发版 | 2026-10-17 | `@oblivion/core` **0.2.13**：`mdRoot` 默认值回到 **`~/OblivionKB`**（C 方案原意），本机既有知识库改由 **profile 用户层覆盖**（DEC-029 的语义从「代码默认值」降级为「本机配置」） |
 
 ## 许可证
 

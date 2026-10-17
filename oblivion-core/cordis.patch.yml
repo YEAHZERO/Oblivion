@@ -17,7 +17,7 @@
 #
 # 常用调参（要改就整段写进 config，缺省键由 resolveConfig 补默认）：
 #   dataRoot: '~/.oblivion/data'      # JSON 存储 + profile.json
-#   mdRoot:   'C:/Library/那些渐渐被遗忘'  # 笔记落盘根（DEC-029：所有者既有知识库）
+#   mdRoot:   '~/OblivionKB'          # 笔记落盘根（默认值；本机既有知识库在 profile 用户层覆盖成 C:/Library/那些渐渐被遗忘）
 #   mdClassify: { session: '01_问答沉淀', doc: '00_导入文件', wiki: '02_Wiki页面', content_creator: '03_创作产物' }
 #   valueThreshold: 0.3               # L4 价值闸门（勿改回 0.5，见 config.ts 注释）
 #   enablePerspective / enableFeedback: true

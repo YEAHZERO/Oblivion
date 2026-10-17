@@ -378,9 +378,14 @@ export const DEFAULT_CONFIG: Config = {
 }
 ```
 
-> **2026-10-06 所有者裁定**（已落地 v0.1.3）：
-> `mdRoot` = **`C:/Library/那些渐渐被遗忘`**（既有知识库），**内部按 `01_问答沉淀/` 分类**；
+> **2026-10-06 所有者裁定 DEC-029**（已落地 v0.1.3，**2026-10-17 调整**）：
+> `mdRoot` **默认 `~/OblivionKB`、一律可配置**；**内部按 `01_问答沉淀/` 分类**；
 > 新增 `mdClassify`（来源类型 → 子目录）与 `99_其他/` 兜底。见 §十 偏差 3。
+>
+> **2026-10-17 调整**：默认值从 `C:/Library/那些渐渐被遗忘` 改回 `~/OblivionKB` —— 原值其实是
+> **所有者这台机器**的私有路径，不该写成所有人的默认值。本机既有知识库改由 **profile 用户层按 id 覆盖**
+> `mdRoot`（`~/.dsh/profiles/desktop/cordis.patch.yml`，机器本地、不入库）。语义不变：根仍由配置决定，
+> 只是把「默认值」与「本机值」拆到了两处。
 
 ### `src/knowledge/store.ts`
 
@@ -585,7 +590,7 @@ ctx.tools.register({ name: 'oblivion_graph_neighbors', … }) // id / limit
 |---|---|---|---|
 | 1 | `systemPrompt.section({ order, content })` | `{ name, order: getSectionOrder(NAME), text }`，且包在 `ctx.effect()` 里 | 真实 API 字段不同；order 60 要走真实槽位映射 |
 | 2 | 幂等键 `event.turnId` | `sessionId + event.data.turn` | 事件里没有 `turnId` |
-| 3 | 落盘 `10-Topics/`（早期 §25.3：`oblivion_docs/` 分类） | **`mdRoot = C:/Library/那些渐渐被遗忘`** + `mdClassify`（问答沉淀 → `01_问答沉淀/`，兜底 `99_其他/`） | **2026-10-06 所有者裁定** |
+| 3 | 落盘 `10-Topics/`（早期 §25.3：`oblivion_docs/` 分类） | **`mdRoot` 默认 `~/OblivionKB`（一律可配置）** + `mdClassify`（问答沉淀 → `01_问答沉淀/`，兜底 `99_其他/`）；本机既有知识库 `C:/Library/那些渐渐被遗忘` **由 profile 用户层覆盖** | **2026-10-06 裁定 DEC-029；2026-10-17 拆开「默认值 / 本机配置」**（默认值不该写死某个人的私有路径） |
 | 4 | 价值阈值 0.5 | **0.30** | 实测 0.5 会让正常问答一律被丢弃（真实 233 字技术回答仅 0.370），是「装好了但库永远为空」的静默 bug |
 | 5 | `` `source_type === 'qa_loop'` `` 判防回灌 + 分类 | 防回灌判 `sources[].type === 'qa_loop'` / `ref` 前缀；分类按来源类型映射 | 事件里没有 `source_type` 字段 |
 | 6 | `inject: ['tools','llm','systemPrompt','session']` | `inject: ['tools','systemPrompt']` | `session` 走事件面即可；`llm` 的稳定调用面未确认，留成 `evaluate(llmScore)` 注入点 |

@@ -1435,7 +1435,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join4(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.12",
+    version: "0.2.13",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -3728,11 +3728,15 @@ function registerMcp(options = {}) {
 var DEFAULT_CONFIG = {
   dataRoot: "~/.oblivion/data",
   /**
-   * 文档根（所有者裁定 2026-10-06）：直接写进既有的知识库，不再单开 `oblivion_docs/`。
+   * 文档根默认值 = **C 方案原意**（`Oblivion C 方案 · 具体实施计划.md` 的落点）。
+   *
    * 用正斜杠书写：Windows 上 `path.isAbsolute('C:/…')` 成立，`expandHome()` 原样放行，
    * 且写进 YAML 时不需要转义反斜杠。
+   *
+   * 本机（所有者）既有知识库是 `C:/Library/那些渐渐被遗忘` —— 那是**profile 用户层的覆盖**，
+   * 不是这里的默认值，理由见 `Config.mdRoot` 的注释。
    */
-  mdRoot: "C:/Library/\u90A3\u4E9B\u6E10\u6E10\u88AB\u9057\u5FD8",
+  mdRoot: "~/OblivionKB",
   mdClassify: {
     // 问答沉淀（我们的捕获来源是 session；qa_loop 是设计书的原始命名，一并兼容）
     session: "01_\u95EE\u7B54\u6C89\u6DC0",

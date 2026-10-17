@@ -354,7 +354,8 @@ node scripts/normalize-links.mjs --json                             # 结构化�
 node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,02_Wiki页面"
 ```
 
-它扫 `--root`（默认 `C:/Library/那些渐渐被遗忘`）下 `--dirs`（默认 `01_问答沉淀,02_Wiki页面`）里
+它扫 `--root`（默认 = **代码默认值 `~/OblivionKB`**；本机既有知识库不在那儿，**要显式传
+`--root 'C:/Library/那些渐渐被遗忘'`**）下 `--dirs`（默认 `01_问答沉淀,02_Wiki页面`）里
 **带 `oblivion:` 标记**的笔记，只保留「文件真的在盘上」的链接，末尾复核多段数 / 悬空数 / 弱标题数。
 现场（2026-10-06）复核：多段笔记 0 篇、悬空链接 0 条、相关链接 388 条。
 
@@ -364,7 +365,7 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `dataRoot` / `mdRoot` | `~/.oblivion/data` / **`C:/Library/那些渐渐被遗忘`** | JSON 存储 / 笔记落盘根。**`mdRoot` 可自由自定义**（绝对路径或 `~/` 写法都行）；**一经配置，装载时就自动创建**该根与全部分类目录 |
+| `dataRoot` / `mdRoot` | `~/.oblivion/data` / **`~/OblivionKB`** | JSON 存储 / 笔记落盘根。**默认值是给新用户的**，本机私有路径一律靠 `config` 覆盖（本机既有知识库 `C:/Library/那些渐渐被遗忘` 在 profile 用户层按 id 覆盖 `mdRoot`，机器本地、不入库）；绝对路径或 `~/` 写法都行；**一经配置，装载时就自动创建**该根与全部分类目录 |
 | `mdClassify` | `session`·`qa_loop` → `01_问答沉淀`、`doc` → `00_导入文件`、`wiki` → `02_Wiki页面`、`content_creator` → `03_创作产物` | 来源类型 → 子目录；未命中落 `99_其他/`（§25.3）。目录名会**消毒**（去掉 `..`／盘符／非法字符），不会逃出 `mdRoot` |
 | `valueThreshold` | `0.3` | L4 价值闸门；**勿改回 0.5**（会让一切被丢弃） |
 | `enablePerspective` / `enableFeedback` | `true` | 认知陪伴 / 反馈微调开关 |

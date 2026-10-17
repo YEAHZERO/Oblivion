@@ -12,6 +12,24 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/core` v0.2.13：`mdRoot` 默认值回到 **`~/OblivionKB`**（本机路径改由 profile 覆盖）
+
+`config.mdRoot` 的默认值在 2026-10-06 被写成 `C:/Library/那些渐渐被遗忘` —— 那是**所有者这台机器**的
+既有知识库。于是默认值变成了某个人的私有路径：别人 clone 下来第一次跑，笔记会落进一个叫「那些渐渐被遗忘」
+的目录。**默认值该是通用落点，私有路径属于本机配置**（2026-10-17 所有者裁定）。
+
+- `src/config.ts`：`DEFAULT_CONFIG.mdRoot` → **`~/OblivionKB`**（C 方案原意）；`Config.mdRoot` 的注释同时
+  写清两件事：默认值给新用户；DEC-029 的「根 = `C:/Library/那些渐渐被遗忘`」**降级为本机 profile 覆盖**。
+- `oblivion-panel`：`fallbackMdRoot` 同步改成 `~/OblivionKB`，并在组装 snapshot 时过 `expandHome()`
+  —— 面板原先把这个值**直接当路径用**，遇到 `~/` 写法会读不到（这条只在 core 的 `status.json` 缺失时才走）。
+  **随 panel 0.0.16 一并落地**（面板带 client 半边，构建需要 DSH 停）。
+- **本机（所有者）实际路径不变**：在 `~/.dsh/profiles/desktop/cordis.patch.yml` 用户层按 id 覆盖
+  `@oblivion/core` 的 `mdRoot = 'C:/Library/那些渐渐被遗忘'`（机器本地、不入库；改前已备份
+  `cordis.patch.yml.bak-before-mdroot-default-*`）。这是**必须**的一步 —— core 挂在 bundle 层，
+  代码默认值一改，不钉住就会静默换目录，症状是「面板里知识库空了」。
+- 兼容性：`resolveConfig()` 只接受**显式给出**的键，缺省回落 `DEFAULT_CONFIG` ⇒ 已经写了 `mdRoot`
+  的老配置**一个字不用改**，行为不变。
+
 ## [未发布] — `@oblivion/core` v0.2.12：`mcp-channel-diag.json` 落盘**串行化**（`apply:done` 不再被后发先至吞掉）+ 失败不再静默
 
 `<dataRoot>/mcp-channel-diag.json` 是「通道发布走到哪一步」的唯一证据位，但它的三处写入是**即发即忘**的

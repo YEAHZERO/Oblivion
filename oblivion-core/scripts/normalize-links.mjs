@@ -8,6 +8,10 @@
 //   node scripts/normalize-links.mjs                      # 干跑，只打印计划
 //   node scripts/normalize-links.mjs --apply              # 执行
 //   node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,02_Wiki页面" --json
+//
+// `--root` 的默认值 = **代码默认值** `DEFAULT_CONFIG.mdRoot`（`~/OblivionKB`），与
+// `rename-notes.mjs` / `repair-reasoning-notes.mjs` 同一条规则 —— 这三个脚本都**不读 profile 配置**，
+// 所以本机（知识库在 `C:/Library/那些渐渐被遗忘`）跑的时候必须显式传 `--root`。
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
@@ -20,7 +24,7 @@ function arg(name, fallback) {
   return next && !next.startsWith('--') ? next : true;
 }
 
-const ROOT = resolve(String(arg('root', 'C:/Library/那些渐渐被遗忘')));
+const ROOT = resolve(kit.expandHome(String(arg('root', kit.DEFAULT_CONFIG.mdRoot))));
 const DIRS = String(arg('dirs', '01_问答沉淀,02_Wiki页面'))
   .split(',')
   .map((s) => s.trim())

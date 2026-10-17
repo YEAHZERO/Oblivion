@@ -9,11 +9,20 @@
 
 export interface Config {
   readonly dataRoot: string;
+  /**
+   * 笔记落盘根。**默认 `~/OblivionKB`，一律可由配置覆盖**（本机既有知识库在 profile 用户层覆盖它）。
+   *
+   * 2026-10-17 所有者裁定：默认值**回到 C 方案原意 `~/OblivionKB`**。
+   * 2026-10-06 那次改成 `C:/Library/那些渐渐被遗忘`，等于把**所有者这台机器的私有路径**
+   * 写成了所有人的默认值 —— 默认值是「别人 clone 下来第一眼看到的落点」，不该是某个人的目录。
+   * 所以 DEC-029 的「知识库根 = `C:/Library/那些渐渐被遗忘`」**降级为本机配置**
+   * （`~/.dsh/profiles/desktop/cordis.patch.yml` 里按 id 覆盖 `mdRoot`，机器本地、不入库），
+   * 代码里只留通用默认值。改这一段要同步 `cordis.patch.yml` 的调参表与 `README.md`。
+   */
   readonly mdRoot: string;
   /**
    * §25.3 MD 分类规则：**来源类型 → mdRoot 下的子目录**。
    *
-   * 2026-10-06 所有者裁定：文档根 = `C:/Library/那些渐渐被遗忘`（既有知识库），
    * **内部按 `01_问答沉淀/` 分类**（即设计书 §25.3 的编号目录方案，不再用 `oblivion_docs/`）。
    * 未命中任何规则 → `99_其他/`（§25.3 的兜底）。
    */
@@ -97,11 +106,15 @@ export const DEFAULT_CONFIG: Config = {
   dataRoot: '~/.oblivion/data',
 
   /**
-   * 文档根（所有者裁定 2026-10-06）：直接写进既有的知识库，不再单开 `oblivion_docs/`。
+   * 文档根默认值 = **C 方案原意**（`Oblivion C 方案 · 具体实施计划.md` 的落点）。
+   *
    * 用正斜杠书写：Windows 上 `path.isAbsolute('C:/…')` 成立，`expandHome()` 原样放行，
    * 且写进 YAML 时不需要转义反斜杠。
+   *
+   * 本机（所有者）既有知识库是 `C:/Library/那些渐渐被遗忘` —— 那是**profile 用户层的覆盖**，
+   * 不是这里的默认值，理由见 `Config.mdRoot` 的注释。
    */
-  mdRoot: 'C:/Library/那些渐渐被遗忘',
+  mdRoot: '~/OblivionKB',
   mdClassify: {
     // 问答沉淀（我们的捕获来源是 session；qa_loop 是设计书的原始命名，一并兼容）
     session: '01_问答沉淀',
