@@ -29,6 +29,13 @@
   代码默认值一改，不钉住就会静默换目录，症状是「面板里知识库空了」。
 - 兼容性：`resolveConfig()` 只接受**显式给出**的键，缺省回落 `DEFAULT_CONFIG` ⇒ 已经写了 `mdRoot`
   的老配置**一个字不用改**，行为不变。
+- **文档订正（同一批）**：`README.md` §五 偏离 4 里写的「`ctx.llm` 公开面只有注册类方法」是**错的**。
+  2026-10-17 核对已装宿主：`listProviders` / `listConfigurableProviders` / `listModels` /
+  `resolveModelInfo` / `prepareCall` / `stream` **全部公开**（只是**没有**高层 `chat()`，要自己拼
+  `{ provider, model, messages }` 并用 `BlockAssembler` 收流）；密钥走
+  `ctx.credentials.resolve(credentialRef('…'))`。据此写出的**自动整理 + 设置页**设计稿：
+  [`.design/自动整理与设置页.md`](.design/自动整理与设置页.md)（**Draft**）。判定逻辑**默认不变**
+  （仍走确定性实现），LLM 只用于显式开启的自动整理。
 
 ## [未发布] — `@oblivion/core` v0.2.12：`mcp-channel-diag.json` 落盘**串行化**（`apply:done` 不再被后发先至吞掉）+ 失败不再静默
 

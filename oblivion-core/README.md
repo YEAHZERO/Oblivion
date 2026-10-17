@@ -107,7 +107,7 @@ oblivion_feedback target=cost signal=-1    # 同一维度连点 2 次后不再�
 | 1 | `systemPrompt.section({ order, content })` | 真实字段是 `{ name, order, text }`，且要包在 `ctx.effect()` 里；`order` 走 `getSectionOrder('NAME')` | 按真实 API 实现 |
 | 2 | 幂等用 `event.turnId` | 事件里**没有** `turnId`，turn 号在 `event.data.turn` | 幂等键 = `sessionId + event.data.turn` |
 | 3 | 防回灌判 `qa.source_type === 'qa_loop'` | 会话事件里没有该字段 | 改为判 `sources[].type === 'qa_loop'` / `ref` 前缀 |
-| 4 | 语义去重与价值评估用 LLM（0.85 / 0.5） | `ctx.llm` 公开面只有 `registerAdapter` 等注册类方法；`llm.stream(request)` 需要完整 provider/model 请求体 | 先做**确定性**实现（token Jaccard + 规则打分），LLM 判定留成 `evaluate(ctx.llmScore)` 注入点 |
+| 4 | 语义去重与价值评估用 LLM（0.85 / 0.5） | `ctx.llm` **确实**公开 `listProviders` / `listModels` / `prepareCall` / `stream`（`@deepseek-ai/dsh-llm`），但**没有**高层 `chat()`：调用方要自己拼 `{ provider, model, messages }` 并用 `BlockAssembler` 收流（官方包 `dsh-session-title-llm` 就是这个写法）。密钥经 `ctx.credentials.resolve(credentialRef('…'))` 取，默认选路走 `ctx.agentDefaultModel.currentSelection()` | 判定**默认仍走确定性**实现（token Jaccard + 规则打分），不给「是否收录」叠一层外部模型依赖；LLM 面留给**自动整理**（默认关，设计见 [`.design/自动整理与设置页.md`](../.design/自动整理与设置页.md)） |
 | 5 | `config: '~/.oblivion/data'` | Host 的 cwd 不可假定 | `expandHome()` 自己展开 `~` |
 | 6 | 价值阈值 0.5 | **实测会让正常问答一律被丢弃**（真实 233 字技术回答只有 0.370） | 重标定为 **0.30**（`src/config.ts` 有实测分布注释） |
 | 7 | `package.json` 的 `oblivion.bundle` | 工作区规范是 `dshx.yml` + `cordis.patch.yml`；且 `dsh.bundle` 会让激活变成需重启的 bundle 层 | 不声明 `dsh.bundle`，走可热挂路径 |
