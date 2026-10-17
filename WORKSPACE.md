@@ -179,6 +179,32 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/obl-brand/session/me
   `404` = 没注册成 —— 磁盘上的版本没被装载（node 半边要**重启 DSH** 才换），或挂载期抛了异常
   （后者会在 `%TEMP%\obl-brand-restart.log` 与宿主日志里留下一条 warn）。
 
+### 每轮一条正式摘要：`tools/push-to-dsh.ps1`
+
+把「在别处（OpenCode）做完一轮 → 这一轮的内容要能在 DSH 里看见」收成**一个动作**
+（2026-10-17 所有者选定；上一节的手工 `Invoke-RestMethod` 仍然有效，但日常用这个）：
+
+```powershell
+# 摘要从文件读（多行、带引号/反引号/中文，别在命令行里转义）
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/push-to-dsh.ps1 `
+  -Session session-10837d9b-ba07-420d-a8d3-3e14e1972481 -TextFile $env:TEMP\round.md
+
+# 只认端口、只回显要发什么，不注入
+powershell -File tools/push-to-dsh.ps1 -Session session-… -Text '一句话' -DryRun
+```
+
+| 它替你做的 | 为什么手工版容易踩 |
+| --- | --- |
+| **自己认端口**：`-Port` → 缓存 `<data>\brand-endpoint.json` → 心跳/装载留痕里的宿主 pid → 逐个探 `GET /obl-brand/plugins` | 端口每次启动都变，手工版每次都要重跑一遍认端口的循环 |
+| **从文件读正文**（`-TextFile`） | 摘要是多行文本 + 引号 + 中文，命令行转义极容易发出去才发现少了一段 |
+| **`requestId` 按内容算**（`sha1(session + 正文)` 前 12 位） | 同一段摘要重推两次不会在会话里出现两条 ⇒ 脚本重试是安全的 |
+
+- **代价**：注入一条 = 驱动 DSH 跑一轮 agent（花额度、会真的产出回答）⇒ 它是「**每轮一条**」，不是「每步一条」。
+- 认端口用的探测是 `GET /obl-brand/plugins`（只读，无副作用）；缓存**复用前也会重探一次**，
+  所以宿主重启换了端口不会打到旧端口上。
+- 实现里踩过的坑写在脚本注释里：`Get-ListeningPorts` 不能用 `$pid` 当循环变量
+  （只读自动变量，PS 5.1 抛 `VariableNotWritable` —— 与 2026-10-16 的孤儿清扫同一个坑）。
+
 ### 从运行中的会话读回最近的问答：`GET /obl-brand/session/tail`
 
 上一条是**只写**的：消息进 DSH、回答留在 DSH，调用方看不到 —— 「在别的工具里继续这条会话」只能走一半。

@@ -12,11 +12,11 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — 工具：**构建守卫**（DSH 活着就拒绝构建）—— 定案「更新插件后 DSH 起不来」
+## [未发布] — 工具：**构建守卫**（DSH 活着就拒绝构建）+ `tools/push-to-dsh.ps1`（每轮一条摘要推入 DSH 会话）
 
-不改包内代码，改的是工具链，所以**没有版本号变化**（`VERSION` 不动）。
+两件都不改包内代码，改的是工具链与工作方式，所以**没有版本号变化**（`VERSION` 不动）。
 
-2026-10-17 01:48Z 真机故障的根因收口：更新插件后 DSH 弹「应用无法启动或已意外停止」，
+**① 构建守卫** —— 2026-10-17 01:48Z 真机故障的根因收口：更新插件后 DSH 弹「应用无法启动或已意外停止」，
 详情是 `web boot: 4 entries did not activate`。机制在 DSH 侧，四条逐条可核：client 产物的
 `rev = sha1(mtimeMs, ctimeMs, size)`（`dsh-client-modules/lib/index.js:193`）⇒ 任何重写都换 rev；
 路由按**含 rev 的完整 URL** 精确查表、查不到即 `404`（`:958`）；`compose()` 只保留**上一代** batch 响应
@@ -29,8 +29,14 @@ client 产物**会让正在启动/刷新的界面手里全是旧 rev 的 URL ⇒
 `DeepSeek Harness` + 心跳/装载留痕里仍活着的插件宿主 pid（后者让「从 DSH 内部跑构建」也被拦下）。
 `typecheck` / `test` / `version` / `selfcheck` / `compat` / `install` 不受影响（不写 `lib/client.js`）。
 
-配套文档：[`WORKSPACE.md`](WORKSPACE.md) 新增**已知限制 9**（运行中重建 ⇒ 界面起不来），
-「检查：四层闸门」补构建守卫；[`.memory/daily/2026-10-17.md`](.memory/daily/2026-10-17.md) 记本轮。
+**② `tools/push-to-dsh.ps1`** —— 所有者选定的「**每轮一条正式摘要**」工作流的执行端：把 OpenCode 侧
+这一轮的正式摘要作为**用户消息**推给 DSH 会话（走 brand 的注入路由，与界面「发送」同一条链），
+DSH 里即能看见。它自己认端口（`-Port` → 缓存 → 宿主 pid 的监听端口逐个探 `GET /obl-brand/plugins`，
+缓存复用前也重探）、从文件读多行正文（`-TextFile`）、`requestId` 按**内容**算（同内容重推不会出现两条）、
+`-DryRun` 只认端口不注入。代价写在脚本抬头：注入一条 = 驱动 DSH 跑一轮 agent。
+
+配套文档：[`WORKSPACE.md`](WORKSPACE.md) 新增**已知限制 9**（运行中重建 ⇒ 界面起不来）与
+「每轮一条正式摘要」一节、「检查：四层闸门」补构建守卫；[`.memory/daily/2026-10-17.md`](.memory/daily/2026-10-17.md) 记本轮。
 
 ## [未发布] — `@oblivion/brand` v0.1.7：会话**读回**（`GET /obl-brand/session/tail`）—— 闭环「注入 → 等一轮 → 读回」
 
