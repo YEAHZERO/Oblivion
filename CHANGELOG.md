@@ -47,6 +47,15 @@ core 0.2.15 起就有了 `<dataRoot>/settings.json` 这一层与 `GET|POST /obli
 验证：typecheck ✅ / 单测 **34 → 44** / 自检 **15 → 18**（含跨包三项）/ 构建 v0.0.17 / check:version ✅ /
 `verify:dsh` 契约 **6 → 8/8**（新增 `settings.section` 座位与 `clientPkg dsh-client-ui-settings`）。
 
+**真机验收**（2026-10-17，完全重启 DSH 后；只读面 **14/14** 全绿）：打开「设置 → Oblivion 知识库」后，
+`panel-client-diag.json` 里出现 `where=settings-section`（`id=oblivion-knowledge` / `order=47`）——
+这条**只有**设置外壳真把这个座位渲染出来、组件挂载并 GET 成功之后才会发（`inject` 没抛 ≠ 已挂上）；
+分节内的 GET 200（`version=0.2.17`）、下拉框拿到
+`[agnes, agnes-api, deepseek-official, deepseek-account, deepseek-web]`、「打开会用哪条路」
+`host-default → agnes-api/agnes-3.0-flash`、`pending=[]` 且 `values=[]`；`<dataRoot>/settings.json`
+**仍不存在**（本轮没发任何写请求 —— 写语义由跨包自检用 core 真产物钉住）。
+四组卡片与两个下拉框由所有者目视复核。
+
 ## [0.2.17] — 设置页的**读写通路**（core 自己挂 HTTP 路由）+ **修一个让自动整理整条死掉的缺陷**
 
 ### 🔴 修：`llm` / `agentDefaultModel` 在真宿主上**根本读不到**

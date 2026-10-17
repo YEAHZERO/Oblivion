@@ -222,8 +222,9 @@ Invoke-WebRequest 'http://127.0.0.1:19387/oblivion-panel/status' -UseBasicParsin
 | `pnpm run selfcheck` | ✅ **15 → 18/18**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放、合栏、**三段**、曲线、**设置分节的跨包契约**） |
 | `dshx check` | ✅ manifest / export / boot-marker / client-platform（**无 default export**） |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **6 → 8/8**（host / `webServer` / `npmPkg dsh-better-sidebar` / `clientPkg dsh-client-ui-settings` / `__ModuleLoader__` / `sidebar.footer.action` / **`settings.section`** / mount dependencies） |
+| **设置页真机验收（0.0.17）** | ✅ **14/14**（2026-10-17，完全重启 DSH 后）：座位**真挂载**（`panel-client-diag.json` 的 `where=settings-section` / `id=oblivion-knowledge` / `order=47`）/ 分节内 GET 200 `version=0.2.17` / provider 清单含 `agnes`·`agnes-api` / 「打开会用哪条路」`host-default → agnes-api/agnes-3.0-flash` / `pending=[]` 且 `values=[]` / **`settings.json` 仍不存在**（只读面没碰配置层） |
 | Node 半边真实装载 | ✅ **已验证**：路由 `HTTP 200` + `%TEMP%\oblivion-panel\host-mount.json` |
-| 浏览器半边渲染 | ✅ **已验证**（左栏入口 → 右侧 Oblivion 页；合栏与判定曲线由所有者目视复核） |
+| 浏览器半边渲染 | ✅ **已验证**（左栏入口 → 右侧 Oblivion 页；合栏 / 判定曲线 / **设置分节四组卡片与两个下拉框**均由所有者目视复核） |
 
 ## 六、已知边界
 
