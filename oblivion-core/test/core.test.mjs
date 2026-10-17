@@ -1434,6 +1434,27 @@ describe('自动整理（DEC-030）', () => {
     assert.equal(runtime.calls.length, 1);
   });
 
+  it('成功路径的返回**没有** `raw` 键（显式 `raw: undefined` 会挂宿主 lossless JSON 校验）', async () => {
+    const payload = JSON.stringify([{ id: 'a1', title: '甲', tags: [] }]);
+    const svc = organizeWith(
+      { enabled: true, provider: 'fake', model: 'm1' },
+      { runtime: fakeLlm({ 'fake/m1': payload }) },
+    );
+    const out = await svc.preview();
+    assert.equal(out.ok, true, out.reason);
+    assert.ok(
+      !('raw' in out),
+      '成功时连这个键都不该有（值是不是 undefined 不算数 —— 「键存在」本身就会被无损 JSON 校验拦下）',
+    );
+    // 失败路径**仍然**要把原话带回来（那是「当场看见模型没按格式回」的唯一凭据）
+    const failed = await organizeWith(
+      { enabled: true, provider: 'fake', model: 'm1' },
+      { runtime: fakeLlm({ 'fake/m1': '我觉得这些笔记都挺好，不用改。' }) },
+    ).preview();
+    assert.equal(failed.ok, false);
+    assert.ok('raw' in failed, '失败时原话要带回来');
+  });
+
   describe('选路来源与可选模型清单（设置页的数据源）', () => {
     it('status 直接答出生效选路（关着也答，且不用先 preview）', () => {
       const svc = organizeWith(

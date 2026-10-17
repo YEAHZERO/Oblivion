@@ -568,7 +568,8 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
         considered: notes.length,
         dropped,
         reason: full.length > 0 ? '' : '模型没给出可用建议（解析结果为空）',
-        raw: full.length > 0 ? undefined : result.text.slice(0, 400),
+        // 成功路径不写 raw 键（显式 raw:undefined 会挂宿主「lossless JSON」校验）
+        ...(full.length > 0 ? {} : { raw: result.text.slice(0, 400) }),
       };
   };
 
