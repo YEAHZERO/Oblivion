@@ -64,6 +64,13 @@
 
 - typecheck ✅ / **单测 108 → 121**（+13：设置服务 6 例含「恢复默认」「被拒键不落盘」、设置路由 4 例含
   403/400/413/405 与缺 `webServer` 降级、懒取 llm 1 例、`configSources` 子键 1 例、`rejectedKeys` 1 例）/ **自检 36 → 37** ✅。
+- **真机验收（完全重启 DSH 后）**：`GET /oblivion-core/settings` **11/11 项通过** ——
+  ① 路由真的挂上（对照：**0.2.15 上同一条路由是 404**，所以这次 200 不是碰巧）；
+  ② `version=0.2.17`；③ `catalog.llmAvailable=**true**` —— **0.2.15 那个「裸读 llm 被吞成 null」的缺陷确实修好了**；
+  ④ `providers=[agnes, agnes-api, deepseek-official, deepseek-account, deepseek-web]`，与 profile 的
+  `config.providers` 逐条对应；⑤ `routeSource=host-default` ⇒ `agnes-api/agnes-3.0-flash`，
+  与 profile 的 `agent-default-model` 逐字一致；⑥ `pending=[]`、`sources.mdRoot=plugin`、`writable` 不含 `dataRoot`。
+- **未碰机器上的配置**：`<dataRoot>/settings.json` 至今不存在（所有写路径的单测都落在临时目录）。
 
 ## [0.2.16] — 设置页的**数据源**：可选模型清单经宿主注册表露出（自定义 provider 一视同仁）
 

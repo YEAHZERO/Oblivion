@@ -420,7 +420,8 @@ node scripts/normalize-links.mjs --root "D:/我的库" --dirs "01_问答沉淀,0
 **读**：设置页的模型下拉框（含「自动切换」的备用路）由 `OrganizeService.catalog()` 填 ——
 它**直接读宿主的 provider 注册表**（`ctx.llm.listProviders()` + `listModels()`），
 所以**用户自定义 provider 与官方 provider 一视同仁**：profile 里经 `dsh-llm-pi-ai` 的
-`config.providers` 登记、`baseURL` 指向自建服务的那些（本机的 `Agnes`），列出来就能选，
+`config.providers` 登记、`baseURL` 指向别处的那些（本机是两个 Agnes：`agnes` 走内网
+`http://10.81.45.217:9900/v1`、`agnes-api` 走 `https://apihub.agnes-ai.com/v1`），列出来就能选，
 **插件不做白名单**。
 
 **写**：`SettingsService.patch()` 写 `<dataRoot>/settings.json`（第三层配置）。
@@ -434,17 +435,34 @@ POST /oblivion-core/settings     # { "patch": { "mdRoot": "…", "organize": { "
 ```
 
 ```jsonc
-// GET 的响应（等于 SettingsSnapshot + catalog）：
+// GET 的响应（等于 SettingsSnapshot + catalog）。
+// 下面这段是 2026-10-17 在一台真机上抓的原文（只删了无关的长字段），不是「大致形状」：
 {
   "ok": true, "version": "0.2.17",
-  "path": "C:/Users/…/.oblivion/data/settings.json",
-  "values":   { "organize": { "enabled": true } },              // 设置层原始值（就是这个文件）
-  "sources":  { "mdRoot": "plugin", "organize.enabled": "settings", "organize.maxTokens": "default" },
-  "effective": { "mdRoot": "C:/Library/…", "organize": { "enabled": false, … } },  // **正在跑**的那份
-  "writable": ["mdRoot", "organize", …],                        // dataRoot 不在其中
-  "pending":  ["organize.enabled"],                             // 要**重启 DSH** 才生效的键
-  "catalog":  { "providers": [ { "id": "agnes", "name": "Agnes", "models": [ … ] } ],
-                "routes": [ … ], "routeSource": "config", "llmAvailable": true }
+  "path": "C:/Users/liveu/.oblivion/data/settings.json",
+  "values":   {},                                    // 设置层还是空的（这个文件还没被创建过）
+  "sources":  { "mdRoot": "plugin",                  // 来自 profile 的插件 config
+                "organize.enabled": "default", "organize.provider": "default" },
+  "effective": { "mdRoot": "C:/Library/那些渐渐被遗忘", "dataRoot": "~/.oblivion/data",
+                 "organize": { "enabled": false, "digest": true, "retitle": true,
+                               "provider": "", "model": "", "fallbacks": [],
+                               "maxTokens": 1024, "timeoutMs": 30000, "everyTurns": 0,
+                               "minIntervalMs": 600000, "autoApply": false, "batchSize": 8 } },
+  "writable": ["mdRoot", "mdClassify", "semanticThreshold", …],   // dataRoot 不在其中
+  "pending":  [],                                                  // 没有待重启项（设置层是空的）
+  "catalog": {
+    "llmAvailable": true,
+    "routeSource": "host-default",                  // 没显式配 provider/model ⇒ 用宿主的默认选路
+    "routes": [{ "provider": "agnes-api", "model": "agnes-3.0-flash" }],
+    "providers": [                                  // ← 与 profile 的 config.providers 逐条对应
+      { "id": "agnes",            "name": "Agnes", "models": [{ "id": "agnes-2.5-flash" }] },
+      { "id": "agnes-api",        "name": "Agnes", "models": [{ "id": "agnes-3.0-flash" }] },
+      { "id": "deepseek-official", "name": "DeepSeek",
+        "models": [{ "id": "deepseek-flash", "name": "DeepSeek-V41-Flash" },
+                   { "id": "deepseek-v4-pro", "name": "DeepSeek-V4-Pro" }] },
+      { "id": "deepseek-account", … }, { "id": "deepseek-web", … }
+    ]
+  }
 }
 ```
 
@@ -452,6 +470,9 @@ POST /oblivion-core/settings     # { "patch": { "mdRoot": "…", "organize": { "
 // POST 的响应（在前者之上加三项）：
 { "saved": true, "changed": ["organize.enabled"], "rejected": ["bogus"], "restartRequired": true }
 ```
+
+> 顺带一提：`values` 里出现 `organize.enabled` 但 `effective.organize.enabled` 还是 `false`，
+> 而 `pending` 里有它 —— 这三行凑在一起才是完整的实话：「**已经存下了，但要重启才生效**」。
 
 三处**刻意的边界**：
 
