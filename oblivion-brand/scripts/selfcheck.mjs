@@ -6,8 +6,8 @@
  * 验证的是「本机能验证的全部」：
  *   1. 产物存在、可被真实 import（证明没有裸导入解析问题）
  *   2. 导出形状符合本包的约定
- *   3. apply 真的把四条路由挂上去（桩 webServer 必须收到 RESTART_PATH / ORPHANS_PATH /
- *      PLUGINS_PATH / SESSION_MESSAGE_PATH），且期间**一条 warn 都没有**。作用域桩带
+ *   3. apply 真的把五条路由挂上去（桩 webServer 必须收到 RESTART_PATH / ORPHANS_PATH /
+ *      PLUGINS_PATH / SESSION_MESSAGE_PATH / SESSION_TAIL_PATH），且期间**一条 warn 都没有**。作用域桩带
  *      Cordis 的服务访问守卫（读未声明的服务会抛），因此「在 webServer 作用域里读
  *      sessionController」这类写法会在这里直接失败 —— 它曾在真机上让整条路由消失。
  *      守卫本身还有一条**反向验证**（未声明会抛 / 未就绪不回调 / 声明后可读），
@@ -45,6 +45,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { zstdCompressSync } from 'node:zlib';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const results = [];
@@ -275,6 +276,7 @@ await check('导出形状符合本包约定', () => {
   assert.equal(mod.PLUGINS_PATH, '/obl-brand/plugins');
   assert.equal(mod.ORPHANS_PATH, '/obl-brand/orphans');
   assert.equal(mod.SESSION_MESSAGE_PATH, '/obl-brand/session/message');
+  assert.equal(mod.SESSION_TAIL_PATH, '/obl-brand/session/tail');
   assert.equal(mod.MOUNT_SWEEP_ENV, 'OBLIVION_BRAND_ORPHAN_SWEEP');
   assert.equal(mod.SESSION_INJECT_ENV, 'OBLIVION_BRAND_SESSION_INJECT');
   assert.equal(mod.MARKET_REGISTRY_ENV, ENV);
@@ -293,27 +295,38 @@ await check('导出形状符合本包约定', () => {
   assert.equal(typeof mod.describePromptFailure, 'function');
   assert.equal(typeof mod.httpStatusForPromptFailure, 'function');
   assert.equal(typeof mod.readRequestBody, 'function');
-  return '四条路径 / 两个开关常量 / 恢复命令 / 清单校验 / 清扫面 / 会话注入面 / apply 齐备';
+  // 会话读回面（只读）：解析查询 / 切帧解码 / 抽消息 / 找文件 / 读尾窗 / DSH_HOME 规则。
+  assert.equal(typeof mod.parseTailQuery, 'function');
+  assert.equal(typeof mod.readSessionTail, 'function');
+  assert.equal(typeof mod.decodeFrames, 'function');
+  assert.equal(typeof mod.extractTailMessages, 'function');
+  assert.equal(typeof mod.findSessionFile, 'function');
+  assert.equal(typeof mod.readTailBytes, 'function');
+  assert.equal(typeof mod.resolveDshHome, 'function');
+  assert.equal(typeof mod.textOfContent, 'function');
+  return '五条路径 / 两个开关常量 / 恢复命令 / 清单校验 / 清扫面 / 会话注入面 / 会话读回面 / apply 齐备';
 });
 
-await check('apply 挂载四条路由；三条只要 webServer，会话注入额外绑 sessionController', async () => {
+await check('apply 挂载五条路由；四条只要 webServer，会话注入额外绑 sessionController', async () => {
   const { ctx, reg } = makeCtx();
   await withEnv(undefined, () => mod.apply(ctx));
   assert.deepEqual(
     reg.injected,
     ['webServer', 'sessionController'],
-    '会话服务要单独 inject（先挂路由、后绑服务），其余三条只依赖 webServer',
+    '会话服务要单独 inject（先挂路由、后绑服务），其余四条只依赖 webServer（读回也不需要宿主服务）',
   );
-  assert.equal(reg.routes.length, 4, '应注册四条路由（重启 + 孤儿清扫 + 已装插件清单 + 会话消息）');
+  assert.equal(reg.routes.length, 5, '应注册五条路由（重启 + 孤儿清扫 + 已装插件清单 + 会话消息 + 会话读回）');
   const restart = reg.routes.find((route) => route.path === mod.RESTART_PATH);
   const orphans = reg.routes.find((route) => route.path === mod.ORPHANS_PATH);
   const plugins = reg.routes.find((route) => route.path === mod.PLUGINS_PATH);
   const session = reg.routes.find((route) => route.path === mod.SESSION_MESSAGE_PATH);
+  const tail = reg.routes.find((route) => route.path === mod.SESSION_TAIL_PATH);
   assert.ok(restart, '缺少重启路由');
   assert.ok(orphans, '缺少孤儿进程清扫路由');
   assert.ok(plugins, '缺少已装插件清单路由');
   assert.ok(session, '缺少会话消息路由');
-  for (const route of [restart, orphans, plugins, session]) {
+  assert.ok(tail, '缺少会话读回路由');
+  for (const route of [restart, orphans, plugins, session, tail]) {
     assert.equal(route.kind, 'exact');
     assert.equal(typeof route.handler, 'function');
   }
@@ -463,6 +476,114 @@ await check('清单路由真跑：GET 200 / POST 405 / 外来 Origin 403', async
     else process.env.DSH_PROFILE_DIR = savedDir;
     if (savedProfile === undefined) delete process.env.DSH_PROFILE;
     else process.env.DSH_PROFILE = savedProfile;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * 会话读回路由（只读）：真跑一遍。
+ *
+ * 会话数据用**合成文件**（不碰用户真实会话）：多帧拼接、每帧一段 JSONL —— 与 DSH 的
+ * `session.v4.jsonl.zstd` 同形，因此「切帧 → 解压 → 抽消息」这条链是被真的走通的，
+ * 而不是只断言了一个函数存在。
+ */
+await check('会话读回路由真跑：回答 200 / 思维链不进回答 / 参数与穿越拦截 / 404 / 405 / 403 / 共用开关', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'obl-brand-tail-'));
+  const savedHome = process.env.DSH_HOME;
+  try {
+    const sessionId = 'session-abc12345-1111-2222-3333-444455556666';
+    const dir = join(root, 'sessions', '--C-Projects-Oblivion--', sessionId);
+    mkdirSync(dir, { recursive: true });
+    const records = [
+      { type: 'user/message', seq: 10, time: 1792196000000, data: { role: 'user', content: [{ type: 'text', text: '第一问' }] } },
+      {
+        type: 'assistant/message',
+        seq: 11,
+        time: 1792196001000,
+        data: {
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'reasoning', text: '这是思维链，不该出现在回答里' },
+              { type: 'text', text: '第一答' },
+            ],
+          },
+        },
+      },
+      { type: 'session/end-seed', seq: 12, time: 1792196002000, data: {} },
+      { type: 'user/message', seq: 13, time: 1792196003000, data: { role: 'user', content: [{ type: 'text', text: '第二问' }] } },
+      { type: 'assistant/message', seq: 14, time: 1792196004000, data: { message: { role: 'assistant', content: [{ type: 'text', text: '第二答' }] } } },
+    ];
+    const frames = records.map((record) => zstdCompressSync(Buffer.from(`${JSON.stringify(record)}\n`, 'utf8')));
+    writeFileSync(join(dir, mod.SESSION_LOG_FILE), Buffer.concat(frames));
+    process.env.DSH_HOME = root;
+
+    const { ctx, reg } = makeCtx();
+    await withEnv(undefined, () => mod.apply(ctx));
+    const route = reg.routes.find((item) => item.path === mod.SESSION_TAIL_PATH);
+    assert.ok(route, '读回路由未注册');
+
+    const call = async (url, headers = {}) => {
+      const captured = fakeResponse();
+      await route.handler({ method: 'GET', url, headers }, captured.response);
+      return captured;
+    };
+
+    const ok = await call(`${mod.SESSION_TAIL_PATH}?session=${sessionId}&limit=1`);
+    assert.equal(ok.captured.status, 200, ok.captured.body);
+    const payload = JSON.parse(ok.captured.body);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.messages.length, 1, 'limit=1 只回最后一条');
+    assert.equal(payload.messages[0].role, 'assistant');
+    assert.equal(payload.messages[0].text, '第二答');
+    assert.equal(payload.stats.frames, 5, '五帧都要解出来（含不关心的记录类型）');
+    assert.equal(payload.stats.brokenFrames, 0);
+    assert.equal(payload.stats.fileBytes, Buffer.concat(frames).length);
+
+    const all = await call(`${mod.SESSION_TAIL_PATH}?session=${sessionId}&limit=50`);
+    assert.deepEqual(
+      JSON.parse(all.captured.body).messages.map((message) => [message.role, message.text]),
+      [
+        ['user', '第一问'],
+        ['assistant', '第一答'],
+        ['user', '第二问'],
+        ['assistant', '第二答'],
+      ],
+      '思维链（reasoning 块）不得混进回答；非消息记录要跳过',
+    );
+
+    const defaultLimit = await call(`${mod.SESSION_TAIL_PATH}?session=${sessionId}`);
+    assert.equal(JSON.parse(defaultLimit.captured.body).messages.length, 4, '缺省 limit 应给出全部');
+
+    assert.equal((await call(`${mod.SESSION_TAIL_PATH}?session=${sessionId}&limit=99`)).captured.status, 400, 'limit 超上限要拒绝');
+    assert.equal((await call(`${mod.SESSION_TAIL_PATH}?session=${sessionId}&limit=abc`)).captured.status, 400);
+    assert.equal((await call(mod.SESSION_TAIL_PATH)).captured.status, 400, '缺 session 要拒绝');
+    assert.equal(
+      (await call(`${mod.SESSION_TAIL_PATH}?session=${encodeURIComponent('../../../../etc/passwd')}`)).captured.status,
+      400,
+      '会话 id 直接拼路径，必须挡住穿越',
+    );
+    assert.equal((await call(`${mod.SESSION_TAIL_PATH}?session=session-nope`)).captured.status, 404);
+
+    const wrongMethod = fakeResponse();
+    await route.handler({ method: 'POST', url: mod.SESSION_TAIL_PATH, headers: {} }, wrongMethod.response);
+    assert.equal(wrongMethod.captured.status, 405);
+
+    const foreign = await call(`${mod.SESSION_TAIL_PATH}?session=${sessionId}`, { origin: 'https://evil.example' });
+    assert.equal(foreign.captured.status, 403, '会话正文是私人内容，外来页面不能读');
+
+    const off = await withEnv('off', () => call(`${mod.SESSION_TAIL_PATH}?session=${sessionId}`), mod.SESSION_INJECT_ENV);
+    assert.equal(off.captured.status, 403, '与注入路由共用同一个运营者开关');
+
+    // `DSH_HOME` 规则：环境变量优先（去空白）、空串视同未设。
+    assert.equal(mod.resolveDshHome({ DSH_HOME: ' D:\\x ' }, 'C:\\home'), 'D:\\x');
+    assert.equal(mod.resolveDshHome({ DSH_HOME: '   ' }, 'C:\\home'), join('C:\\home', '.dsh'));
+    assert.equal(mod.resolveDshHome({}, 'C:\\home'), join('C:\\home', '.dsh'));
+
+    return '200 / reasoning 不进回答 / 400×4 / 404 / 405 / 403×2 / DSH_HOME 三态';
+  } finally {
+    if (savedHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = savedHome;
     rmSync(root, { recursive: true, force: true });
   }
 });

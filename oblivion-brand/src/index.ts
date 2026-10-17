@@ -1,16 +1,17 @@
 /**
  * @oblivion/brand — Node 半边。
  *
- * 除了给 Loader 留座，这里放的**全部是浏览器半边做不到的事** —— 四类「宿主侧动作」：
+ * 除了给 Loader 留座，这里放的**全部是浏览器半边做不到的事** —— 五类「宿主侧动作」：
  *
  *   ① **重启 DSH 桌面应用**（`POST /obl-brand/restart`）
  *   ② **清理 web-login 遗留的孤儿传输进程**（`POST /obl-brand/orphans`，见 `orphans.ts`）
  *   ③ **列出个人已安装插件**（`GET /obl-brand/plugins`，只读）
  *   ④ **向指定会话注入一条用户消息**（`POST /obl-brand/session/message`，见 `session-inject.ts`）
+ *   ⑤ **读回指定会话最近的问答**（`GET /obl-brand/session/tail`，只读，见 `session-tail.ts`）
  *
  * 再加一条与路由无关的：把插件市场的 npm 镜像指到 npmmirror。
  *
- * 四条路由共用同一套安全口径 —— **只回本机调用方**（拒绝存在且非本机的 `Origin`，
+ * 五条路由共用同一套安全口径 —— **只回本机调用方**（拒绝存在且非本机的 `Origin`，
  * 挡浏览器 CSRF）。理由见 `isTrustedCaller` 的长注释：桌面窗口来源是 `dsh-app://app`，
  * 且转发层会**删掉** `origin` 头，所以「必须等于回环来源」这种判据会把自己挡在门外。
  *
@@ -53,8 +54,9 @@ import {
   sweepTransportOrphans,
   writeOrphanScript,
 } from './orphans.js';
-import { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH } from './paths.js';
+import { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH } from './paths.js';
 import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
+import { parseTailQuery, readSessionTail, resolveDshHome } from './session-tail.js';
 import {
   SESSION_INJECT_ENV,
   describePromptFailure,
@@ -75,7 +77,7 @@ import {
  * ESM，Node 里 import 不了）。宿主半边与浏览器半边共用 `paths.ts` / `plugin-list.ts`，
  * 所以这里导出的是同一份实现，不是副本。
  */
-export { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH };
+export { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH };
 export { layerLabel, normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
 export type { InstalledPlugin, PluginLayer, PluginListPayload } from './plugin-list.js';
 export { readInstalledPlugins, resolveProfile };
@@ -114,6 +116,30 @@ export {
   sessionInjectDisabled,
 } from './session-inject.js';
 export type { SessionMessageRequest, SessionPromptMode } from './session-inject.js';
+
+/**
+ * 会话**读回**（只读）的可判定面：解析查询、切帧解码、抽消息、找文件、读尾窗。
+ *
+ * 与上面注入那条同理：自检不许碰用户真实会话，所以判定全做在纯函数 + 一个
+ * 临时 `DSH_HOME` 里的**合成会话文件**上（`scripts/selfcheck.mjs`）。
+ */
+export {
+  DEFAULT_TAIL_LIMIT,
+  MAX_TAIL_LIMIT,
+  MAX_TAIL_TEXT_CHARS,
+  SESSION_ID_PATTERN,
+  SESSION_LOG_FILE,
+  TAIL_WINDOW_BYTES,
+  decodeFrames,
+  extractTailMessages,
+  findSessionFile,
+  parseTailQuery,
+  readSessionTail,
+  readTailBytes,
+  resolveDshHome,
+  textOfContent,
+} from './session-tail.js';
+export type { TailMessage, TailPayload, TailStats } from './session-tail.js';
 
 /** helper 脚本与日志落在临时目录。 */
 const SCRIPT_PATH = join(tmpdir(), 'obl-brand-restart.ps1');
@@ -373,6 +399,8 @@ interface HostScope {
 
 interface HostRequest {
   readonly method?: string;
+  /** 宿主转发的请求 URL（`/obl-brand/…` + 查询串）。读路由参数要用，见 `installSessionTailRoute`。 */
+  readonly url?: string;
   readonly headers: Record<string, string | string[] | undefined>;
   on(event: string, listener: (...args: unknown[]) => void): void;
   resume?(): void;
@@ -882,6 +910,105 @@ function installSessionMessageRoute(ctx: HostCtx, warn: (message: string) => voi
 }
 
 /**
+ * 读回指定会话最近的问答（`GET /obl-brand/session/tail?session=<id>&limit=<n>`）。
+ *
+ * ## 为什么要有这条
+ *
+ * 上一条注入路由（`session-inject.ts`）是**只写**的：消息进 DSH、回答留在 DSH ——
+ * 调用方（另一个 agent、一个脚本）看不到回答，「在别处继续 DSH 会话」只能单向完成。
+ * 这条把回答读回来，于是可以闭环：**注入 → 等一轮 → 读回**。
+ *
+ * ## 数据源
+ *
+ * App 自己一直在写的会话日志（`<DSH_HOME>/sessions/<工作区>/<会话 id>/session.v4.jsonl.zstd`），
+ * 只读；格式与切帧细节见 `src/session-tail.ts`。宿主的会话服务没有公开的读接口，
+ * 但日志是**活**的（实测最后一条记录距请求只差几秒），够用且绝不写坏会话。
+ *
+ * ## 安全口径（与注入路由同一条，因为正文同样私人）
+ *
+ *   ① `isTrustedCaller`（拒绝存在且非本机的 Origin）；② 共用 `OBLIVION_BRAND_SESSION_INJECT`
+ *   这个运营者开关；③ `session` 必须过 `SESSION_ID_PATTERN`（**拼路径，必须挡穿越**）；
+ *   ④ `limit` 有上限（1..50），单条正文另有字符上限。
+ */
+function installSessionTailRoute(ctx: HostCtx, warn: (message: string) => void): void {
+  ctx.inject?.(['webServer'], (scope) => {
+    const server = scope.webServer;
+    if (server === undefined || typeof server.register !== 'function') {
+      warn('webServer 不可用，会话读回路由未挂载');
+      return;
+    }
+
+    const dispose = server.register({
+      kind: 'exact',
+      path: SESSION_TAIL_PATH,
+      handler: (request, response) => {
+        const json = (status: number, body: unknown, extra?: Record<string, string>): void => {
+          response.writeHead(status, { 'content-type': 'application/json', ...extra });
+          response.end(JSON.stringify(body));
+        };
+
+        if (request.method !== 'GET') {
+          json(405, { ok: false, error: 'method not allowed' }, { allow: 'GET' });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: 'untrusted origin' });
+          return;
+        }
+        if (sessionInjectDisabled()) {
+          json(403, { ok: false, error: `${SESSION_INJECT_ENV} 已指定为关闭` });
+          return;
+        }
+
+        let params: URLSearchParams;
+        try {
+          // base 只是为了让相对 URL 可解析；`request.url` 拿不到时也不猜（如实报错）。
+          params = new URL(request.url ?? '', 'http://127.0.0.1').searchParams;
+        } catch (error) {
+          json(400, { ok: false, error: `请求 URL 解析失败：${error instanceof Error ? error.message : String(error)}` });
+          return;
+        }
+
+        const parsed = parseTailQuery({ session: params.get('session'), limit: params.get('limit') });
+        if (!parsed.ok) {
+          json(400, { ok: false, error: parsed.error });
+          return;
+        }
+
+        const sessionsRoot = join(resolveDshHome(), 'sessions');
+        let payload: ReturnType<typeof readSessionTail>;
+        try {
+          payload = readSessionTail(sessionsRoot, parsed.value.sessionId, parsed.value.limit);
+        } catch (error) {
+          json(500, {
+            ok: false,
+            error: `读会话日志失败：${error instanceof Error ? error.message : String(error)}`,
+          });
+          return;
+        }
+        if (payload === undefined) {
+          json(404, { ok: false, error: `找不到会话 ${parsed.value.sessionId} 的日志` });
+          return;
+        }
+
+        appendLog(
+          `session tail read: session=${payload.sessionId} messages=${String(payload.messages.length)} window=${String(payload.stats.windowBytes)}/${String(payload.stats.fileBytes)}B`,
+        );
+        json(200, {
+          ok: true,
+          sessionId: payload.sessionId,
+          messages: payload.messages,
+          stats: payload.stats,
+        });
+      },
+    });
+
+    ctx.effect?.(() => dispose, 'oblivion-brand: session tail route');
+    ctx.logger?.('@oblivion/brand').info(`会话读回路由已挂载：GET ${SESSION_TAIL_PATH}`);
+  });
+}
+
+/**
  * 把插件市场（`dshmarket`）的 npm registry 指到 npmmirror。
  *
  * ## 为什么需要这一手
@@ -993,5 +1120,10 @@ export function apply(ctx: HostCtx): void {
     installSessionMessageRoute(ctx, warn);
   } catch (error) {
     warn(`会话消息路由挂载失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    installSessionTailRoute(ctx, warn);
+  } catch (error) {
+    warn(`会话读回路由挂载失败：${error instanceof Error ? error.message : String(error)}`);
   }
 }

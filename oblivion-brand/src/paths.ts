@@ -32,3 +32,16 @@ export const ORPHANS_PATH = '/obl-brand/orphans';
  * 更有让整条会话读不出来的风险（读取器对完整帧的格式校验是硬失败）。
  */
 export const SESSION_MESSAGE_PATH = '/obl-brand/session/message';
+
+/**
+ * 读回指定 DSH 会话最近的问答（GET，宿主半边，**只读**）。
+ *
+ * 与上一条是**一对**：注入是只写的，回答留在 DSH 里；这条把回答读回来，于是
+ * 「在别的工具里继续一个 DSH 会话」可以闭环（注入 → 等一轮 → 读回）。
+ *
+ * 数据源是 App 自己一直在写的会话日志（`<DSH_HOME>/sessions/…/session.v4.jsonl.zstd`），
+ * 只读 ⇒ 不会写坏会话（理由与格式细节见 `src/session-tail.ts`）。
+ *
+ * 参数：`session`（必填，会话 id）、`limit`（可选，1..50，默认 6）。
+ */
+export const SESSION_TAIL_PATH = '/obl-brand/session/tail';

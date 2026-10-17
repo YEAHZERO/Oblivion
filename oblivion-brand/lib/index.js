@@ -2,8 +2,8 @@
 import { spawn as spawn2 } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir as homedir2, tmpdir as tmpdir2 } from "node:os";
-import { join as join3 } from "node:path";
+import { homedir as homedir3, tmpdir as tmpdir2 } from "node:os";
+import { join as join4 } from "node:path";
 
 // src/orphans.ts
 import { spawn } from "node:child_process";
@@ -260,6 +260,7 @@ var RESTART_PATH = "/obl-brand/restart";
 var PLUGINS_PATH = "/obl-brand/plugins";
 var ORPHANS_PATH = "/obl-brand/orphans";
 var SESSION_MESSAGE_PATH = "/obl-brand/session/message";
+var SESSION_TAIL_PATH = "/obl-brand/session/tail";
 
 // src/profile-plugins.ts
 import { existsSync, readFileSync } from "node:fs";
@@ -475,6 +476,149 @@ function readInstalledPlugins(location, at = Date.now()) {
   };
 }
 
+// src/session-tail.ts
+import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join3 } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
+var DEFAULT_TAIL_LIMIT = 6;
+var MAX_TAIL_LIMIT = 50;
+var MAX_TAIL_TEXT_CHARS = 2e4;
+var TAIL_WINDOW_BYTES = 1 << 20;
+var SESSION_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+var SESSION_LOG_FILE = "session.v4.jsonl.zstd";
+var ZSTD_MAGIC = [40, 181, 47, 253];
+function parseTailQuery(params) {
+  const sessionId = (params.session ?? "").trim();
+  if (sessionId === "") return { ok: false, error: "\u7F3A\u5C11 session \u53C2\u6570" };
+  if (!SESSION_ID_PATTERN.test(sessionId)) {
+    return { ok: false, error: "session \u542B\u975E\u6CD5\u5B57\u7B26\uFF08\u53EA\u5141\u8BB8\u5B57\u6BCD\u6570\u5B57\u4E0E . _ -\uFF09" };
+  }
+  const raw = (params.limit ?? "").trim();
+  if (raw === "") return { ok: true, value: { sessionId, limit: DEFAULT_TAIL_LIMIT } };
+  const limit = Number(raw);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_TAIL_LIMIT) {
+    return { ok: false, error: `limit \u5FC5\u987B\u662F 1..${String(MAX_TAIL_LIMIT)} \u7684\u6574\u6570` };
+  }
+  return { ok: true, value: { sessionId, limit } };
+}
+function resolveDshHome(env = process.env, homeDir = homedir2()) {
+  const configured = (env["DSH_HOME"] ?? "").trim();
+  if (configured !== "") return configured;
+  return homeDir === "" ? "" : join3(homeDir, ".dsh");
+}
+function findSessionFile(sessionsRoot, sessionId, list = readdirSync) {
+  if (!SESSION_ID_PATTERN.test(sessionId)) return void 0;
+  let entries;
+  try {
+    entries = list(sessionsRoot);
+  } catch {
+    return void 0;
+  }
+  for (const entry of entries) {
+    const candidate = join3(sessionsRoot, entry, sessionId, SESSION_LOG_FILE);
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function readTailBytes(path, windowBytes = TAIL_WINDOW_BYTES) {
+  const size = statSync(path).size;
+  const start = Math.max(0, size - windowBytes);
+  const length = size - start;
+  const buffer = Buffer.alloc(length);
+  const fd = openSync(path, "r");
+  try {
+    let read = 0;
+    while (read < length) {
+      const got = readSync(fd, buffer, read, length - read, start + read);
+      if (got <= 0) break;
+      read += got;
+    }
+    return { buffer: read === length ? buffer : buffer.subarray(0, read), fileBytes: size };
+  } finally {
+    closeSync(fd);
+  }
+}
+function decodeFrames(buffer) {
+  const cuts = [];
+  for (let i = 0; i + 3 < buffer.length; i += 1) {
+    if (buffer[i] === ZSTD_MAGIC[0] && buffer[i + 1] === ZSTD_MAGIC[1] && buffer[i + 2] === ZSTD_MAGIC[2] && buffer[i + 3] === ZSTD_MAGIC[3]) {
+      cuts.push(i);
+    }
+  }
+  if (cuts.length === 0) return { text: "", frames: 0, brokenFrames: 0 };
+  const starts = cuts[0] === 0 ? cuts : [0, ...cuts];
+  starts.push(buffer.length);
+  const parts = [];
+  let frames = 0;
+  let brokenFrames = 0;
+  for (let index = 0; index + 1 < starts.length; index += 1) {
+    const chunk = buffer.subarray(starts[index], starts[index + 1]);
+    try {
+      parts.push(zstdDecompressSync(chunk).toString("utf8"));
+      frames += 1;
+    } catch {
+      const isEdge = index === 0 || index + 2 === starts.length;
+      if (!isEdge) brokenFrames += 1;
+    }
+  }
+  return { text: parts.join(""), frames, brokenFrames };
+}
+function textOfContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts = [];
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const typed = block;
+    if (typed.type !== "text") continue;
+    if (typeof typed.text === "string") parts.push(typed.text);
+  }
+  return parts.join("\n").trim();
+}
+function extractTailMessages(lines, limit) {
+  const out = [];
+  for (const line of lines) {
+    if (line.trim() === "") continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof record !== "object" || record === null) continue;
+    const typed = record;
+    const role = typed.type === "user/message" ? "user" : typed.type === "assistant/message" ? "assistant" : void 0;
+    if (role === void 0) continue;
+    const raw = role === "user" ? typed.data?.content : typed.data?.message?.content;
+    const text2 = textOfContent(raw);
+    if (text2 === "") continue;
+    const truncated = text2.length > MAX_TAIL_TEXT_CHARS;
+    out.push({
+      seq: typeof typed.seq === "number" ? typed.seq : -1,
+      at: typeof typed.time === "number" ? typed.time : 0,
+      role,
+      text: truncated ? text2.slice(0, MAX_TAIL_TEXT_CHARS) : text2,
+      ...truncated ? { truncated: true } : {}
+    });
+  }
+  return out.slice(-limit);
+}
+function readSessionTail(sessionsRoot, sessionId, limit, windowBytes = TAIL_WINDOW_BYTES) {
+  const file = findSessionFile(sessionsRoot, sessionId);
+  if (file === void 0) return void 0;
+  const { buffer, fileBytes } = readTailBytes(file, windowBytes);
+  const { text: text2, frames, brokenFrames } = decodeFrames(buffer);
+  return {
+    sessionId,
+    messages: extractTailMessages(text2.split("\n"), limit),
+    stats: { fileBytes, windowBytes: buffer.length, frames, brokenFrames }
+  };
+}
+
 // src/session-inject.ts
 var SESSION_INJECT_ENV = "OBLIVION_BRAND_SESSION_INJECT";
 var MAX_SESSION_MESSAGE_CHARS = 2e4;
@@ -553,8 +697,8 @@ function httpStatusForPromptFailure(code) {
 }
 
 // src/index.ts
-var SCRIPT_PATH = join3(tmpdir2(), "obl-brand-restart.ps1");
-var LOG_PATH = join3(tmpdir2(), "obl-brand-restart.log");
+var SCRIPT_PATH = join4(tmpdir2(), "obl-brand-restart.ps1");
+var LOG_PATH = join4(tmpdir2(), "obl-brand-restart.log");
 var MARKET_REGISTRY_ENV = "DSHM_NPM_MIRROR";
 var MARKET_REGISTRY_MIRROR = "https://registry.npmmirror.com";
 var RESTART_SCRIPT = String.raw`
@@ -774,7 +918,7 @@ function appendLog(line) {
 function resolvePowerShell() {
   if (process.platform !== "win32") return null;
   const root = process.env["SystemRoot"] ?? process.env["windir"] ?? "C:\\Windows";
-  const absolute = join3(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const absolute = join4(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   return existsSync2(absolute) ? absolute : "powershell.exe";
 }
 function spawnRestartHelper() {
@@ -952,7 +1096,7 @@ function installPluginsRoute(ctx, warn) {
           json(403, { ok: false, error: "untrusted origin" });
           return;
         }
-        const location = resolveProfile(process.env, homedir2());
+        const location = resolveProfile(process.env, homedir3());
         if (location === null) {
           json(500, { ok: false, error: "DSH_PROFILE_DIR \u4E0E DSH_HOME \u90FD\u6CA1\u6709\uFF0C\u8BFB\u4E0D\u5230 profile \u76EE\u5F55" });
           return;
@@ -1065,6 +1209,75 @@ function installSessionMessageRoute(ctx, warn) {
     ctx.logger?.("@oblivion/brand").info(`\u4F1A\u8BDD\u6D88\u606F\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${SESSION_MESSAGE_PATH}`);
   });
 }
+function installSessionTailRoute(ctx, warn) {
+  ctx.inject?.(["webServer"], (scope) => {
+    const server = scope.webServer;
+    if (server === void 0 || typeof server.register !== "function") {
+      warn("webServer \u4E0D\u53EF\u7528\uFF0C\u4F1A\u8BDD\u8BFB\u56DE\u8DEF\u7531\u672A\u6302\u8F7D");
+      return;
+    }
+    const dispose = server.register({
+      kind: "exact",
+      path: SESSION_TAIL_PATH,
+      handler: (request, response) => {
+        const json = (status, body, extra) => {
+          response.writeHead(status, { "content-type": "application/json", ...extra });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== "GET") {
+          json(405, { ok: false, error: "method not allowed" }, { allow: "GET" });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: "untrusted origin" });
+          return;
+        }
+        if (sessionInjectDisabled()) {
+          json(403, { ok: false, error: `${SESSION_INJECT_ENV} \u5DF2\u6307\u5B9A\u4E3A\u5173\u95ED` });
+          return;
+        }
+        let params;
+        try {
+          params = new URL(request.url ?? "", "http://127.0.0.1").searchParams;
+        } catch (error) {
+          json(400, { ok: false, error: `\u8BF7\u6C42 URL \u89E3\u6790\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}` });
+          return;
+        }
+        const parsed = parseTailQuery({ session: params.get("session"), limit: params.get("limit") });
+        if (!parsed.ok) {
+          json(400, { ok: false, error: parsed.error });
+          return;
+        }
+        const sessionsRoot = join4(resolveDshHome(), "sessions");
+        let payload;
+        try {
+          payload = readSessionTail(sessionsRoot, parsed.value.sessionId, parsed.value.limit);
+        } catch (error) {
+          json(500, {
+            ok: false,
+            error: `\u8BFB\u4F1A\u8BDD\u65E5\u5FD7\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`
+          });
+          return;
+        }
+        if (payload === void 0) {
+          json(404, { ok: false, error: `\u627E\u4E0D\u5230\u4F1A\u8BDD ${parsed.value.sessionId} \u7684\u65E5\u5FD7` });
+          return;
+        }
+        appendLog(
+          `session tail read: session=${payload.sessionId} messages=${String(payload.messages.length)} window=${String(payload.stats.windowBytes)}/${String(payload.stats.fileBytes)}B`
+        );
+        json(200, {
+          ok: true,
+          sessionId: payload.sessionId,
+          messages: payload.messages,
+          stats: payload.stats
+        });
+      }
+    });
+    ctx.effect?.(() => dispose, "oblivion-brand: session tail route");
+    ctx.logger?.("@oblivion/brand").info(`\u4F1A\u8BDD\u8BFB\u56DE\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1AGET ${SESSION_TAIL_PATH}`);
+  });
+}
 function installMarketRegistryOverride(ctx) {
   const logger = ctx.logger?.("@oblivion/brand");
   const current = process.env[MARKET_REGISTRY_ENV];
@@ -1077,7 +1290,7 @@ function installMarketRegistryOverride(ctx) {
   process.env[MARKET_REGISTRY_ENV] = MARKET_REGISTRY_MIRROR;
   logger?.info(`\u63D2\u4EF6\u5E02\u573A registry \u5DF2\u6307\u5411 ${MARKET_REGISTRY_MIRROR}`);
 }
-function sweepOnMount(logger, env = process.env, homeDir = homedir2()) {
+function sweepOnMount(logger, env = process.env, homeDir = homedir3()) {
   if (process.platform !== "win32") return;
   if (mountSweepDisabled(env)) {
     logger?.info(`${MOUNT_SWEEP_ENV} \u5DF2\u6307\u5B9A\u4E3A\u5173\u95ED\uFF0C\u88C5\u8F7D\u65F6\u4E0D\u6E05\u7406\u5B64\u513F\u8FDB\u7A0B`);
@@ -1110,12 +1323,20 @@ function apply(ctx) {
   } catch (error) {
     warn(`\u4F1A\u8BDD\u6D88\u606F\u8DEF\u7531\u6302\u8F7D\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
   }
+  try {
+    installSessionTailRoute(ctx, warn);
+  } catch (error) {
+    warn(`\u4F1A\u8BDD\u8BFB\u56DE\u8DEF\u7531\u6302\u8F7D\u5931\u8D25\uFF1A${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 export {
+  DEFAULT_TAIL_LIMIT,
   MARKET_REGISTRY_ENV,
   MARKET_REGISTRY_MIRROR,
   MAX_SESSION_MESSAGE_BYTES,
   MAX_SESSION_MESSAGE_CHARS,
+  MAX_TAIL_LIMIT,
+  MAX_TAIL_TEXT_CHARS,
   MOUNT_SWEEP_ENV,
   ORPHANS_PATH,
   ORPHAN_SCRIPT,
@@ -1123,11 +1344,18 @@ export {
   PLUGINS_PATH,
   RESTART_PATH,
   RESTART_SCRIPT,
+  SESSION_ID_PATTERN,
   SESSION_INJECT_ENV,
+  SESSION_LOG_FILE,
   SESSION_MESSAGE_PATH,
+  SESSION_TAIL_PATH,
+  TAIL_WINDOW_BYTES,
   apply,
+  decodeFrames,
   describePromptFailure,
   describeSweep,
+  extractTailMessages,
+  findSessionFile,
   httpStatusForPromptFailure,
   installMarketRegistryOverride,
   layerLabel,
@@ -1135,9 +1363,13 @@ export {
   normalizePluginList,
   parseSessionMessageRequest,
   parseSweepOutput,
+  parseTailQuery,
   quoteArg,
   readInstalledPlugins,
   readRequestBody,
+  readSessionTail,
+  readTailBytes,
+  resolveDshHome,
   resolveProfile,
   resolveTransportProfileDir,
   restoreCommand,
@@ -1145,6 +1377,7 @@ export {
   statusLabel,
   sweepOnMount,
   sweepTransportOrphans,
+  textOfContent,
   totalRestoreScript,
   writeOrphanScript
 };

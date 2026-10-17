@@ -12,6 +12,26 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/brand` v0.1.7：会话**读回**（`GET /obl-brand/session/tail`）—— 闭环「注入 → 等一轮 → 读回」
+
+注入那条路（v0.1.5 的 `POST /obl-brand/session/message`）是**只写**的：消息进 DSH、回答由 DSH 产出并留在
+DSH 的会话存储与 UI 里，调用方（另一个 agent、一个脚本）看不到 —— 「在别的工具里继续一条 DSH 会话」
+只能单向完成。新增 `GET /obl-brand/session/tail?session=<会话 id>&limit=<1..50，默认 6>` 把它补成闭环。
+
+- 数据源是 App 自己一直在写的会话日志 `<DSH_HOME>/sessions/<工作区>/<会话 id>/session.v4.jsonl.zstd`
+  —— **只读**，而且是**活**的（实测最后一条记录距请求只差几秒）。宿主的会话服务没有公开的读接口，
+  但这份日志够用，且不像「追加一帧」那样有写坏整条会话的风险（那条路的风险见 `oblivion-brand/README.md`）。
+- **多帧拼接**：一个 zstd 帧装一段 JSONL，帧之间**没有分隔符**，只能按 magic（`28 B5 2F FD`）切；
+  而 **Node 的 `createZstdDecompress` 只解第一帧**，所以逐帧 `zstdDecompressSync`。会话可几十 MB，
+  只读**尾部 1 MB**：首/尾两块可能是半帧，解不开就跳过（不是损坏），中间坏帧才计数上报。
+- **只取回答、不取思维链**：`assistant/message` 里只收 `text` 块，`reasoning` 不算答案（自检有这条断言）。
+- 安全口径与注入路由**完全一致**（正文同样私人）：只回本机调用方、共用运营者开关
+  `OBLIVION_BRAND_SESSION_INJECT`、会话 id 必须过 `SESSION_ID_PATTERN`（**拼路径，必须挡穿越**）、
+  `limit` 有上限、单条正文有字符上限。
+- 自检新增一条**端到端**：在临时 `DSH_HOME` 里造合成会话文件（真 zstd 多帧），真跑路由断言
+  `200 / reasoning 不进回答 / 400×4 / 404 / 405 / 403×2`，并把「apply 挂载几条路由」从四条改成五条。
+  切帧逻辑此前只存在于一次性取证脚本里，现在收编进插件（`src/session-tail.ts`）。
+
 ## [未发布] — `@oblivion/core` v0.2.11 + `@oblivion/http-bridge` v0.1.3：**结案「桥接一直 `present:false`」—— `apply()` 死在提示段落排序位**（`getSectionOrder()` 对未知名回 `undefined`，而 DSH 的 `section()` 对非有限数直接抛错）
 
 真宿主里 `GET http://127.0.0.1:42081/oblivion/mcp/health` 自 0.2.8 起一直是

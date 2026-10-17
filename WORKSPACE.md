@@ -179,6 +179,35 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/obl-brand/session/me
   `404` = 没注册成 —— 磁盘上的版本没被装载（node 半边要**重启 DSH** 才换），或挂载期抛了异常
   （后者会在 `%TEMP%\obl-brand-restart.log` 与宿主日志里留下一条 warn）。
 
+### 从运行中的会话读回最近的问答：`GET /obl-brand/session/tail`
+
+上一条是**只写**的：消息进 DSH、回答留在 DSH，调用方看不到 —— 「在别的工具里继续这条会话」只能走一半。
+`@oblivion/brand` **v0.1.7** 起多了读回这一半，于是 `注入 → 等一轮 → 读回` 可以闭环：
+
+```powershell
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+# 端口每次启动可变：GET /obl-brand/plugins 200 认端口（见上一节）
+$port = 19387
+$session = 'session-10837d9b-ba07-420d-a8d3-3e14e1972481'
+
+Invoke-RestMethod "http://127.0.0.1:$port/obl-brand/session/tail?session=$session&limit=4" |
+  Select-Object -ExpandProperty messages |
+  ForEach-Object { "[$($_.role)] $($_.text)" }
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `session` | 会话 id（必填，`~/.dsh/sessions/<工作区>/<会话 id>/` 那个目录名） |
+| `limit` | 返回条数，1..50，默认 6；单条正文上限 20000 字符（超出标 `truncated`） |
+
+返回 `{ok, sessionId, messages:[{seq, at, role, text}], stats:{fileBytes, windowBytes, frames, brokenFrames}}`。
+**只读**、只回本机调用方、与注入共用开关（`OBLIVION_BRAND_SESSION_INJECT`）；错误码 `400`（参数）/
+`404`（无此会话）/ `405`（非 GET）/ `403`（外来 Origin 或开关关闭）。
+
+两个坑写在 `oblivion-brand/README.md` 的「从指定会话读回最近的问答」一节：会话日志是**多帧 zstd**
+（**Node 的 `createZstdDecompress` 只解第一帧**，必须按 magic 切帧逐帧解），以及回答要只取 `text` 块
+（`reasoning` 是思维链，不算回答）。
+
 ## 检查：四层闸门
 
 工作区的检查规范在 **[`docs/检查方法.md`](docs/检查方法.md)**。要点：
