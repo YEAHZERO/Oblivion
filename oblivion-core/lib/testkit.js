@@ -1435,7 +1435,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join4(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.11",
+    version: "0.2.12",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -3510,10 +3510,35 @@ function buildChannelDiag(version, report, stage, error) {
     report
   };
 }
-async function writeChannelDiag(dataRoot, diag) {
-  try {
-    await writeJsonAtomic(join12(expandHome(dataRoot), "mcp-channel-diag.json"), diag);
-  } catch {
+var WRITE_ATTEMPTS = 3;
+var WRITE_RETRY_MS = 20;
+var writeQueue = Promise.resolve();
+var lastWriteErrors = /* @__PURE__ */ new Map();
+function delay(ms) {
+  return new Promise((resolve2) => {
+    setTimeout(resolve2, ms);
+  });
+}
+function writeChannelDiag(dataRoot, diag) {
+  const task = writeQueue.then(() => writeDiag(dataRoot, diag)).catch(() => {
+  });
+  writeQueue = task;
+  return task;
+}
+async function writeDiag(dataRoot, diag) {
+  const path = join12(expandHome(dataRoot), "mcp-channel-diag.json");
+  const previous = lastWriteErrors.get(path);
+  const payload = previous === void 0 ? diag : { ...diag, writeError: previous };
+  for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt += 1) {
+    try {
+      await writeJsonAtomic(path, payload);
+      lastWriteErrors.delete(path);
+      return;
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      lastWriteErrors.set(path, text + "\uFF08\u7B2C " + attempt + "/" + WRITE_ATTEMPTS + " \u6B21\u5C1D\u8BD5\uFF0C" + (/* @__PURE__ */ new Date()).toISOString() + "\uFF09");
+      if (attempt < WRITE_ATTEMPTS) await delay(WRITE_RETRY_MS);
+    }
   }
 }
 

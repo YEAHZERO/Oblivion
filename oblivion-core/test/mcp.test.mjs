@@ -4,12 +4,17 @@
  * 这一块原先属于 `@oblivion/http-bridge`（那边只测「MCP 分发的行为」），
  * 搬进 core 之后在这里测；bridge 那边只剩传输层（HTTP/鉴权/CORS/503）。
  *
- * 重点覆盖三件真机上真的会出问题的事：
+ * 重点覆盖四件真机上真的会出问题的事：
  *   1. 通知（无 id）必须不回复 —— 回了会让扩展的 streamable_http 挂住；
  *   2. 未知工具是 **-32602** 而不是 -32601（现役 host 的口径，改错了扩展会收紧校验）；
- *   3. 通道跨「模块副本」必须认同一个键 —— 用 `Symbol.for`，测试直接从全局读一遍。
+ *   3. 通道跨「模块副本」必须认同一个键 —— 用 `Symbol.for`，测试直接从全局读一遍；
+ *   4. 诊断文件（`mcp-channel-diag.json`）的落盘必须**串行**：三处调用是即发即忘的，
+ *      并发时后发的阶段可能先落地，文件就停在更早的阶段（2026-10-17 真机现场）。
  */
 
+import { existsSync, mkdtempSync as mkdtemp, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -262,5 +267,44 @@ describe('MCP 进程内通道（channel.ts）', () => {
     assert.equal(calls.capture.length, 1);
     assert.deepEqual(JSON.parse(response.result.content[0].text), { pass: true, action: 'created', score: 0.8 });
     dispose();
+  });
+});
+
+describe('MCP 通道诊断文件（diag.ts：串行落盘 + 失败留痕）', () => {
+  before(async () => {
+    kit = await import(new URL('../lib/testkit.js', import.meta.url).href);
+  });
+
+  it('同一 tick 连发三个阶段：盘上一定是**最后发的那笔**（回归 2026-10-17 真机现场）', async () => {
+    const dir = mkdtemp(join(tmpdir(), 'oblivion-diag-order-'));
+    // `apply()` 里这三笔就是即发即忘的（`void writeChannelDiag(...)`），
+    // 所以这里照原样连发、一并 await：考察的正是「谁最后落地」。
+    await Promise.all(
+      ['apply:enter', 'apply:mcp', 'apply:done'].map((stage) =>
+        kit.writeChannelDiag(dir, kit.buildChannelDiag('9.9.9-test', null, stage)),
+      ),
+    );
+    const onDisk = JSON.parse(readFileSync(join(dir, 'mcp-channel-diag.json'), 'utf8'));
+    assert.equal(onDisk.stage, 'apply:done');
+    assert.equal(onDisk.writeError, undefined, '没有写失败，不该出现 writeError 字段');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('写不进去时不抛、也不再静默：原因由**下一笔**成功写入带进文件', async () => {
+    const base = mkdtemp(join(tmpdir(), 'oblivion-diag-fail-'));
+    const blocked = join(base, 'blocked');
+    // 让 dataRoot 的父级是个**文件**：mkdir 必失败（原子写与直写回退都救不了这条路）。
+    writeFileSync(blocked, 'not a directory', 'utf8');
+    const dataRoot = join(blocked, 'data');
+
+    await kit.writeChannelDiag(dataRoot, kit.buildChannelDiag('9.9.9-test', null, 'apply:done'));
+    assert.equal(existsSync(join(dataRoot, 'mcp-channel-diag.json')), false, '写不进去就是写不进去，但绝不许抛');
+
+    rmSync(blocked, { force: true });
+    await kit.writeChannelDiag(dataRoot, kit.buildChannelDiag('9.9.9-test', null, 'apply:done'));
+    const onDisk = JSON.parse(readFileSync(join(dataRoot, 'mcp-channel-diag.json'), 'utf8'));
+    assert.match(onDisk.writeError, /(ENOTDIR|EEXIST|EPERM|EACCES)/, '上一次的失败原因必须留在文件里');
+    assert.match(onDisk.writeError, /3\/3/, '三次尝试都记上');
+    rmSync(base, { recursive: true, force: true });
   });
 });
