@@ -620,6 +620,34 @@ related_wiki: []
     }
   });
 
+  it('工具注册可注销：第二遍装载不再撞「already registered」（回归 2026-10-17 真机现场）', () => {
+    // 假宿主照抄 dsh-tools 的语义：`register()` 返回「注销这个工具」的函数，同名第二次注册直接抛。
+    const defs = new Map();
+    const ctx = {
+      tools: {
+        register: (d) => {
+          if (defs.has(d.name)) throw new Error(`tool "${d.name}" is already registered`);
+          defs.set(d.name, d);
+          return () => defs.delete(d.name);
+        },
+      },
+    };
+    const deps = { knowledge: {}, profile: {}, feedback: null, graph: {} };
+
+    const first = kit.registerTools(ctx, deps);
+    assert.equal(first.length, 9, '9 个 oblivion_* 工具都要把注销函数回交出来');
+    assert.equal(defs.size, 9);
+
+    // 不注销就再装一遍 = 2026-10-17 那次真机现场：apply() 直接抛，MCP 通道从桥接里消失。
+    assert.throws(() => kit.registerTools(ctx, deps), /already registered/);
+
+    // 注销后再装：不抛，注册表回到 9 个 —— 这就是 index.ts 把注册包进 ctx.effect 的效果。
+    for (const dispose of first) dispose();
+    assert.equal(defs.size, 0, 'disposer 调完注册表要清空');
+    assert.equal(kit.registerTools(ctx, deps).length, 9);
+    assert.equal(defs.size, 9);
+  });
+
   it('工具两段式：不带 items 给候选，带 items 落地；服务缺席时只回 skipped', async () => {
     const f = fixture();
     try {

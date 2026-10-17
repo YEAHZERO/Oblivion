@@ -221,6 +221,29 @@ function applyInner(rawCtx: unknown, config: Config): void {
    * 与根注册并存是刻意的：分层是**覆盖**语义（不是重复报错），根层当兜底。
    */
   const agentFibers = new Map<unknown, unknown>();
+  /**
+   * **本 fiber 卸下时，把每个 agent 的注册 fiber 也拆掉**（2026-10-17 真机现场）。
+   *
+   * 这些注册绑在 `agentCtx.inject(...)` 造出来的 fiber 上，**不属于本插件 fiber 的作用域**。
+   * 不拆的话，重新装载时 `installForAgent` 会在**同一个 agent 作用域**里再注册一遍
+   * `oblivion_*` ⇒ 撞「already registered」。而那条路径被下面的 `try/catch` 吞成一条 warn，
+   * 所以症状是**静默退化**：agent 里既没有 Oblivion 段落、也没有 `oblivion_*` 工具，
+   * 而日志看起来「装好了」。
+   */
+  ctx.effect(
+    () => () => {
+      for (const fiber of agentFibers.values()) {
+        try {
+          (fiber as { dispose?: () => void } | undefined)?.dispose?.();
+        } catch {
+          // 卸载期一律不抛：宿主可能已经先一步把这一层清掉了。
+        }
+      }
+      agentFibers.clear();
+    },
+    'oblivion-core: agent fibers',
+  );
+
   function installForAgent(agentLike: unknown): void {
     const agentCtx = (agentLike as { ctx?: AppContext } | undefined)?.ctx;
     if (!agentCtx || typeof agentCtx.inject !== 'function' || agentFibers.has(agentCtx)) return;
@@ -284,7 +307,42 @@ function applyInner(rawCtx: unknown, config: Config): void {
   // ③ 宿主回调载荷（section / 工具 exec）——由 prompt-inject 转交
   setAgentInstaller(installForAgent);
 
-  registerTools(toolsCtx, { knowledge, profile, feedback, graph, stats, digest, retitle, wiki, perspectiveStats: () => perspective?.stats() ?? null });
+  /**
+   * **工具注册必须可注销**（2026-10-17 真机现场）。
+   *
+   * `registerTools` 走的是根上下文 `host.tools`，而**根比本 fiber 活得久** —— 不注销的话，
+   * 重新装载（改 profile 配置就会触发）时第二遍注册会撞
+   * `tool "oblivion_capture" is already registered`，于是整个 `apply()` 失败、
+   * MCP 通道从桥接里消失（`/oblivion/mcp/health` 变 `present:false` / `slots: 0`）。
+   *
+   * 宿主 `dsh-tools` 的 `register()` 文档原话是「returns the exact disposer that unregisters
+   * the tool」，所以这里把 disposer 包进 `ctx.effect`，由 Cordis 在本 fiber 卸下时调用。
+   */
+  ctx.effect(
+    () => {
+      const disposers = registerTools(toolsCtx, {
+        knowledge,
+        profile,
+        feedback,
+        graph,
+        stats,
+        digest,
+        retitle,
+        wiki,
+        perspectiveStats: () => perspective?.stats() ?? null,
+      });
+      return () => {
+        for (const dispose of disposers) {
+          try {
+            dispose();
+          } catch {
+            // 同上：卸载期不抛。
+          }
+        }
+      };
+    },
+    'oblivion-core: tools',
+  );
 
   // 首次装载索引与目录；失败只记日志，不阻塞装载（此刻缓存与磁盘都可能还不存在）。
   void knowledge.init().catch((error: unknown) => {

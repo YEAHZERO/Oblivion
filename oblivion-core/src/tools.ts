@@ -1,5 +1,5 @@
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import type { AppContext } from './core-types.js';
+import type { AppContext, Disposable } from './core-types.js';
 import type { FeedbackService } from './feedback/index.js';
 import type { GraphService } from './graph/index.js';
 import type { KnowledgeService } from './knowledge/index.js';
@@ -57,8 +57,26 @@ export interface ToolDeps {
   perspectiveStats?: () => Record<string, number> | null;
 }
 
-export function registerTools(ctx: AppContext, deps: ToolDeps): void {
-  ctx.tools.register(defineTool({
+/**
+ * 注册 9 个 `oblivion_*` 工具，并**回交注销用的 disposer 列表**。
+ *
+ * 为什么要回交（2026-10-17 真机现场）：`ctx.tools.register()` 的返回值就是
+ * 「注销这个工具」的那个 disposer（宿主 `dsh-tools` 的文档原话），它绑在**调用时用的那个 ctx** 上。
+ * 本插件注册走的是**根上下文**（`host.tools`，见 `index.ts`「面朝宿主的那一面一律走根上下文」），
+ * 而根比本插件的 fiber 活得久 ⇒ **重新装载时第二遍注册会撞**
+ * `tool "oblivion_capture" is already registered`，整个 `apply()` 失败、MCP 通道从桥接里消失
+ * （`/oblivion/mcp/health` 变 `present:false`）。把 disposer 交回调用方、由 `index.ts` 包进
+ * `ctx.effect(...)`，重装时先注销上一代再注册，就不再撞。
+ */
+export function registerTools(ctx: AppContext, deps: ToolDeps): Disposable[] {
+  /** 每次注册回交的注销函数；宿主只保证「是个函数」，形状未知就跳过（不猜 API）。 */
+  const disposers: Disposable[] = [];
+  const register = (definition: unknown): void => {
+    const dispose = ctx.tools.register(definition) as unknown;
+    if (typeof dispose === 'function') disposers.push(dispose as Disposable);
+  };
+
+  register(defineTool({
     name: 'oblivion_capture',
     description:
       'Capture one Q/A pair into the Oblivion knowledge base: dedup, evaluate, persist as JSON plus a topic note, and build co-occurrence edges. Returns the decided action with a reason.',
@@ -101,7 +119,7 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
     },
   }));
 
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: 'oblivion_query',
     description:
       'Search the Oblivion knowledge base by keywords. Returns matching items ranked by inverted-index score, each with its sources.',
@@ -115,7 +133,7 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
     },
   }));
 
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: 'oblivion_profile',
     description:
       'Read or update the user thinking profile: inquiry style, blind spots, receptive and resistant dimensions. The raw profile is only returned by this explicit call.',
@@ -140,7 +158,7 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
     },
   }));
 
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: 'oblivion_feedback',
     description:
       'Record feedback on one perspective or dimension: 1 useful, -1 not useful, 0 neutral. Neutral is recorded but never tunes the profile; tuning needs N same-direction signals on the same target.',
@@ -167,7 +185,7 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
     },
   }));
 
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: 'oblivion_graph_neighbors',
     description:
       'Query co-occurrence neighbors of one entity id. Weights decay lazily at read time, so older edges rank lower without any background job.',
@@ -198,7 +216,7 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
    * 本工具负责落成两样东西 —— 一篇人读的整理笔记 + 一条可检索的知识条目（并建共现边）。
    * 所以它**不需要**把历史重放给插件，也**不走四层筛选**（用户点名要沉淀的内容不该被拦）。
    */
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: 'oblivion_digest',
     description:
       'Organize the current conversation into a structured digest note plus one searchable knowledge item. ' +
@@ -262,7 +280,7 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
    * 而看哪几篇是模型自己决定的（它知道刚才在聊什么）。所以不带 `items` 时先给候选，
    * 带 `items` 时才落地 —— 一次调用就能自洽，不需要模型记住另一套 id 清单。
    */
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: 'oblivion_retitle',
     description:
       'Rename / re-tag Oblivion notes so the file name says what is actually inside. ' +
@@ -333,7 +351,7 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
    * 只有 1 个 topic 有 2 版），按它自动合并等于合不出东西；而「这两篇讲的是不是一回事」
    * 是语义判断，只有模型能做。插件负责的是它擅长的那半：frontmatter、双链、回链、索引、幂等。
    */
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: 'oblivion_wiki',
     description:
       'Merge notes that are really about the SAME topic into one wiki page under <mdRoot>/02_Wiki页面/. ' +
@@ -419,7 +437,7 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
    * ② 由真实留痕算出的统计（捕获率、被谁拦下、价值分分布）；
    * ③ 最近若干条判定（含 `no-qa` 与各条 reason）。
    */
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: 'oblivion_status',
     description:
       'Inspect the Oblivion cognition layer: effective config, capture stats from real decision traces (capture rate, rejection reasons, value-score distribution), tuning hints (which key to change and why), and the most recent per-turn decisions.',
@@ -448,4 +466,6 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): void {
       return asCanonical(args.include_config === false ? rest : { ...rest, config });
     },
   }));
+
+  return disposers;
 }

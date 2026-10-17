@@ -3295,7 +3295,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join12(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.13",
+    version: "0.2.14",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -3692,7 +3692,12 @@ function asText(value) {
 }
 var OBJECT_OUTPUT = { type: "object", additionalProperties: true };
 function registerTools(ctx, deps) {
-  ctx.tools.register(defineTool({
+  const disposers = [];
+  const register = (definition) => {
+    const dispose = ctx.tools.register(definition);
+    if (typeof dispose === "function") disposers.push(dispose);
+  };
+  register(defineTool({
     name: "oblivion_capture",
     description: "Capture one Q/A pair into the Oblivion knowledge base: dedup, evaluate, persist as JSON plus a topic note, and build co-occurrence edges. Returns the decided action with a reason.",
     parameters: {
@@ -3733,7 +3738,7 @@ function registerTools(ctx, deps) {
       });
     }
   }));
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: "oblivion_query",
     description: "Search the Oblivion knowledge base by keywords. Returns matching items ranked by inverted-index score, each with its sources.",
     parameters: {
@@ -3745,7 +3750,7 @@ function registerTools(ctx, deps) {
       return asCanonical(await deps.knowledge.query({ query: args.query, limit: args.limit ?? 10 }));
     }
   }));
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: "oblivion_profile",
     description: "Read or update the user thinking profile: inquiry style, blind spots, receptive and resistant dimensions. The raw profile is only returned by this explicit call.",
     parameters: {
@@ -3768,7 +3773,7 @@ function registerTools(ctx, deps) {
       return asCanonical(await deps.profile.update(patch));
     }
   }));
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: "oblivion_feedback",
     description: "Record feedback on one perspective or dimension: 1 useful, -1 not useful, 0 neutral. Neutral is recorded but never tunes the profile; tuning needs N same-direction signals on the same target.",
     parameters: {
@@ -3793,7 +3798,7 @@ function registerTools(ctx, deps) {
       }));
     }
   }));
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: "oblivion_graph_neighbors",
     description: "Query co-occurrence neighbors of one entity id. Weights decay lazily at read time, so older edges rank lower without any background job.",
     parameters: {
@@ -3815,7 +3820,7 @@ function registerTools(ctx, deps) {
       })));
     }
   }));
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: "oblivion_digest",
     description: "Organize the current conversation into a structured digest note plus one searchable knowledge item. Use it when the user asks to tidy up / summarize / organize this conversation. YOU produce the structure (you already hold the conversation): sections with headings and bodies, key decisions, todos, open questions, and links to related entries. The plugin writes <mdRoot>/04_\u4F1A\u8BDD\u6574\u7406/<date>-<title>.md, stores one item, and builds co-occurrence edges.",
     parameters: {
@@ -3866,7 +3871,7 @@ function registerTools(ctx, deps) {
       });
     }
   }));
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: "oblivion_retitle",
     description: "Rename / re-tag Oblivion notes so the file name says what is actually inside. Call it with NO `items` first: it returns candidate notes (id, current file name, topic, the original question, an answer excerpt). Then call it again with `items` giving each note a content-based title (<= 32 chars) and 2-8 tags. The plugin renames the file, rewrites the note header/frontmatter (the original question is preserved in `ask:` / `>Ask\uFF1A`), syncs the knowledge item, and rebuilds <mdRoot>/00-Index/\u7D22\u5F15.md.",
     parameters: {
@@ -3922,7 +3927,7 @@ function registerTools(ctx, deps) {
       });
     }
   }));
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: "oblivion_wiki",
     description: "Merge notes that are really about the SAME topic into one wiki page under <mdRoot>/02_Wiki\u9875\u9762/. Call it with NO `clusters` first: it returns candidate notes (id, file name, the original question, tags, excerpt) plus the wiki pages that already exist. Then call it again with `clusters` = [{ title, summary, members: [note id], tags }] \u2014 group by meaning, not by the `topic` field (that field is only the first word of the question). The plugin writes one page per cluster (your summary + source-note links + shared tags), adds a `> Wiki\uFF1A[[title]]` backlink line to every member note, and rebuilds <mdRoot>/00-Index/\u7D22\u5F15.md. It never edits note bodies and never deletes anything; re-running a cluster updates that same page.",
     parameters: {
@@ -3986,7 +3991,7 @@ function registerTools(ctx, deps) {
       });
     }
   }));
-  ctx.tools.register(defineTool({
+  register(defineTool({
     name: "oblivion_status",
     description: "Inspect the Oblivion cognition layer: effective config, capture stats from real decision traces (capture rate, rejection reasons, value-score distribution), tuning hints (which key to change and why), and the most recent per-turn decisions.",
     parameters: {
@@ -4013,13 +4018,14 @@ function registerTools(ctx, deps) {
       return asCanonical(args.include_config === false ? rest : { ...rest, config });
     }
   }));
+  return disposers;
 }
 
 // src/index.ts
 var name = "@oblivion/core";
 var inject = ["tools", "systemPrompt", "agents"];
 var provides = ["oblivion"];
-var VERSION = "0.2.13";
+var VERSION = "0.2.14";
 var OBLIVION_SECTION = "OBLIVION_COGNITION";
 function apply(rawCtx, rawConfig) {
   const config = { ...DEFAULT_CONFIG, ...rawConfig ?? {} };
@@ -4093,6 +4099,18 @@ function applyInner(rawCtx, config) {
   }));
   Object.defineProperty(toolsCtx, "tools", { value: { register: wrappedRegister } });
   const agentFibers = /* @__PURE__ */ new Map();
+  ctx.effect(
+    () => () => {
+      for (const fiber of agentFibers.values()) {
+        try {
+          fiber?.dispose?.();
+        } catch {
+        }
+      }
+      agentFibers.clear();
+    },
+    "oblivion-core: agent fibers"
+  );
   function installForAgent(agentLike) {
     const agentCtx = agentLike?.ctx;
     if (!agentCtx || typeof agentCtx.inject !== "function" || agentFibers.has(agentCtx)) return;
@@ -4145,7 +4163,30 @@ function applyInner(rawCtx, config) {
     attachAgentFromPayload(args[0]);
   });
   setAgentInstaller(installForAgent);
-  registerTools(toolsCtx, { knowledge, profile, feedback, graph, stats, digest, retitle, wiki, perspectiveStats: () => perspective?.stats() ?? null });
+  ctx.effect(
+    () => {
+      const disposers = registerTools(toolsCtx, {
+        knowledge,
+        profile,
+        feedback,
+        graph,
+        stats,
+        digest,
+        retitle,
+        wiki,
+        perspectiveStats: () => perspective?.stats() ?? null
+      });
+      return () => {
+        for (const dispose of disposers) {
+          try {
+            dispose();
+          } catch {
+          }
+        }
+      };
+    },
+    "oblivion-core: tools"
+  );
   void knowledge.init().catch((error) => {
     ctx.logger?.warn?.(config.logPrefix + " init failed: %o", error);
   });

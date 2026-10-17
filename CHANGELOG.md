@@ -12,6 +12,37 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/core` v0.2.14：**工具注册可注销** —— 重新装载不再撞「already registered」、不再让 `apply()` 整个失败
+
+**真机现场（2026-10-17）**：给 profile 补一行 `- id: '@oblivion/core' config:` 之后，profile 补丁层被
+监视、**core 被重新装载**，紧接着 `/oblivion/mcp/health` 变成 `present:false` / `slots:0` ——
+Oblivion 的工具、段落、MCP 通道**一起消失**。`mcp-channel-diag.json` 停在
+`stage: 'apply:failed'`，错误是：
+
+```
+tool "oblivion_capture" is already registered (for a per-agent variant, register through that agent's `agent.ctx` instead)
+```
+
+**根因**（读宿主 `dsh-tools` 源码确认，非猜测）：`ctx.tools.register()` 的返回值是
+**「注销这个工具」的 disposer**，它的作用域绑在**调用时用的那个 ctx** 上。本插件按
+「面朝宿主的那一面一律走根上下文」把工具注册在**根** `host.tools` 上，而**根比本插件的 fiber
+活得久** ⇒ 上一代的注册永远留着，重装第二遍同表同名 ⇒ 直接抛。
+（这也解释了为什么只有工具中招：提示词段是 `ctx.effect(() => host.systemPrompt.section(...))`，
+绑在本 fiber 上，卸下时会被清掉。）
+
+- `src/tools.ts`：`registerTools()` 由 `void` 改为 **回交 `Disposable[]`** —— 每次注册的返回值
+  都收集起来（宿主只保证「是个函数」，形状不符就跳过，不猜 API）。9 个 `oblivion_*` 工具一行没改。
+- `src/index.ts`：根注册改为 `ctx.effect(() => { const ds = registerTools(...); return () => ds.forEach(d => d()) })`
+  —— 本 fiber 卸下时先注销上一代，重装就不会撞。
+- `src/index.ts`：**按 agent 的注册也补上拆卸**（`agentFibers` 里的 fiber 由 `ctx.effect` 统一 `dispose()`）。
+  这条路径原先被 `try/catch` 吞成一条 warn ⇒ 不修就是**静默退化**：重装后 agent 里既没有 Oblivion
+  段落也没有工具，而日志看起来「装好了」。
+- 回归测试（`test/core.test.mjs`）：假宿主照抄「同名第二次注册就抛」的语义，断言
+  `registerTools` 回交 9 个 disposer、**不注销就重装必抛**、注销后重装不抛且注册表复原。
+
+**已知边界**：这是**防御性修复**，只能证明「本插件这一侧可注销 / 单元级语义正确」；
+「改 profile 配置后重装一定不再失败」仍要在 DSH 完整重启后按 §同批文档的现场步骤复核。
+
 ## [未发布] — `@oblivion/core` v0.2.13：`mdRoot` 默认值回到 **`~/OblivionKB`**（本机路径改由 profile 覆盖）
 
 `config.mdRoot` 的默认值在 2026-10-06 被写成 `C:/Library/那些渐渐被遗忘` —— 那是**所有者这台机器**的
