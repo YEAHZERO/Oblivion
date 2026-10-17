@@ -75,6 +75,14 @@ export interface ResolvedConfig {
   maxBodyBytes: number;
   /** 允许的浏览器扩展 Origin 白名单（CORS 用）。 */
   allowedOrigins: string[];
+  /**
+   * 心跳文件路径。**留空 = `<homedir>/.oblivion/bridge-heartbeat.json`**。
+   *
+   * 存在的理由（2026-10-17）：心跳路径原本写死在 `homedir()` 下，于是**自检**跑一次
+   * `apply()` 就把真机的心跳覆盖成「自检端口 / 假端点」—— 而心跳恰恰是「桥接在哪」的对外记录。
+   * 与 core 的 `dataRoot` 同一个规矩：**测试/自检不许碰真实状态文件**。
+   */
+  heartbeatPath: string;
   /** 详细日志。 */
   debug: boolean;
 }

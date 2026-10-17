@@ -32,6 +32,8 @@
  *      7. 用一个**没有 `get` 的 ctx** 跑 apply —— 证明它再也不取任何服务
  *      8. 三条凭据来源全空 ⇒ 不监听、只 warn（不抛）
  *      9. effect 注册了清理函数（HMR 重载不泄漏端口）
+ *      9b. `heartbeatPath` 生效：自检把心跳写进临时目录，绝不覆盖真机心跳
+ *          （2026-10-17：跑一次闸门就把 `~/.oblivion/bridge-heartbeat.json` 覆盖成自检端口）
  *
  *   C. 端到端（真起服务器）
  *     10. 往全局通道塞假端点 → 一次 HTTP 往返 200 + 端点返回的 result
@@ -45,7 +47,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
@@ -179,6 +182,16 @@ const TEST_PATH = '/oblivion/mcp';
 const TEST_HEALTH = `${TEST_PATH}/health`;
 const TEST_TOKEN = 'selfcheck-token-12345';
 const CHANNEL_KEY = Symbol.for('@oblivion/core/mcp');
+/**
+ * 心跳一律写临时目录。
+ *
+ * 真机心跳（`<homedir>/.oblivion/bridge-heartbeat.json`）是**对外记录「桥接在哪」**的文件，
+ * 而它的路径原本写死在 homedir 下 —— 2026-10-17 实测跑一次 `pnpm check` 就把它覆盖成
+ * 「自检端口 + 假端点」。`heartbeatPath` 配置项就是为这条加的口子，下面还有一条断言盯着。
+ */
+const TMP = mkdtempSync(join(tmpdir(), 'oblivion-bridge-selfcheck-'));
+const TEST_HEARTBEAT = join(TMP, 'bridge-heartbeat.json');
+const REAL_HEARTBEAT = join(homedir(), '.oblivion', 'bridge-heartbeat.json');
 
 /**
  * 假宿主上下文。
@@ -274,7 +287,7 @@ async function waitForPortClosed(port, tries = 60) {
 /** 起一个桥接实例并等就绪；返回收尾函数。 */
 async function listen(rawConfig = {}) {
   const { ctx, reg } = makeCtx();
-  const config = { port: TEST_PORT, path: TEST_PATH, token: TEST_TOKEN, ...rawConfig };
+  const config = { port: TEST_PORT, path: TEST_PATH, token: TEST_TOKEN, heartbeatPath: TEST_HEARTBEAT, ...rawConfig };
   mod.apply(ctx, config);
   await waitForHealth(config.port);
   return {
@@ -297,14 +310,14 @@ function post(url, body, token = TEST_TOKEN) {
 await check('用「没有 get 的 ctx」跑 apply 也不抛（证明不再取服务）', () => {
   const { ctx, reg } = makeCtx();
   assert.equal(typeof ctx.get, 'undefined', '这个假 ctx 不该有 get —— 有的话就证明不了');
-  assert.doesNotThrow(() => mod.apply(ctx, { port: TEST_PORT + 10, path: TEST_PATH, token: 'x' }));
+  assert.doesNotThrow(() => mod.apply(ctx, { port: TEST_PORT + 10, path: TEST_PATH, token: 'x', heartbeatPath: TEST_HEARTBEAT }));
   for (const dispose of reg.disposers) dispose();
   return 'apply 只碰 ctx.logger / ctx.effect';
 });
 
 await check('三条凭据来源全空 ⇒ 不监听、只 warn（不抛）', () => {
   const { ctx, reg } = makeCtx();
-  mod.apply(ctx, { port: TEST_PORT + 11, path: TEST_PATH, tokenEnv: '', tokenFile: '', token: '' });
+  mod.apply(ctx, { port: TEST_PORT + 11, path: TEST_PATH, tokenEnv: '', tokenFile: '', token: '', heartbeatPath: TEST_HEARTBEAT });
   assert.equal(reg.disposers.length, 0, '无凭据来源时不应注册服务器');
   assert.ok(
     reg.logs.some(([, m]) => m.includes('未配置')),
@@ -315,10 +328,31 @@ await check('三条凭据来源全空 ⇒ 不监听、只 warn（不抛）', () 
 
 await check('effect 注册了清理函数（HMR 重载不泄漏端口）', () => {
   const { ctx, reg } = makeCtx();
-  mod.apply(ctx, { port: TEST_PORT + 12, path: TEST_PATH, token: 'x' });
+  mod.apply(ctx, { port: TEST_PORT + 12, path: TEST_PATH, token: 'x', heartbeatPath: TEST_HEARTBEAT });
   assert.ok(reg.disposers.length > 0, 'effect 没有返回 disposer，重载会泄漏监听');
   for (const dispose of reg.disposers) dispose();
   return `${reg.disposers.length} 个 disposer`;
+});
+
+await check('心跳路径可重指：自检只写临时文件，绝不覆盖真机心跳', () => {
+  const realBefore = existsSync(REAL_HEARTBEAT) ? JSON.parse(readFileSync(REAL_HEARTBEAT, 'utf8')) : null;
+  const { ctx, reg } = makeCtx();
+  const probePort = TEST_PORT + 13;
+  mod.apply(ctx, { port: probePort, path: TEST_PATH, token: TEST_TOKEN, heartbeatPath: TEST_HEARTBEAT });
+  for (const dispose of reg.disposers) dispose();
+
+  // 心跳是 apply() 最前面同步写的（早于任何 return）⇒ 这里可以直接读。
+  const beat = JSON.parse(readFileSync(TEST_HEARTBEAT, 'utf8'));
+  assert.equal(beat.resolvedPort, probePort, '心跳没写到 heartbeatPath 指定的文件');
+  assert.equal(beat.writtenBy, '@oblivion/http-bridge');
+  const realAfter = existsSync(REAL_HEARTBEAT) ? JSON.parse(readFileSync(REAL_HEARTBEAT, 'utf8')) : null;
+  assert.notEqual(
+    realAfter?.resolvedPort,
+    probePort,
+    '真机心跳被自检覆盖了 —— apply() 必须尊重 heartbeatPath（2026-10-17 现场就被覆盖过）',
+  );
+  assert.equal(existsSync(REAL_HEARTBEAT), realBefore !== null, '自检把真机心跳文件弄没了');
+  return `心跳 → 临时目录（resolvedPort=${probePort}）· 真机心跳未被触碰`;
 });
 
 // ─────────────────────────── C. 端到端（真起服务器） ───────────────────────────
@@ -513,6 +547,8 @@ await check('端到端：超 maxBodyBytes → 413', async () => {
 });
 
 // ─────────────────────────── 汇总 ───────────────────────────
+
+rmSync(TMP, { recursive: true, force: true });
 
 for (const [status, name, detail] of results) {
   const suffix = detail === '' ? '' : `\n        ${detail}`;

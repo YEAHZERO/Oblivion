@@ -12,7 +12,7 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
-## [未发布] — `@oblivion/core` v0.2.11 + `@oblivion/http-bridge` v0.1.2：**结案「桥接一直 `present:false`」—— `apply()` 死在提示段落排序位**（`getSectionOrder()` 对未知名回 `undefined`，而 DSH 的 `section()` 对非有限数直接抛错）
+## [未发布] — `@oblivion/core` v0.2.11 + `@oblivion/http-bridge` v0.1.3：**结案「桥接一直 `present:false`」—— `apply()` 死在提示段落排序位**（`getSectionOrder()` 对未知名回 `undefined`，而 DSH 的 `section()` 对非有限数直接抛错）
 
 真宿主里 `GET http://127.0.0.1:42081/oblivion/mcp/health` 自 0.2.8 起一直是
 `endpoint.present:false, reason:"未找到通道"`，而 core 看起来「装好了」（捕获、图谱都在写）。
@@ -75,6 +75,12 @@ POST /oblivion/mcp tools/call oblivion_search → 200，返回 2 条真实知识
 ⇒ 单元测试把 `status.json` / `mount-diag.json` 写进了**真实数据目录**（面板上 `status.json` 撕裂的根因），
 还会在真实知识库里建分类目录，并让「测试进程的 `pid`」混进真机诊断文件（把 0.2.11 的诊断文件染成假证据）。
 现在统一走 `applyInTemp()`（系统临时目录 + `cleanupDir`）。
+
+**再修一处**（http-bridge 同类问题）：心跳路径原本写死在 `homedir()` 下 —— 跑一次 `pnpm check`/`pnpm test`
+就把**真机心跳** `~/.oblivion/bridge-heartbeat.json` 覆盖成「自检端口 + 假端点」（现场 8:30 被写成
+`resolvedPort:42102 / owner:"fake"`，而它是「桥接在哪」的对外记录）。新增 `heartbeatPath` 配置
+（留空 = 原来的真机路径，行为不变），桥接自检与单测都指到临时目录，并加一条断言：
+**自检跑完，真机心跳必须没被触碰**。
 
 **未完成**：路由级 `passthrough` 豁免的复测仍待会话模型切回 `deepseek-account/deepseek-flash`（见上一条）。
 

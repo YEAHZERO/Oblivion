@@ -296,6 +296,9 @@ var DEFAULT_CONFIG = {
   requireLoopback: true,
   maxBodyBytes: DEFAULT_MAX_BODY_BYTES,
   allowedOrigins: DEFAULT_ALLOWED_ORIGINS,
+  // 留空 = <homedir>/.oblivion/bridge-heartbeat.json（真机默认）；
+  // 自检/测试填临时路径，别覆盖真机心跳（见 types.ts 的 heartbeatPath）。
+  heartbeatPath: "",
   debug: false
 };
 function resolveConfig(raw) {
@@ -310,6 +313,7 @@ function resolveConfig(raw) {
     requireLoopback: merged.requireLoopback !== false,
     maxBodyBytes: normalizePositiveInt(merged.maxBodyBytes, DEFAULT_MAX_BODY_BYTES),
     allowedOrigins: Array.isArray(merged.allowedOrigins) ? merged.allowedOrigins.filter((value) => typeof value === "string" && value !== "") : DEFAULT_ALLOWED_ORIGINS,
+    heartbeatPath: typeof merged.heartbeatPath === "string" ? merged.heartbeatPath.trim() : "",
     debug: merged.debug === true
   };
 }
@@ -333,7 +337,7 @@ function normalizePositiveInt(value, fallback) {
 var name = "@oblivion/http-bridge";
 var inject = [];
 var MARKER = "[oblivion-http-bridge] loaded";
-var VERSION = true ? "0.1.2" : "0.0.0-unknown";
+var VERSION = true ? "0.1.3" : "0.0.0-unknown";
 function credentialSource(config) {
   if (config.token !== "") return "config.token";
   if (config.tokenFile !== "") return `file:${config.tokenFile}`;
@@ -385,7 +389,7 @@ function writeHeartbeat(ctx, path, config, gotConfig) {
 function apply(rawCtx, rawConfig) {
   const ctx = rawCtx;
   const config = resolveConfig(rawConfig);
-  const heartbeatPath = join(homedir(), ".oblivion", "bridge-heartbeat.json");
+  const heartbeatPath = config.heartbeatPath !== "" ? config.heartbeatPath : join(homedir(), ".oblivion", "bridge-heartbeat.json");
   let endpointSeen = false;
   const log = (message) => {
     if (config.debug) ctx.logger?.info?.(`[oblivion-bridge] ${message}`);

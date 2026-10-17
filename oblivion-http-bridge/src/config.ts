@@ -49,6 +49,9 @@ export const DEFAULT_CONFIG: ResolvedConfig = {
   requireLoopback: true,
   maxBodyBytes: DEFAULT_MAX_BODY_BYTES,
   allowedOrigins: DEFAULT_ALLOWED_ORIGINS,
+  // 留空 = <homedir>/.oblivion/bridge-heartbeat.json（真机默认）；
+  // 自检/测试填临时路径，别覆盖真机心跳（见 types.ts 的 heartbeatPath）。
+  heartbeatPath: '',
   debug: false,
 };
 
@@ -67,6 +70,7 @@ export function resolveConfig(raw: Partial<ResolvedConfig> | undefined): Resolve
     allowedOrigins: Array.isArray(merged.allowedOrigins)
       ? merged.allowedOrigins.filter((value): value is string => typeof value === 'string' && value !== '')
       : DEFAULT_ALLOWED_ORIGINS,
+    heartbeatPath: typeof merged.heartbeatPath === 'string' ? merged.heartbeatPath.trim() : '',
     debug: merged.debug === true,
   };
 }

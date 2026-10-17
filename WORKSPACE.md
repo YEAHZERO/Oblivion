@@ -500,11 +500,18 @@ Invoke-WebRequest -UseBasicParsing -Method POST http://127.0.0.1:42081/oblivion/
   -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | Select-Object -Expand Content
 ```
 
-**假证据警报**：`<dataRoot>` 下的诊断文件（`mcp-channel-diag.json` / `mount-diag.json` / `status.json`）
-**会被单元测试覆盖** —— `test/core.test.mjs` 原有 4 处 `mod.apply(ctx, {})` 走 `DEFAULT_CONFIG`
-（真数据目录 + 真知识库，面板上 `status.json` 撕裂的根因），现已改 `applyInTemp()`（系统临时目录）。
-即便如此，**看完 `pnpm test` 的任何诊断结论前，先核对文件里的 `pid`／`env.electron`**
-（测试进程的 `electron` 是空串）—— 本轮就被这条误导过一次。
+**假证据警报**：诊断文件分两类，都先核对再下结论 ——
+
+| 文件 | 谁写 | 核对什么 |
+| --- | --- | --- |
+| `data/mcp-channel-diag.json`、`data/status.json`、`data/mount-diag.json` | 真机 = 插件宿主；也可能被测试写 | `pid` / `env.electron`（测试进程 `electron` 为空串）；`mountedAt` 贴着启动时刻才是真机的 |
+| `bridge-heartbeat.json` | 真机 = bridge 插件；也可能被自检写 | `resolvedPort` 是否是 42081、`owner` 是否是 `@oblivion/core` |
+
+`test/core.test.mjs` 原有 4 处 `mod.apply(ctx, {})` 走 `DEFAULT_CONFIG`（真数据目录 + 真知识库，
+面板上 `status.json` 撕裂的根因），现已改 `applyInTemp()`（系统临时目录）；bridge 的心跳同理
+（`heartbeatPath` 配置 + 两侧自检断言）。即便如此，**看完 `pnpm test` 的任何诊断结论前先核对上面两列**
+—— 本轮就被这条误导过一次。真机心跳若被写坏，**下次 DSH 启动时 bridge 会自己重写**
+（`apply()` 一进来就写，不用等端点解析）。
 
 ## 应用图标：只能改快捷方式，改不了窗口/任务栏
 

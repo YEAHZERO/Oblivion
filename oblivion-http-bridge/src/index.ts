@@ -138,7 +138,10 @@ function writeHeartbeat(
 export function apply(rawCtx: unknown, rawConfig?: Partial<ResolvedConfig>): void {
   const ctx = rawCtx as AppContext;
   const config = resolveConfig(rawConfig);
-  const heartbeatPath = join(homedir(), '.oblivion', 'bridge-heartbeat.json');
+  // 心跳路径：默认写死用户目录（真机对外记录「桥接在哪」）；自检传 heartbeatPath 指到临时目录，
+  // 免得跑一次闸门就把真机心跳覆盖成「自检端口 / 假端点」（2026-10-17 现场就是这么被覆盖的）。
+  const heartbeatPath =
+    config.heartbeatPath !== '' ? config.heartbeatPath : join(homedir(), '.oblivion', 'bridge-heartbeat.json');
   /** 端点**首次**成功解析过没有：只在第一次解析成功时再刷心跳。 */
   let endpointSeen = false;
 

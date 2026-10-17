@@ -31,6 +31,14 @@ const PORT = 42098;
 const PATH = '/oblivion/mcp';
 const HEALTH = `${PATH}/health`;
 const TOKEN = 'test-token-abcdef';
+/**
+ * 心跳一律写临时文件。
+ *
+ * 真机心跳（`<homedir>/.oblivion/bridge-heartbeat.json`）是「桥接在哪」的对外记录，
+ * 而它的路径原本写死 homedir —— 2026-10-17 实测跑一次 `pnpm test` 就把它覆盖成
+ * 「测试端口 + 假端点」，把真机诊断文件染成假证据。
+ */
+const HEARTBEAT = join(tmpdir(), 'oblivion-bridge-test-heartbeat.json');
 
 /** 通道键：与 src/channel.ts 的 MCP_CHANNEL 逐字相同（selfcheck 逐字比对两处源码）。 */
 const CHANNEL_KEY = Symbol.for('@oblivion/core/mcp');
@@ -110,7 +118,7 @@ function makeCtx() {
 async function listen(port, config = {}) {
   const made = makeCtx();
   process.env.OBLIVION_BRIDGE_TOKEN = TOKEN;
-  mod.apply(made.ctx, { port, path: PATH, ...config });
+  mod.apply(made.ctx, { port, path: PATH, heartbeatPath: HEARTBEAT, ...config });
   await waitForHealth(port);
   return {
     base: `http://127.0.0.1:${port}`,
@@ -411,7 +419,7 @@ describe('鉴权', () => {
   it('三条凭据来源全空 ⇒ 不监听端口（apply 直接 return）', async () => {
     const p = PORT + 8;
     const made = makeCtx();
-    mod.apply(made.ctx, { port: p, path: PATH, token: '', tokenFile: '', tokenEnv: '' });
+    mod.apply(made.ctx, { port: p, path: PATH, token: '', tokenFile: '', tokenEnv: '', heartbeatPath: HEARTBEAT });
     await new Promise((r) => setTimeout(r, 300));
     try {
       let refused = false;

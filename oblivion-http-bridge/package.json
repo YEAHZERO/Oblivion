@@ -1,6 +1,6 @@
 {
   "name": "@oblivion/http-bridge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Oblivion HTTP 桥接：把 @oblivion/core 的认知能力暴露成本机 MCP 端点，供浏览器扩展（DeepSeek++）以 streamable_http 传输接入。自带 node:http 服务器，不依赖 webServer 服务。",
   "license": "MIT",
   "type": "module",
