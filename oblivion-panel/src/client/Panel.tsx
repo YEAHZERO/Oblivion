@@ -377,6 +377,11 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
             ? '（同主题的多版并作一行，共 ' + knowledge.length + ' 行）'
             : ''}
         </div>
+        {/* 路径、自动整理与模型选择都在设置里（`settings.section`，同一个插件挂的）。
+            面板这一列只读观测，写配置的通路只有那一条 —— 这里指一下，免得用户在这一列里找。 */}
+        <div style={{ ...S.dim, marginBottom: 6 }}>
+          路径与自动整理：<span style={{ opacity: 1 }}>设置 → Oblivion 知识库</span>
+        </div>
         {knowledge.length === 0 ? (
           <div style={S.dim}>还没有条目，也没有笔记（{data.mdRoot ?? '—'}）</div>
         ) : (

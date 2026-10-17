@@ -624,3 +624,273 @@ describe('知识库默认视图（仅入库折叠）', () => {
     assert.equal(kit.knowledgeView([]).hidden, 0);
   });
 });
+
+/**
+ * 设置分节（`settings.section`）：路径 / 自动整理 / 模型选择。
+ *
+ * 这一组测的是**写盘的最后一公里** —— 表单 → `{patch}` 的构造。它一旦错，
+ * 后果不是报错而是「静默写歪配置」，所以每个三态（没碰 / 恢复默认 / 改值）都单独钉一条。
+ */
+function settingsPayload(overrides = {}) {
+  return {
+    ok: true,
+    version: '0.2.17',
+    path: 'C:/Users/x/.oblivion/data/settings.json',
+    values: {},
+    sources: {},
+    effective: {
+      mdRoot: 'C:/Library/那些渐渐被遗忘',
+      semanticThreshold: 0.85,
+      valueThreshold: 0.3,
+      organize: {
+        enabled: false,
+        digest: true,
+        retitle: true,
+        provider: '',
+        model: '',
+        fallbacks: [],
+        maxTokens: 1024,
+        timeoutMs: 30000,
+        everyTurns: 0,
+        minIntervalMs: 600000,
+        autoApply: false,
+        batchSize: 8,
+      },
+    },
+    writable: ['mdRoot', 'organize', 'semanticThreshold', 'valueThreshold', 'mdClassify'],
+    pending: [],
+    catalog: {
+      providers: [
+        { id: 'agnes', name: 'Agnes', models: [{ id: 'agnes-2.5-flash', name: 'agnes-2.5-flash' }] },
+        { id: 'agnes-api', name: 'Agnes', models: [{ id: 'agnes-3.0-flash', name: 'agnes-3.0-flash' }] },
+      ],
+      routes: [{ provider: 'agnes-api', model: 'agnes-3.0-flash' }],
+      routeSource: 'host-default',
+      llmAvailable: true,
+    },
+    ...overrides,
+  };
+}
+
+describe('设置分节：表单 → 补丁（写盘前的最后一公里）', () => {
+  it('只写被碰过的格子；`null` 原样传下去（= 恢复默认，不能被吃掉）', () => {
+    assert.deepEqual(kit.buildPatch({}), { patch: {}, keys: [] });
+    assert.deepEqual(kit.buildPatch({ mdRoot: 'D:/kb' }), { patch: { mdRoot: 'D:/kb' }, keys: ['mdRoot'] });
+    // 键序稳定：同一份表单永远得到同一个请求体（单测因此能逐字比对）。
+    const nested = kit.buildPatch({ 'organize.enabled': true, 'organize.batchSize': 4 });
+    assert.deepEqual(nested.keys, ['organize.batchSize', 'organize.enabled']);
+    assert.deepEqual(nested.patch, { organize: { batchSize: 4, enabled: true } });
+    // 「恢复默认」在 core 那边就是 `null`（`writeSettings()` 删掉这一键、回到下层）。
+    assert.deepEqual(kit.buildPatch({ mdRoot: null }).patch, { mdRoot: null });
+    assert.deepEqual(kit.buildPatch({ mdRoot: null, 'organize.model': 'agnes-3.0-flash' }).patch, {
+      mdRoot: null,
+      organize: { model: 'agnes-3.0-flash' },
+    });
+  });
+
+  it('resolveField：设置层有就用它，否则用「正在跑」的那份，并把来源说出来', () => {
+    const payload = settingsPayload({
+      values: { organize: { enabled: true } },
+      sources: { 'organize.enabled': 'settings', mdRoot: 'plugin', 'organize.digest': 'default' },
+    });
+    assert.deepEqual(kit.resolveField(payload, 'organize.enabled'), { value: true, source: 'settings', fromSettings: true });
+    assert.deepEqual(kit.resolveField(payload, 'organize.digest'), { value: true, source: 'default', fromSettings: false });
+    assert.deepEqual(kit.resolveField(payload, 'mdRoot'), {
+      value: 'C:/Library/那些渐渐被遗忘',
+      source: 'plugin',
+      fromSettings: false,
+    });
+    assert.equal(kit.configSourceLabel('settings'), '设置页');
+    assert.equal(kit.configSourceLabel('plugin'), '插件配置');
+    assert.equal(kit.configSourceLabel('default'), '默认值');
+    assert.deepEqual(kit.splitFieldKey('organize.enabled'), { head: 'organize', sub: 'enabled' });
+    assert.deepEqual(kit.splitFieldKey('mdRoot'), { head: 'mdRoot' });
+  });
+
+  it('editField / resetField：改回原值就等于撤掉改动', () => {
+    const payload = settingsPayload({
+      values: { organize: { batchSize: 4 } },
+      sources: { 'organize.batchSize': 'settings' },
+    });
+    // 改回当前值 ⇒ **不写**（否则会把一个多余的值钉进设置层，压过 profile）。
+    assert.deepEqual(kit.editField({ 'organize.batchSize': 9 }, payload, 'organize.batchSize', 4), {});
+    assert.deepEqual(kit.editField({}, payload, 'organize.batchSize', 9), { 'organize.batchSize': 9 });
+    // 恢复默认：设置层有这个键 ⇒ `null`（让 core 删掉它）；只是表单里改了 ⇒ 撤掉这一格即可。
+    assert.deepEqual(kit.resetField({}, payload, 'organize.batchSize'), { 'organize.batchSize': null });
+    assert.deepEqual(kit.resetField({ mdRoot: 'x' }, payload, 'mdRoot'), {});
+    assert.deepEqual(kit.setField({ a: 1, b: 2 }, 'a', undefined), { b: 2 });
+    assert.equal(kit.draftCount({ mdRoot: 'x', 'organize.enabled': true }), 2);
+    assert.equal(kit.draftCount({}), 0);
+    assert.equal(kit.sameValue(null, undefined), true);
+    assert.equal(kit.sameValue([{ provider: 'a', model: 'b' }], [{ provider: 'a', model: 'b' }]), true);
+    assert.equal(kit.sameValue(4, '4'), false);
+  });
+
+  it('数字输入：空串 = 恢复默认，读不懂就不动这一格', () => {
+    assert.equal(kit.parseNumberText(''), null);
+    assert.equal(kit.parseNumberText('   '), null);
+    assert.equal(kit.parseNumberText('10'), 10);
+    assert.equal(kit.parseNumberText(' 0 '), 0);
+    assert.equal(kit.parseNumberText('abc'), undefined);
+    assert.equal(kit.parseNumberText('12abc'), undefined);
+    // 显示按 scale 换算（毫秒→分钟、毫秒→秒），落盘仍是原单位。
+    assert.equal(kit.numberText(600000, 60000), '10');
+    assert.equal(kit.numberText(30000, 1000), '30');
+    assert.equal(kit.numberText(0.85), '0.85');
+    assert.equal(kit.numberText(undefined), '');
+    assert.equal(kit.numberText(null), '');
+  });
+
+  it('provider / model 下拉框：自定义 provider 与官方一视同仁，清单外的值不静默丢掉', () => {
+    const payload = settingsPayload();
+    const providers = kit.providerOptions(payload.catalog);
+    assert.deepEqual(providers[0], { value: '', label: '（跟随宿主默认）' });
+    assert.deepEqual(providers.slice(1).map((option) => option.value), ['agnes', 'agnes-api']);
+    assert.deepEqual(kit.modelOptions(payload.catalog, 'agnes').map((option) => option.value), ['', 'agnes-2.5-flash']);
+    assert.deepEqual(kit.modelOptions(payload.catalog, '').map((option) => option.value), ['']);
+    // 清单里没有的当前值补一条 —— 否则 `<select>` 静默跳到第一项，用户一保存就把配置改了。
+    assert.deepEqual(kit.withCurrent(providers, 'ghost').at(-1), {
+      value: 'ghost',
+      label: 'ghost（不在宿主清单里）',
+    });
+    assert.equal(kit.withCurrent(providers, 'agnes').length, providers.length);
+    // 宿主没回清单（core 版本旧 / 没装 llm）也不抛错，只是没得选。
+    assert.equal(kit.providerOptions(null).length, 1);
+    assert.equal(kit.modelOptions(undefined, 'agnes').length, 1);
+  });
+
+  it('routeProblem：对不上的 provider / model 要说出来，但不替用户改配置', () => {
+    const catalog = settingsPayload().catalog;
+    assert.equal(kit.routeProblem(catalog, 'agnes', 'agnes-2.5-flash'), null);
+    assert.match(kit.routeProblem(catalog, 'agnes', 'agnes-3.0-flash'), /没有 model/);
+    assert.match(kit.routeProblem(catalog, 'ghost', 'x'), /不在宿主注册表里/);
+    assert.match(kit.routeProblem(null, 'agnes', 'x'), /不在宿主注册表里/);
+    assert.equal(kit.routeProblem(catalog, '', 'x'), null);
+    assert.equal(kit.routeProblem(catalog, 'agnes', ''), null);
+  });
+
+  it('catalogSummary / routesText：把「打开会用哪条路」说清楚', () => {
+    const catalog = settingsPayload().catalog;
+    const summary = kit.catalogSummary(catalog);
+    assert.match(summary.label, /宿主的默认选路/);
+    assert.equal(summary.routes, 'agnes-api / agnes-3.0-flash');
+    assert.match(kit.catalogSummary({ ...catalog, routeSource: 'config' }).label, /provider \/ model/);
+    assert.match(kit.catalogSummary({ ...catalog, routeSource: 'none', routes: [] }).routes, /没有可用的路/);
+    assert.match(kit.catalogSummary({ ...catalog, llmAvailable: false }).routes, /自动整理会跳过/);
+    assert.match(kit.catalogSummary(null).label, /宿主没回清单/);
+    assert.equal(kit.routeText({ provider: 'a', model: '' }), '（没配全）');
+    assert.equal(kit.routeText(null), '（没配全）');
+  });
+
+  it('fallbacksOf：只留两端都有的路（与 core 的 buildRoutes 同口径）', () => {
+    const payload = settingsPayload({
+      values: {
+        organize: { fallbacks: [{ provider: 'a', model: 'b' }, { provider: 'c', model: '' }, 'junk', null] },
+      },
+    });
+    assert.deepEqual(kit.fallbacksOf(payload), [
+      { provider: 'a', model: 'b' },
+      { provider: 'c', model: '' },
+    ]);
+    assert.deepEqual(kit.fallbacksOf(settingsPayload()), []);
+    assert.equal(kit.isCompleteRoute({ provider: 'a', model: 'b' }), true);
+    assert.equal(kit.isCompleteRoute({ provider: 'a', model: '' }), false);
+  });
+
+  it('保存结果与待重启：如实报，不美化', () => {
+    const base = { values: {}, sources: {}, effective: {} };
+    assert.equal(
+      kit.describeSaveResult({ ...base, saved: true, changed: ['mdRoot'], rejected: [], pending: ['mdRoot'] }).kind,
+      'ok',
+    );
+    assert.match(
+      kit.describeSaveResult({ ...base, saved: true, changed: ['mdRoot'], rejected: [], pending: ['mdRoot'] }).text,
+      /重启 DSH 才生效/,
+    );
+    assert.equal(kit.describeSaveResult({ ...base, saved: false, changed: [], rejected: [], pending: [] }).kind, 'error');
+    assert.equal(kit.describeSaveResult({ ...base, saved: true, changed: [], rejected: [], pending: [] }).kind, 'warn');
+    const partial = kit.describeSaveResult({ ...base, saved: true, changed: ['mdRoot'], rejected: ['bogus'], pending: [] });
+    assert.equal(partial.kind, 'warn');
+    assert.match(partial.text, /被 core 丢掉/);
+    assert.equal(kit.pendingSentence([]), null);
+    assert.equal(kit.pendingSentence(undefined), null);
+    assert.match(kit.pendingSentence(['mdRoot', 'organize.enabled']), /mdRoot、organize\.enabled/);
+    assert.match(kit.writableNote(['mdRoot', 'organize', 'semanticThreshold', 'valueThreshold', 'mdClassify']), /mdClassify/);
+    assert.equal(kit.writableNote(['mdRoot', 'organize']), '');
+    assert.equal(kit.shortKey('organize.enabled'), 'enabled');
+    assert.equal(kit.shortKey('mdRoot'), 'mdRoot');
+  });
+
+  it('loadSettings / postSettings：每条拒绝都翻译成人话，请求体恒为 {patch:…}', async () => {
+    const okGet = await kit.loadSettings({
+      fetch: async () => ({ ok: true, status: 200, json: async () => settingsPayload() }),
+    });
+    assert.equal(okGet.ok, true);
+    assert.equal(okGet.payload.version, '0.2.17');
+
+    const missing = await kit.loadSettings({
+      fetch: async () => ({ ok: false, status: 404, json: async () => ({ ok: false, error: 'x' }) }),
+    });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.status, 404);
+    assert.match(missing.error, /0\.2\.17/);
+
+    const refused = await kit.loadSettings({
+      fetch: async () => ({ ok: false, status: 403, json: async () => ({ error: 'untrusted origin' }) }),
+    });
+    assert.match(refused.error, /来源/);
+    assert.match(refused.error, /untrusted origin/);
+
+    const boom = await kit.loadSettings({
+      fetch: async () => {
+        throw new Error('ECONNREFUSED');
+      },
+    });
+    assert.match(boom.error, /连不上/);
+
+    const notJson = await kit.loadSettings({
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new Error('bad body');
+        },
+      }),
+    });
+    assert.match(notJson.error, /不是 JSON 对象/);
+
+    let seen = null;
+    const posted = await kit.postSettings(
+      { mdRoot: 'D:/kb' },
+      {
+        fetch: async (url, init) => {
+          seen = { url, init };
+          return {
+            ok: true,
+            status: 200,
+            json: async () =>
+              settingsPayload({ saved: true, changed: ['mdRoot'], rejected: [], pending: ['mdRoot'], restartRequired: true }),
+          };
+        },
+      },
+    );
+    assert.equal(posted.ok, true);
+    assert.equal(seen.url, kit.SETTINGS_ROUTE);
+    assert.equal(seen.init.method, 'POST');
+    assert.equal(seen.init.credentials, 'same-origin');
+    assert.deepEqual(JSON.parse(seen.init.body), { patch: { mdRoot: 'D:/kb' } });
+    assert.equal(posted.result.restartRequired, true);
+
+    const huge = await kit.postSettings(
+      {},
+      { fetch: async () => ({ ok: false, status: 413, json: async () => ({}) }) },
+    );
+    assert.match(huge.error, /64 KiB/);
+
+    assert.match(kit.httpHint(405), /GET \/ POST/);
+    assert.match(kit.httpHint(500), /core 自己报错/);
+    assert.match(kit.httpHint(400), /合法的 JSON/);
+    assert.equal(kit.httpHint(418), '');
+    assert.equal(kit.SETTINGS_ROUTE, '/oblivion-core/settings');
+  });
+});

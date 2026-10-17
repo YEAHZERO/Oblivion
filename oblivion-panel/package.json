@@ -1,7 +1,7 @@
 {
   "name": "@oblivion/panel",
-  "version": "0.0.16",
-  "description": "Oblivion 认知面板：把 @oblivion/core 的捕获率、拦截原因、调参建议与最近沉淀嵌进 dsh-better-sidebar 的一列里。",
+  "version": "0.0.17",
+  "description": "Oblivion 认知面板：把 @oblivion/core 的捕获率、拦截原因、调参建议与最近沉淀嵌进 dsh-better-sidebar 的一列里；并把「设置 → Oblivion 知识库」挂上 DSH 设置（知识库路径 / 自动整理 / 模型与自动切换）。",
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",
@@ -15,19 +15,26 @@
   "dsh": {
     "client": {
       "platform": "web",
-      "inject": []
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
     },
     "compat": {
       "host": ">=0.2.0-rc.2 <0.3.0",
       "requires": {
         "slots": [
-          "sidebar.footer.action"
+          "sidebar.footer.action",
+          "settings.section"
         ],
         "slotKinds": {
-          "sidebar.footer.action": "list"
+          "sidebar.footer.action": "list",
+          "settings.section": "list"
         },
         "services": [
           "webServer"
+        ],
+        "clientPackages": [
+          "@deepseek-ai/dsh-client-ui-settings"
         ],
         "npmPackages": [
           "dsh-better-sidebar"

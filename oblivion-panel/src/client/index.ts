@@ -4,17 +4,25 @@
  * `inject` 刻意留空：本插件**只有**一个可选依赖（`dsh-better-sidebar` 提供的 `ctx.betterSidebar`），
  * 它缺席时应当「不注册面板但插件照常装载」，而不是让整棵客户端树因为一个 UI 服务缺失而倒掉。
  *
- * 三条注册：
+ * 四条注册：
  *   ① **右侧栏 tab**（`registerPanelTab` → `betterSidebar.registerTab`）
  *   ② **左栏入口**（官方 `sidebar.footer.action`）→ 点击把右侧那一列切到 Oblivion 页
- *   ③ **ctx 形状自报**（POST 给自己的 Node 半边）→ 与 core 的 dump 对照，定位 `inject` 缺失的根因
+ *   ③ **设置分节**（官方 `settings.section`）→ 设置 → **Oblivion 知识库**（路径 / 自动整理 / 模型）
+ *   ④ **ctx 形状自报**（POST 给自己的 Node 半边）→ 与 core 的 dump 对照，定位 `inject` 缺失的根因
  */
 
 import { createElement } from 'react';
+import { postDiag } from './diag.js';
 import { OblivionPanel } from './Panel.js';
+import { OblivionSettingsSection } from './SettingsSection.js';
 import { createLeftbarAction, openOblivionTab, PolarisGlyph, type OpenTabCapable } from './leftbar.js';
 import { openNoteInSidebar, type OpenFileCapable } from './open-note.js';
 import { PANEL_TAB_ID, registerPanelTab, type ClientCtxLike, type RegisterResult } from './register.js';
+import {
+  SETTINGS_SECTION_ID,
+  SETTINGS_SECTION_LABEL,
+  SETTINGS_SECTION_ORDER,
+} from './settings-model.js';
 
 /**
  * **必须声明 `slots`**：Cordis 对未在 `inject` 里声明的服务访问会**抛错**
@@ -45,21 +53,13 @@ interface PanelPropsLike {
   onOpenFile?: (path: string) => void;
 }
 
-/** 把一段 JSON 报给本插件自己的 Node 半边（诊断通道；失败绝不影响装载）。 */
-function postDiag(payload: Record<string, unknown>): void {
-  try {
-    void fetch('/oblivion-panel/diag', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      credentials: 'same-origin',
-    }).catch(() => undefined);
-  } catch {
-    // 诊断本身绝不影响装载
-  }
-}
-
-/** ① ctx 形状自报（诊断；失败绝不影响装载）。`extra` 用来带上注册/点击结果。 */
+/**
+ * ① ctx 形状自报（诊断；失败绝不影响装载）。`extra` 用来带上各 UI 注册的结果。
+ *
+ * 落盘是**覆盖**式的（`panel-client-diag.json` 留最后一次报告，用 `where` 区分）——
+ * 所以设置分节真正挂载时的那一条（`where: 'settings-section'`）会盖掉这一条，
+ * 那是刻意的：它才证明座位被真的渲染过。
+ */
 function reportCtxShape(ctx: ClientCtxLike, extra: Record<string, unknown> = {}): void {
   try {
     const target = ctx as unknown as Record<string, unknown>;
@@ -191,10 +191,50 @@ export function apply(ctx: ClientCtxLike): void {
     warn('slots 服务不可用：左栏入口未注册（右侧栏 tab 不受影响）');
   }
 
-  // ③ ctx 形状自报（带上两个 UI 注册的真实结果，省得靠 DevTools 猜）
+  // ③ 设置分节（官方 `settings.section`，由 `@deepseek-ai/dsh-client-ui-settings` 声明）
+  //
+  // 与左栏入口同一套降级：`slots` 在就注册，不在就只记一条日志 —— 少一个设置分节
+  // 绝不该让整个客户端 entry 装载失败（那会连面板 tab 一起没了）。
+  // 座位声明必须在 `package.json` 的 `compat.requires.slots` / `slotKinds` 里也写上，
+  // 否则 DSH 升级把槽位改名时我们只会「静静地少了一页」（`verify-dsh-compat.ps1` 会红）。
+  //
+  // 这里只能报「**请求已发出**」（`inject` 没抛）：槽位是 `@deepseek-ai/dsh-client-ui-settings`
+  // 在它自己装载时**运行时声明**的，回调何时被调用由它决定。真正的「挂上了」由
+  // `SettingsSection.tsx` 挂载后发回的那条自报（`where: 'settings-section'`）作证 ——
+  // 拿一个乐观的 true 冒充成功，正是这个仓库已在「面板 tab 点不动」上付过一次的代价。
+  let settingsSectionRequested = false;
+  if (slots && typeof slots.inject === 'function' && typeof slots.register === 'function') {
+    try {
+      slots.inject('settings.section', () =>
+        slots.register?.(
+          {
+            name: 'settings.section',
+            id: SETTINGS_SECTION_ID,
+            order: SETTINGS_SECTION_ORDER,
+            label: () => SETTINGS_SECTION_LABEL,
+          },
+          OblivionSettingsSection,
+        ),
+      );
+      settingsSectionRequested = true;
+    } catch (error) {
+      warn('设置分节注册失败：' + (error instanceof Error ? error.message : String(error)));
+    }
+  } else {
+    warn('slots 服务不可用：设置分节未注册（设置 → ' + SETTINGS_SECTION_LABEL + ' 不会出现）');
+  }
+
+  // ④ ctx 形状自报（带上三个 UI 注册的真实结果，省得靠 DevTools 猜）
   reportCtxShape(ctx, {
     panelTab: { status: result.status, detail: result.detail ?? null, tabId: PANEL_TAB_ID },
-    leftbar: { registered: leftbarRegistered, seat: 'sidebar.footer.action' },
+    leftbar: { requested: leftbarRegistered, seat: 'sidebar.footer.action' },
+    settingsSection: {
+      requested: settingsSectionRequested,
+      seat: 'settings.section',
+      id: SETTINGS_SECTION_ID,
+      order: SETTINGS_SECTION_ORDER,
+      note: '真正挂上与否看同目录下 where=settings-section 的那条自报',
+    },
   });
 }
 

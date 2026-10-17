@@ -2,11 +2,14 @@
 /**
  * @oblivion/panel 端到端自检。
  *
- * 覆盖两个真实面：
+ * 覆盖三个真实面：
  *   ① **Node 半边**：`apply()` → 路由注册 → `GET /oblivion-panel/status` 真的返回 JSON
  *      （用桩 req/res，走真实文件系统）；
  *   ② **浏览器半边**：`registerPanelTab` 的三种结局（注册成功 / 服务缺席 / 抛错）
- *      与 descriptor 形状 —— 这里测不了真实 side bar，但能把契约面钉住。
+ *      与 descriptor 形状 —— 这里测不了真实 side bar，但能把契约面钉住；
+ *   ③ **设置分节的跨包契约**：字段表构造出的补丁要能过 `@oblivion/core`
+ *      真产物的 `writableKeys()` / `sanitizeSettings()` / `rejectedKeys()`
+ *      —— 「设置页点了保存、值却被静默丢掉」这类 bug 只能在两包之间钉住。
  *
  * 与其它两个插件同一验收哲学：**能在本机自证的才敢声称**。
  */
@@ -430,6 +433,88 @@ await check('判定曲线：纵轴 0..1 + 阈值线 + 趋势线，no-qa 不落�
   assert.match(four.trend, /^M/, '≥3 个点才有趋势线');
   assert.match(kit.curveCaption(rows, curve), /阈值 0\.30/);
   return '点 ' + curve.points + ' / 跳过 ' + curve.skipped + ' / 趋势段 ' + four.trend.split(' L').length;
+});
+
+await check('设置分节：座位、标签、路由字面量与「待重启」文案都进了客户端产物', async () => {
+  const code = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8');
+  assert.ok(code.includes("'settings.section'") || code.includes('"settings.section"'), '要注册到官方 settings.section 座位');
+  assert.ok(code.includes('/oblivion-core/settings'), '设置页的读写路由必须是 core 那条（写死成同源路径）');
+  // 产物里的中文是 \uXXXX（构建器转义）⇒ 先把转义统一成小写，再按「ASCII 原样 + 非 ASCII 转义」拼出期望串。
+  const normalized = code.replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) => '\\u' + hex.toLowerCase());
+  const esc = (text) =>
+    [...text]
+      .map((ch) => (ch.codePointAt(0) < 128 ? ch : '\\u' + ch.codePointAt(0).toString(16).padStart(4, '0')))
+      .join('');
+  assert.ok(normalized.includes(esc('Oblivion 知识库')), '设置分节的标签必须进产物');
+  assert.ok(normalized.includes(esc('要重启 DSH 才生效')), '「待重启」那句话必须进产物（那是这一页最容易被做丢的诚实）');
+  assert.ok(normalized.includes(esc('知识库路径')), '路径那一格必须进产物');
+  assert.ok(normalized.includes(esc('备用路')), '自动切换（备用路）必须进产物');
+  return 'settings.section + JSON 知识库 + /oblivion-core/settings + 待重启提示';
+});
+
+await check('设置字段表自洽（键不重复 / 控件都有实现 / 组都非空）', async () => {
+  const kit = await import(pathToFileURL(kitPath).href);
+  const keys = kit.FIELDS.map((field) => field.key);
+  assert.equal(new Set(keys).size, keys.length, '字段表里不能有重复的键');
+  const kinds = new Set(['text', 'number', 'bool', 'select', 'routes']);
+  assert.ok(kit.FIELDS.every((field) => kinds.has(field.kind)), '每种 kind 都必须在 SettingsSection 里有对应控件');
+  for (const group of kit.GROUPS) {
+    assert.ok(kit.fieldsOf(group.id).length > 0, '空分组不该出现：' + group.id);
+  }
+  assert.deepEqual(
+    kit.FIELDS.filter((field) => field.group === 'organize').map((field) => field.key).filter((key) => key.split('.')[0] !== 'organize'),
+    [],
+    'organize 组里的键必须是 organize.* （补丁构造靠这个前缀嵌套）',
+  );
+  return kit.FIELDS.length + ' 个字段 / ' + kit.GROUPS.length + ' 组';
+});
+
+await check('设置补丁能过 core 的真写语义（跨包：writableKeys / sanitizeSettings / rejectedKeys）', async () => {
+  const kit = await import(pathToFileURL(kitPath).href);
+  const corePath = join(ROOT, '..', 'oblivion-core', 'lib', 'testkit.js');
+  assert.ok(existsSync(corePath), '要先构建 @oblivion/core（本检查用的是它的真产物，不是复刻的规则）');
+  const core = await import(pathToFileURL(corePath).href);
+
+  // ① 路由字面量两侧各写一次 ⇒ 由本检查逐字比对（改一处忘一处当场红）。
+  assert.equal(kit.SETTINGS_ROUTE, core.SETTINGS_ROUTE, '设置路由的字面量必须与 core 逐字相同');
+
+  // ② 字段表里的每个键都必须是 core 允许写的键 —— 否则设置页点了保存，值会被静默丢掉
+  //    （`sanitizeSettings()` 是静默丢弃，只有 `rejected` 会回带键名）。
+  const writable = core.writableKeys();
+  const organizeKeys = Object.keys(core.DEFAULT_CONFIG.organize);
+  for (const key of kit.surfacedKeys()) {
+    const head = key.split('.')[0];
+    if (key === head) {
+      assert.ok(writable.includes(head), 'core 不接受这个键：' + key + '（可写的：' + writable.join(', ') + '）');
+      continue;
+    }
+    assert.equal(head, 'organize', '嵌套键只支持 organize.*：' + key);
+    assert.ok(organizeKeys.includes(key.slice('organize.'.length)), 'core 的 organize 块里没有这个子键：' + key);
+  }
+
+  // ③ 把每个字段都改成「有值」再构造补丁：core 一个键都不该拒、也不该静默丢。
+  const valueOf = (field) => {
+    if (field.kind === 'bool') return true;
+    if (field.kind === 'number') return 1;
+    if (field.kind === 'routes') return [{ provider: 'agnes', model: 'agnes-2.5-flash' }];
+    if (field.kind === 'select') return 'agnes';
+    return 'D:/kb';
+  };
+  const form = {};
+  for (const field of kit.FIELDS) form[field.key] = valueOf(field);
+  const { patch, keys } = kit.buildPatch(form);
+  assert.deepEqual(core.rejectedKeys(patch), [], '字段表构造出的补丁里不能有 core 不认的键');
+  assert.deepEqual(core.sanitizeSettings(patch), patch, '补丁不能被 core 的 sanitize 静默改掉');
+  assert.equal(keys.length, kit.FIELDS.length);
+
+  // ④ 「恢复默认」= `null`：core 认它是合法操作（删键），而 sanitize 会吃掉它 ——
+  //    所以 core 必须把**原始输入**传给 writeSettings（那是 core 自己的单测盯着的事，
+  //    这里把它作为跨包契约钉住：我们发的就是原始 null，不能被我们这边提前 sanitize）。
+  const reset = kit.buildPatch({ mdRoot: null, 'organize.enabled': null }).patch;
+  assert.deepEqual(reset, { mdRoot: null, organize: { enabled: null } });
+  assert.deepEqual(core.rejectedKeys(reset), [], 'null（恢复默认）在 core 那边是合法操作');
+  assert.deepEqual(core.sanitizeSettings(reset), {}, 'sanitize 吃掉 null 是既定行为（core 靠传原始输入绕过它）');
+  return 'core ' + core.DEFAULT_CONFIG.logPrefix + ' 认得全部 ' + kit.FIELDS.length + ' 个键';
 });
 
 rmSync(tmp, { recursive: true, force: true });

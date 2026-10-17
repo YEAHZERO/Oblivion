@@ -799,41 +799,411 @@ function registerPanelTab(ctx, component, warn, icon) {
   if (result.status !== "registered") warn("\u9762\u677F tab \u672A\u6CE8\u518C\uFF1A" + String(result.detail ?? result.status));
   return result;
 }
+
+// src/client/settings-model.ts
+var SETTINGS_ROUTE = "/oblivion-core/settings";
+var GROUPS = [
+  { id: "data", title: "\u77E5\u8BC6\u5E93\u4F4D\u7F6E", hint: "\u7B14\u8BB0\u4E0E\u6761\u76EE\u843D\u5728\u672C\u673A\u54EA\u4E2A\u76EE\u5F55\u3002" },
+  {
+    id: "organize",
+    title: "\u81EA\u52A8\u6574\u7406\uFF08\u7528\u5BBF\u4E3B\u91CC\u53EF\u7528\u7684\u6A21\u578B\uFF09",
+    hint: "\u590D\u7528 DSH \u7684 provider \u4E0E\u5BC6\u94A5\u8DD1\u6A21\u578B\uFF1A\u63D2\u4EF6\u53EA\u62A5 provider / model\uFF0C\u5BC6\u94A5\u7531\u5BBF\u4E3B\u9002\u914D\u5668\u89E3\u6790\u3002"
+  },
+  { id: "model", title: "\u6A21\u578B\u4E0E\u81EA\u52A8\u5207\u6362", hint: "\u4E3B\u8DEF\u5931\u8D25\u4F1A\u6309\u987A\u5E8F\u8BD5\u5907\u7528\u8DEF \u2014\u2014 \u8FD9\u5C31\u662F\u300C\u81EA\u52A8\u5207\u6362\u300D\u3002" },
+  { id: "threshold", title: "\u5224\u5B9A\u9608\u503C", hint: "\u9762\u677F\u300C\u8C03\u53C2\u5EFA\u8BAE\u300D\u91CC\u7ED9\u5019\u9009\u503C\u7684\u4E24\u4E2A\u952E\u3002" }
+];
+var FIELDS = [
+  {
+    key: "mdRoot",
+    label: "\u77E5\u8BC6\u5E93\u8DEF\u5F84",
+    kind: "text",
+    group: "data",
+    hint: "\u9ED8\u8BA4 ~/OblivionKB\u3002\u6539\u4E86\u8981\u91CD\u542F DSH \u624D\u751F\u6548\uFF08core \u88C5\u8F7D\u65F6\u5C31\u628A\u8DEF\u5F84\u56FA\u5316\u4E86\uFF09\u3002"
+  },
+  {
+    key: "organize.enabled",
+    label: "\u81EA\u52A8\u6574\u7406\u603B\u5F00\u5173",
+    kind: "bool",
+    group: "organize",
+    hint: "\u9ED8\u8BA4\u5173\u3002\u6253\u5F00\u540E\u6309\u4E0B\u9762\u7684\u8303\u56F4\u4E0E\u8282\u594F\u8C03\u7528\u6A21\u578B\u3002"
+  },
+  {
+    key: "organize.digest",
+    label: "\u4F1A\u8BDD\u6574\u7406\u4EA7\u51FA",
+    kind: "bool",
+    group: "organize",
+    hint: "\u628A\u8D70\u8FC7\u7684\u4F1A\u8BDD\u6574\u7406\u6210 04_\u4F1A\u8BDD\u6574\u7406/ \u4E0B\u7684\u7B14\u8BB0\u3002"
+  },
+  {
+    key: "organize.retitle",
+    label: "\u77E5\u8BC6\u5E93\u6807\u9898\u4E0E\u6807\u7B7E\u56DE\u586B",
+    kind: "bool",
+    group: "organize",
+    hint: "\u540D\u5B57\u770B\u4E0D\u51FA\u5185\u5BB9\u7684\u7B14\u8BB0\uFF0C\u6309\u5185\u5BB9\u91CD\u547D\u540D\u5E76\u8865\u5173\u952E\u8BCD\u3002"
+  },
+  {
+    key: "organize.autoApply",
+    label: "\u56DE\u586B\u81EA\u52A8\u843D\u5730",
+    kind: "bool",
+    group: "organize",
+    hint: "\u9ED8\u8BA4\u5173\uFF1A\u53EA\u51FA\u9884\u89C8\uFF08preview\uFF09\uFF0C\u8981\u4E0D\u8981\u771F\u6539\u7531\u4F60\u786E\u8BA4 \u2014\u2014 \u56DE\u586B\u4F1A\u52A8\u77E5\u8BC6\u5E93\u91CC\u7684\u6587\u4EF6\u540D\u3002"
+  },
+  {
+    key: "organize.everyTurns",
+    label: "\u6BCF\u51E0\u8F6E\u6574\u7406\u4E00\u6B21",
+    kind: "number",
+    group: "organize",
+    min: 0,
+    step: 1,
+    hint: "0 = \u4E0D\u6309\u8F6E\u89E6\u53D1\uFF08\u53EA\u5728\u5DE5\u5177\u91CC\u624B\u52A8\u8DD1\uFF09\u3002"
+  },
+  {
+    key: "organize.minIntervalMs",
+    label: "\u4E24\u6B21\u6574\u7406\u81F3\u5C11\u95F4\u9694",
+    kind: "number",
+    group: "organize",
+    scale: 6e4,
+    unit: "\u5206\u949F",
+    min: 0,
+    step: 1,
+    hint: "\u9632\u6B62\u591A\u8F6E\u8FDE\u8DD1\u65F6\u53CD\u590D\u53EB\u6A21\u578B\u3002"
+  },
+  {
+    key: "organize.batchSize",
+    label: "\u6BCF\u6279\u6700\u591A\u5904\u7406",
+    kind: "number",
+    group: "organize",
+    unit: "\u7BC7",
+    min: 1,
+    step: 1,
+    hint: "\u4E00\u6B21\u9001\u8FDB prompt \u7684\u5019\u9009\u4E0A\u9650\u3002"
+  },
+  {
+    key: "organize.maxTokens",
+    label: "\u5355\u6B21\u8C03\u7528\u6700\u5927\u8F93\u51FA",
+    kind: "number",
+    group: "organize",
+    unit: "token",
+    min: 1,
+    step: 64,
+    hint: "\u592A\u5C0F\u4F1A\u628A\u6A21\u578B\u7684\u8BDD\u622A\u65AD\u5728 JSON \u4E2D\u95F4\u3002"
+  },
+  {
+    key: "organize.timeoutMs",
+    label: "\u5355\u6B21\u8C03\u7528\u8D85\u65F6",
+    kind: "number",
+    group: "organize",
+    scale: 1e3,
+    unit: "\u79D2",
+    min: 1,
+    step: 5,
+    hint: "\u5230\u70B9\u5C31\u6362\u4E0B\u4E00\u6761\u8DEF\uFF08\u5907\u7528\u8DEF\u56E0\u6B64\u624D\u6709\u610F\u4E49\uFF09\u3002"
+  },
+  { key: "organize.provider", label: "\u4E3B provider", kind: "select", group: "model", hint: "\u7559\u7A7A = \u8DDF\u968F\u5BBF\u4E3B\u7684\u9ED8\u8BA4\u9009\u8DEF\u3002" },
+  { key: "organize.model", label: "\u4E3B model", kind: "select", group: "model", hint: "\u5019\u9009\u6765\u81EA\u4E0A\u9762\u90A3\u4E2A provider \u5728\u5BBF\u4E3B\u6CE8\u518C\u8868\u91CC\u7684\u6A21\u578B\u3002" },
+  { key: "organize.fallbacks", label: "\u5907\u7528\u8DEF\uFF08\u81EA\u52A8\u5207\u6362\uFF09", kind: "routes", group: "model", hint: "\u6309\u987A\u5E8F\u8BD5\uFF1B\u4E3B\u8DEF\u4E0E\u5907\u7528\u8DEF\u91CC\u91CD\u590D\u7684\u8DEF\u4F1A\u88AB core \u53BB\u6389\u3002" },
+  { key: "semanticThreshold", label: "\u8BED\u4E49\u9608\u503C", kind: "number", group: "threshold", min: 0, step: 0.05, hint: "\u4F4E\u4E8E\u5B83\u7684\u8BED\u4E49\u76F8\u4F3C\u5EA6\u4E0D\u7B97\u540C\u4E00\u6761\u77E5\u8BC6\u3002" },
+  { key: "valueThreshold", label: "\u4EF7\u503C\u9608\u503C", kind: "number", group: "threshold", min: 0, step: 0.05, hint: "\u4F4E\u4E8E\u5B83\u7684\u95EE\u7B54\u4E0D\u5165\u5E93\uFF08\u6355\u83B7\u7387\u4F4E\u65F6\u6700\u8BE5\u8C03\u8FD9\u4E2A\uFF09\u3002" }
+];
+function fieldsOf(group) {
+  return FIELDS.filter((field) => field.group === group);
+}
+function surfacedKeys() {
+  return FIELDS.map((field) => field.key);
+}
+function splitFieldKey(key) {
+  const dot = key.indexOf(".");
+  if (dot < 0) return { head: key };
+  return { head: key.slice(0, dot), sub: key.slice(dot + 1) };
+}
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function resolveField(payload, key) {
+  const { head, sub } = splitFieldKey(key);
+  const raw = sub === void 0 ? payload.values[head] : isPlainObject(payload.values[head]) ? payload.values[head][sub] : void 0;
+  const effective = sub === void 0 ? payload.effective[head] : isPlainObject(payload.effective[head]) ? payload.effective[head][sub] : void 0;
+  const fromSettings = raw !== void 0 && raw !== null;
+  const source = payload.sources[key] ?? (fromSettings ? "settings" : "default");
+  return { value: fromSettings ? raw : effective, source, fromSettings };
+}
+function configSourceLabel(source) {
+  if (source === "settings") return "\u8BBE\u7F6E\u9875";
+  if (source === "plugin") return "\u63D2\u4EF6\u914D\u7F6E";
+  return "\u9ED8\u8BA4\u503C";
+}
+function setField(form, key, value) {
+  const next = { ...form };
+  if (value === void 0) delete next[key];
+  else next[key] = value;
+  return next;
+}
+function draftCount(form) {
+  return Object.keys(form).length;
+}
+function sameValue(a, b) {
+  if (a === void 0 || a === null) return b === void 0 || b === null;
+  if (b === void 0 || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+function editField(form, payload, key, value) {
+  if (sameValue(value, resolveField(payload, key).value)) return setField(form, key, void 0);
+  return setField(form, key, value);
+}
+function resetField(form, payload, key) {
+  return setField(form, key, resolveField(payload, key).fromSettings ? null : void 0);
+}
+function routeProblem(catalog, provider, model) {
+  if (provider === "" || model === "") return null;
+  const found = (catalog?.providers ?? []).find((item) => item.id === provider);
+  if (found === void 0) return "provider\u300C" + provider + "\u300D\u4E0D\u5728\u5BBF\u4E3B\u6CE8\u518C\u8868\u91CC\uFF08\u6E05\u5355\u6765\u81EA\u5BBF\u4E3B\u7684 provider \u6CE8\u518C\u8868\uFF09\u3002";
+  if (!found.models.some((item) => item.id === model)) {
+    return "provider\u300C" + provider + "\u300D\u4E0B\u6CA1\u6709 model\u300C" + model + "\u300D\u2014\u2014 \u8FD9\u6761\u7EC4\u5408\u4F1A\u8C03\u7528\u5931\u8D25\u5E76\u5207\u5230\u5907\u7528\u8DEF\u3002";
+  }
+  return null;
+}
+function buildPatch(form) {
+  const patch = {};
+  const organize = {};
+  const keys = [];
+  for (const key of Object.keys(form).sort()) {
+    const value = form[key];
+    const { head, sub } = splitFieldKey(key);
+    if (sub === void 0) patch[head] = value;
+    else organize[sub] = value;
+    keys.push(key);
+  }
+  if (Object.keys(organize).length > 0) patch.organize = organize;
+  return { patch, keys };
+}
+function parseNumberText(text2) {
+  const trimmed = text2.trim();
+  if (trimmed === "") return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : void 0;
+}
+function numberText(value, scale = 1) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return value === void 0 || value === null ? "" : String(value);
+  const shown = value / scale;
+  return String(Number.isFinite(shown) ? shown : value);
+}
+function routeText(route) {
+  if (!route || route.provider === "" || route.model === "") return "\uFF08\u6CA1\u914D\u5168\uFF09";
+  return route.provider + " / " + route.model;
+}
+function routesText(routes) {
+  if (!routes || routes.length === 0) return "\uFF08\u6CA1\u6709\u53EF\u7528\u7684\u8DEF\uFF09";
+  return routes.map((route) => routeText(route)).join(" \u2192 ");
+}
+function catalogSummary(catalog) {
+  if (!catalog) return { label: "\u5BBF\u4E3B\u6CA1\u56DE\u6E05\u5355\uFF08core \u7248\u672C\u65E7\u6216\u6CA1\u88C5\u8F7D\uFF09", routes: "\u2014" };
+  if (!catalog.llmAvailable) return { label: "\u5BBF\u4E3B\u6CA1\u6709 llm \u670D\u52A1", routes: "\uFF08\u81EA\u52A8\u6574\u7406\u4F1A\u8DF3\u8FC7\uFF09" };
+  const label = catalog.routeSource === "config" ? "\u6309\u8FD9\u6761\u8BBE\u7F6E\u91CC\u7684 provider / model" : catalog.routeSource === "host-default" ? "\u5BBF\u4E3B\u7684\u9ED8\u8BA4\u9009\u8DEF\uFF08\u672C\u9875\u6CA1\u6307\u5B9A provider\uFF09" : "\u6CA1\u6709\u53EF\u7528\u7684\u8DEF";
+  return { label, routes: routesText(catalog.routes) };
+}
+function providerOptions(catalog) {
+  const options = [{ value: "", label: "\uFF08\u8DDF\u968F\u5BBF\u4E3B\u9ED8\u8BA4\uFF09" }];
+  for (const provider of catalog?.providers ?? []) {
+    const count = provider.models.length;
+    options.push({
+      value: provider.id,
+      label: provider.name === provider.id ? provider.id : provider.name + "\uFF08" + provider.id + "\uFF09" + (count === 0 ? " \xB7 \u65E0\u6A21\u578B" : "")
+    });
+  }
+  return options;
+}
+function modelOptions(catalog, provider) {
+  const options = [{ value: "", label: "\uFF08\u8DDF\u968F\u5BBF\u4E3B\u9ED8\u8BA4\uFF09" }];
+  if (provider === "") return options;
+  const found = (catalog?.providers ?? []).find((item) => item.id === provider);
+  for (const model of found?.models ?? []) {
+    options.push({ value: model.id, label: model.name === model.id ? model.id : model.name + "\uFF08" + model.id + "\uFF09" });
+  }
+  return options;
+}
+function withCurrent(options, current) {
+  if (current === "" || options.some((option) => option.value === current)) return [...options];
+  return [...options, { value: current, label: current + "\uFF08\u4E0D\u5728\u5BBF\u4E3B\u6E05\u5355\u91CC\uFF09" }];
+}
+function fallbacksOf(payload) {
+  const value = resolveField(payload, "organize.fallbacks").value;
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    if (!isPlainObject(item)) continue;
+    out.push({ provider: String(item.provider ?? ""), model: String(item.model ?? "") });
+  }
+  return out;
+}
+function isCompleteRoute(route) {
+  return route.provider !== "" && route.model !== "";
+}
+function pendingSentence(pending) {
+  if (!pending || pending.length === 0) return null;
+  return "\u8FD9\u4E9B\u952E\u8981\u91CD\u542F DSH \u624D\u751F\u6548\uFF1A" + pending.join("\u3001");
+}
+function describeSaveResult(result) {
+  if (result.saved === false) {
+    return { kind: "error", text: "core \u8BF4\u8BBE\u7F6E\u6CA1\u5199\u8FDB\u78C1\u76D8\uFF08\u770B\u5B83\u7684\u65E5\u5FD7\uFF09\u3002" };
+  }
+  const changed = result.changed ?? [];
+  const rejected = result.rejected ?? [];
+  const pending = result.pending ?? [];
+  if (changed.length === 0 && rejected.length === 0) {
+    return { kind: "warn", text: "\u5199\u4E0B\u53BB\u4E86\uFF0C\u4F46\u503C\u548C\u539F\u6765\u4E00\u6837\uFF08changed \u4E3A\u7A7A\uFF09\u3002" };
+  }
+  const parts = [];
+  if (changed.length > 0) parts.push("\u5DF2\u4FDD\u5B58 " + changed.join("\u3001"));
+  if (rejected.length > 0) parts.push("\u88AB core \u4E22\u6389\uFF08\u952E\u540D\u4E0D\u5408\u6CD5\uFF09\uFF1A" + rejected.join("\u3001"));
+  const head = parts.join("\uFF1B");
+  if (pending.length > 0) return { kind: rejected.length > 0 ? "warn" : "ok", text: head + " \u2014\u2014 \u8981\u91CD\u542F DSH \u624D\u751F\u6548\u3002" };
+  return { kind: rejected.length > 0 ? "warn" : "ok", text: head + "\u3002" };
+}
+function writableNote(writable, surfaced = surfacedKeys()) {
+  const rest = (writable ?? []).filter((key) => key !== "organize" && !surfaced.includes(key));
+  if (rest.length === 0) return "";
+  const shown = rest.slice(0, 6).join(" / ");
+  return "\u8FD9\u4E00\u9875\u53EA\u7BA1\u4E0A\u9762\u8FD9\u4E9B\u952E\u3002settings.json \u8FD8\u80FD\u5199\u5176\u4F59 " + rest.length + " \u4E2A\uFF08" + shown + (rest.length > 6 ? " \u2026" : "") + "\uFF09\uFF0C\u90A3\u4E9B\u7559\u5728 profile \u7684\u63D2\u4EF6 config \u91CC\u6539\u3002";
+}
+function shortKey(key) {
+  const { head, sub } = splitFieldKey(key);
+  return sub === void 0 ? head : sub;
+}
+function httpHint(status) {
+  switch (status) {
+    case 400:
+      return "core \u8BF4\u8FD9\u4EFD\u8865\u4E01\u4E0D\u662F\u5408\u6CD5\u7684 JSON \u5BF9\u8C61\u3002";
+    case 403:
+      return "core \u62D2\u4E86\u8FD9\u4E2A\u6765\u6E90\uFF08\u5199\u914D\u7F6E\u7684\u8BF7\u6C42\u53EA\u6536\u672C\u673A\u9875\u9762\uFF09\u3002";
+    case 404:
+      return "\u8FD9\u6761\u8DEF\u7531\u662F @oblivion/core 0.2.17 \u8D77\u7684\uFF1Acore \u6CA1\u88C5\u8F7D\uFF0C\u6216\u7248\u672C\u6BD4\u5B83\u65E7\u3002";
+    case 405:
+      return "core \u8FD9\u6761\u8DEF\u7531\u53EA\u6536 GET / POST\u3002";
+    case 413:
+      return "\u8865\u4E01\u592A\u5927\uFF08core \u7684\u4E0A\u9650\u662F 64 KiB\uFF09\u3002";
+    case 500:
+      return "core \u81EA\u5DF1\u62A5\u9519\u4E86\uFF08\u5199\u76D8\u5931\u8D25\u6216 describe \u5931\u8D25\uFF09\uFF0C\u770B\u5B83\u7684\u65E5\u5FD7\u3002";
+    default:
+      return "";
+  }
+}
+function messageOf(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+async function bodyOf(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+function serverErrorOf(body) {
+  if (!isPlainObject(body)) return "";
+  const error = body.error;
+  return typeof error === "string" && error !== "" ? "\uFF08core \u539F\u8BDD\uFF1A" + error + "\uFF09" : "";
+}
+async function loadSettings(options = {}) {
+  const doFetch = options.fetch ?? globalThis.fetch;
+  if (typeof doFetch !== "function") return { ok: false, error: "\u5F53\u524D\u73AF\u5883\u6CA1\u6709 fetch\u3002" };
+  const route = options.route ?? SETTINGS_ROUTE;
+  let response;
+  try {
+    response = await doFetch(route, { method: "GET", headers: { accept: "application/json" }, credentials: "same-origin", cache: "no-store" });
+  } catch (error) {
+    return { ok: false, error: "\u8FDE\u4E0D\u4E0A core \u7684\u8BBE\u7F6E\u8DEF\u7531\uFF1A" + messageOf(error) };
+  }
+  const body = await bodyOf(response);
+  if (!response.ok) return { ok: false, status: response.status, error: httpHint(response.status) + serverErrorOf(body) };
+  if (!isPlainObject(body)) return { ok: false, status: response.status, error: "core \u7684\u56DE\u5305\u4E0D\u662F JSON \u5BF9\u8C61\u3002" };
+  return { ok: true, payload: body };
+}
+async function postSettings(patch, options = {}) {
+  const doFetch = options.fetch ?? globalThis.fetch;
+  if (typeof doFetch !== "function") return { ok: false, error: "\u5F53\u524D\u73AF\u5883\u6CA1\u6709 fetch\u3002" };
+  const route = options.route ?? SETTINGS_ROUTE;
+  let response;
+  try {
+    response = await doFetch(route, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ patch }),
+      credentials: "same-origin"
+    });
+  } catch (error) {
+    return { ok: false, error: "\u4FDD\u5B58\u5931\u8D25\uFF08\u8FDE\u4E0D\u4E0A core\uFF09\uFF1A" + messageOf(error) };
+  }
+  const body = await bodyOf(response);
+  if (!response.ok) return { ok: false, status: response.status, error: httpHint(response.status) + serverErrorOf(body) };
+  if (!isPlainObject(body)) return { ok: false, status: response.status, error: "core \u7684\u56DE\u5305\u4E0D\u662F JSON \u5BF9\u8C61\u3002" };
+  return { ok: true, result: body };
+}
 export {
   DIGEST_NOTE_DIR,
+  FIELDS,
+  GROUPS,
   KEYWORD_MAX,
   KNOWLEDGE_ITEM_LIMIT,
   PANEL_TAB_ID,
   QA_NOTE_DIR,
+  SETTINGS_ROUTE,
   WIKI_MAX,
   WIKI_NOTE_DIR,
   actionLabel,
+  buildPatch,
   buildScoreCurve,
   buildSnapshot,
+  catalogSummary,
+  configSourceLabel,
   curveCaption,
   dateText,
+  describeSaveResult,
   detailParts,
   detailText,
+  draftCount,
+  editField,
+  fallbacksOf,
+  fieldsOf,
   formatValue,
   hintLine,
+  httpHint,
   implLabel,
+  isCompleteRoute,
   itemStatusLabel,
   keywordText,
   knowledgeView,
+  loadSettings,
   mergeKnowledge,
+  modelOptions,
+  numberText,
   openNoteInSidebar,
   panelDescriptor,
   parseNoteHead,
+  parseNumberText,
+  pendingSentence,
   percent,
+  postSettings,
+  providerOptions,
   reasonLabel,
   registerPanelTab,
   relativeTime,
+  resetField,
+  resolveField,
+  routeProblem,
+  routeText,
+  routesText,
+  sameValue,
   scoreText,
+  setField,
+  shortKey,
   sourceLabel,
+  splitFieldKey,
   statNumber,
   summarizeDecisions,
+  surfacedKeys,
   thresholdOf,
   topBlocker,
   updatedText,
-  wikiText
+  wikiText,
+  withCurrent,
+  writableNote
 };
