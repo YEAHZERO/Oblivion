@@ -10,6 +10,7 @@
  */
 
 import {
+  CHANNEL_SCOPES,
   MCP_API_VERSION,
   MCP_CHANNEL,
   MCP_OWNER,
@@ -19,6 +20,7 @@ import {
   publishMcp,
   resolveMcp,
 } from './channel.js';
+import { buildChannelDiag, writeChannelDiag } from './diag.js';
 import { describeEndpoint, handleMcpMessage, toolNames, toolSchemas, PROTOCOL_VERSION } from './protocol.js';
 import { TOOLS } from './tools.js';
 import type { McpEndpoint, McpFacade, McpLog } from './types.js';
@@ -61,11 +63,13 @@ export function registerMcp(options: McpEndpointOptions = {}): { endpoint: McpEn
 }
 
 export {
+  CHANNEL_SCOPES,
   MCP_API_VERSION,
   MCP_CHANNEL,
   MCP_OWNER,
   TOOLS,
   PROTOCOL_VERSION,
+  buildChannelDiag,
   channelKey,
   clearMcpChannel,
   describeMcpChannel,
@@ -74,5 +78,8 @@ export {
   resolveMcp,
   toolNames,
   toolSchemas,
+  writeChannelDiag,
 };
+export type { ChannelDiag } from './diag.js';
+export type { ChannelReport, ChannelScopeName, ChannelScopeReport, PublishMcpOptions } from './channel.js';
 export type { McpEndpoint, McpEndpointInfo, McpFacade, McpKnowledge, McpLog, McpTool } from './types.js';

@@ -25,7 +25,13 @@ export interface SystemPromptSection {
 
 export interface SystemPromptService {
   section(definition: SystemPromptSection): unknown;
-  getSectionOrder(name: string): number;
+  /**
+   * 宿主自己的段落排位表：**只认宿主认识的名字**，未知名回 `undefined`。
+   *
+   * 类型如实写成 `number | undefined`（原来是 `number`，正是这个谎让人以为可以直接拿它当 `order`；
+   * 真宿主里未知名回 `undefined`，而 `section()` 对非有限数直接抛错 —— 见 `prompt.ts` 的 `resolveSectionOrder`）。
+   */
+  getSectionOrder(name: string): number | undefined;
 }
 
 export interface ToolDefinition {

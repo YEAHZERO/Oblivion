@@ -1,5 +1,35 @@
 /**
- * 常驻认知规则（注入 `systemPrompt.section`，order 由 `getSectionOrder` 映射）。
+ * 本段落自己声明的排序位（宿主认识这个名字时以宿主为准，见下）。
+ *
+ * 取值 650：紧随 `PLAN_POLICY`(500) / `TEAM_POLICY`(600) 之后、`PTC_ONLY`(800) 之前 ——
+ * 认知规则属于「行为约定」，和策略类段落同组，早于工具说明。
+ */
+export const OBLIVION_SECTION_ORDER = 650;
+
+/**
+ * 段落排序位：宿主认识这个名字就听宿主的，不认识就用 `OBLIVION_SECTION_ORDER`。
+ *
+ * **为什么必须兜底**（2026-10-17 现场实测的根因）：DSH 的
+ * `systemPrompt.getSectionOrder()` 只是查表 —— 表里**只有 DSH 自己的段落名**
+ * （`HARNESS_IDENTITY`/`PLAN_POLICY`/`TOOL_*`/…），未知名一律回 `undefined`；
+ * 而 `section()` 对非有限数是**直接抛错**的：
+ *
+ *     TypeError: prompt section "OBLIVION_COGNITION" order must be a finite number
+ *
+ * 本插件此前把「宿主会认识我们的名字」当了真（测试桩还替它回答了 `50`，所以闸门一直是绿的），
+ * 于是真宿主里 `apply()` 死在这一行：9 个工具、认知段落、**MCP 通道**全都没发布，
+ * 而宿主里读不到任何 `console` 输出 —— 唯一症状就是「桥接 `/health` 一直 `present:false`」。
+ */
+export function resolveSectionOrder(
+  name: string,
+  systemPrompt?: { getSectionOrder?: (section: string) => unknown },
+): number {
+  const fromHost = systemPrompt?.getSectionOrder?.(name);
+  return typeof fromHost === 'number' && Number.isFinite(fromHost) ? fromHost : OBLIVION_SECTION_ORDER;
+}
+
+/**
+ * 常驻认知规则（注入 `systemPrompt.section`，order 见 `resolveSectionOrder`）。
  *
  * ## 三种输出模板（所有者 2026-10-06 裁定，默认 T1）
  *

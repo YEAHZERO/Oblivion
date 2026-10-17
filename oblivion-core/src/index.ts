@@ -21,11 +21,12 @@ import { registerFeedback } from './feedback/index.js';
 import { registerGraph } from './graph/index.js';
 import { registerDigest } from './digest/index.js';
 import { registerKnowledge } from './knowledge/index.js';
-import { createMcpEndpoint, publishMcp } from './mcp/index.js';
+import { buildChannelDiag, createMcpEndpoint, publishMcp, writeChannelDiag } from './mcp/index.js';
+import type { ChannelReport } from './mcp/index.js';
 import { createRetitleService } from './knowledge/retitle.js';
 import { createWikiService } from './knowledge/wiki.js';
 import { registerPerspective } from './perspective/index.js';
-import { OBLIVION_SYSTEM_PROMPT } from './prompt.js';
+import { OBLIVION_SYSTEM_PROMPT, resolveSectionOrder } from './prompt.js';
 import { attachAgentFromPayload, readRelatedHint, setAgentInstaller } from './prompt-inject.js';
 import { registerProfile } from './profile/index.js';
 import { registerQaLoop } from './qa-loop/index.js';
@@ -62,17 +63,44 @@ export const provides = ['oblivion'];
 
 export const VERSION = __OBLIVION_CORE_VERSION__;
 
-/** systemPrompt 段落标识；order 由 getSectionOrder 映射到真实槽位。 */
+/**
+ * systemPrompt 段落标识。
+ *
+ * 排序位**不能**直接问宿主（见 `resolveSectionOrder`：宿主只认识自己的段落名，
+ * 未知名回 `undefined`，而 `section()` 对非有限数直接抛错 —— 2026-10-17 的装载全灭根因）。
+ */
 export const OBLIVION_SECTION = 'OBLIVION_COGNITION';
 
 /** 构建时注入的全局（见 src/globals.d.ts）。 */
 declare const __OBLIVION_CORE_VERSION__: string;
 
+/**
+ * `apply` 的**外壳**：只做两件事 —— 记下「进来了」，以及「为什么没走完」。
+ *
+ * 为什么需要它：本机（DSH desktop 的 utility process 插件宿主）里读不到任何 `console` 输出，
+ * 而 `apply()` 半路抛错时，症状只是「core 的工具/段落/通道都没了」，看不见抛在哪、抛了什么。
+ * 2026-10-17 就是靠这条记录才发现：桥接一直 `present:false`，根因是 `apply()` 在发布
+ * MCP 通道**之前**就抛了（而不是通道本身写不进去）。
+ *
+ * `error` **照旧向上抛**：宿主必须知道这次装载失败了，不能吞成「装着好好的」。
+ */
 export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
+  const config: Config = { ...DEFAULT_CONFIG, ...(rawConfig ?? {}) };
+  void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, null, 'apply:enter'));
+  try {
+    applyInner(rawCtx, config);
+  } catch (error: unknown) {
+    void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, null, 'apply:failed', error));
+    throw error;
+  }
+}
+
+function applyInner(rawCtx: unknown, config: Config): void {
   // Cordis 传入的 ctx 是框架自己的 Context；这里按实际用到的成员收敛成结构化类型，
   // 因此不需要把 @deepseek-ai/cordis 放进依赖。
   const ctx = rawCtx as AppContext;
-  const config: Config = { ...DEFAULT_CONFIG, ...(rawConfig ?? {}) };
+  /** 最近一次发布报告：`apply:done` 那条记录带上它，一次读文件就能看全。 */
+  let channelReport: ChannelReport | null = null;
 
   /**
    * **面朝宿主的那一面一律走根上下文**（`0.1.19` 的关键修正）。
@@ -146,7 +174,7 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
     () =>
       host.systemPrompt.section({
         name: OBLIVION_SECTION,
-        order: host.systemPrompt.getSectionOrder(OBLIVION_SECTION),
+        order: resolveSectionOrder(OBLIVION_SECTION, host.systemPrompt),
         text: (context: { agent?: unknown }) => {
           // **先记录形状再判断**：上一版把记录写在 `context.agent === undefined` 的守卫之后，
           // 于是"section 到底有没有被调用、context 里有什么"完全看不出来（diag 里 lifecycleSeen 一直是空的）。
@@ -204,7 +232,7 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
         };
         scopeAny.systemPrompt.section({
           name: OBLIVION_SECTION,
-          order: scopeAny.systemPrompt.getSectionOrder(OBLIVION_SECTION),
+          order: resolveSectionOrder(OBLIVION_SECTION, scopeAny.systemPrompt),
           text: (context: { agent?: unknown }) => {
             attachAgentFromPayload(context?.agent ?? context);
             const extra = perspective?.takePending() ?? '';
@@ -312,17 +340,33 @@ export function apply(rawCtx: unknown, rawConfig?: Partial<Config>): void {
   /**
    * **MCP 端点**（C 方案：MCP 是 core 的内部模块，传输由 `@oblivion/http-bridge` 负责）。
    *
-   * 走进程内通道 `globalThis[Symbol.for('@oblivion/core/mcp')]` 而不是 Cordis 服务表：
-   * 服务可见性随作用域而变（bridge 因 `inject: ['oblivion']` 恒取不到而**从未激活**），
-   * 通道则与「谁挂在谁下面」无关，且端点带 disposer ⇒ 重挂/卸载不留僵尸。
+   * 走进程内通道（`globalThis` / `process` 上的 `Symbol.for('@oblivion/core/mcp')`）
+   * 而不是 Cordis 服务表：服务可见性随作用域而变（bridge 因 `inject: ['oblivion']`
+   * 恒取不到而**从未激活**），通道则与「谁挂在谁下面」无关，且端点带 disposer
+   * ⇒ 重挂/卸载不留僵尸。
+   *
+   * `onReport` 是 2026-10-17 补的**证据位**：宿主把 `globalThis` 变成只读/代理时，
+   * 旧实现会在这一行 `defineProperty` 抛错 —— 插件其余部分都装好了，只有通道没发布，
+   * 而宿主里根本读不到那行 `console.log`。现在发布**永不抛**、结果落
+   * `<dataRoot>/mcp-channel-diag.json`（与桥接 `/health` 两侧对照，一次重启就能定位）。
    */
   const mcpDispose = publishMcp(
     createMcpEndpoint({ facade, log: (message: string) => ctx.logger?.debug?.(config.logPrefix + ' ' + message) }),
+    {
+      onReport: (report) => {
+        channelReport = report;
+        void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, report, 'apply:mcp'));
+        if (report.active === null) {
+          ctx.logger?.warn?.(config.logPrefix + ' mcp channel unavailable: %o', report.scopes);
+        }
+      },
+    },
   );
   ctx.effect(() => mcpDispose, 'oblivion-core: mcp channel');
 
 
   console.log('[oblivion-core] loaded');
+  void writeChannelDiag(config.dataRoot, buildChannelDiag(VERSION, channelReport, 'apply:done'));
 }
 
 export default { name, inject, provides, apply };
