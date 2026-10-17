@@ -208,6 +208,10 @@ Invoke-RestMethod "http://127.0.0.1:$port/obl-brand/session/tail?session=$sessio
 （**Node 的 `createZstdDecompress` 只解第一帧**，必须按 magic 切帧逐帧解），以及回答要只取 `text` 块
 （`reasoning` 是思维链，不算回答）。
 
+实测（2026-10-17，v0.1.7 上机后）：读回 `session-10837d9b` 尾部 3 条，`stats = {fileBytes: 20032535,
+windowBytes: 1048576, frames: 579, brokenFrames: 0}`；无参数 `400`、`limit=999` `400`、
+`session=../../etc` `400`、不存在的会话 `404`、`POST` `405`、外来 Origin `403` —— 全部与设计一致。
+
 ## 检查：四层闸门
 
 工作区的检查规范在 **[`docs/检查方法.md`](docs/检查方法.md)**。要点：
@@ -534,7 +538,7 @@ Invoke-WebRequest -UseBasicParsing -Method POST http://127.0.0.1:42081/oblivion/
 | 文件 | 谁写 | 核对什么 |
 | --- | --- | --- |
 | `data/mcp-channel-diag.json`、`data/status.json`、`data/mount-diag.json` | 真机 = 插件宿主；也可能被测试写 | `pid` / `env.electron`（测试进程 `electron` 为空串）；`mountedAt` 贴着启动时刻才是真机的 |
-| `bridge-heartbeat.json` | 真机 = bridge 插件；也可能被自检写 | `resolvedPort` 是否是 42081、`owner` 是否是 `@oblivion/core` |
+| `bridge-heartbeat.json` | 真机 = bridge 插件；也可能被自检写 | `resolvedPort` 是否是 42081（实测自检会把它写成自检端口）。**注意里面的 `mcpEndpoint` 是「装载瞬间」的快照**：桥接可能比 core 先装载，此时 `present:false` 属正常 —— **判断通道活着要用 `/oblivion/mcp/health`**，不是看这个文件 |
 
 `test/core.test.mjs` 原有 4 处 `mod.apply(ctx, {})` 走 `DEFAULT_CONFIG`（真数据目录 + 真知识库，
 面板上 `status.json` 撕裂的根因），现已改 `applyInTemp()`（系统临时目录）；bridge 的心跳同理
