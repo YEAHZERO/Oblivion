@@ -369,12 +369,21 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): Disposable[] {
     description:
       'Auto-organize the Oblivion knowledge base with a model (plugin-side LLM call). ' +
       'mode:"status" (default) reports whether it is enabled, which model route would be used, and every provider/model the host offers (including custom providers) — no request is made. ' +
-      'mode:"preview" asks the model for content-based titles/tags for existing notes (READ ONLY, nothing is written). ' +
-      'mode:"apply" writes proposals back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). ' +
+      'mode:"preview" asks the model (READ ONLY on the knowledge base). ' +
+      'scope:"retitle" (default) works on EXISTING notes: preview returns content-based titles/tags, apply writes them back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). ' +
+      'scope:"digest" works on THIS session\'s already-captured Q&A: preview has the model write a session digest and returns the composed markdown (it also stores the draft under <dataRoot>/organize-digest.json), and apply lands that stored draft as a note + knowledge item. ' +
       'It is OFF by default: with organize.enabled=false nothing calls any model.',
     parameters: {
       mode: { type: 'string', description: 'One of "status" | "preview" | "apply" (default "status").' },
-      limit: { type: 'number', description: 'How many notes to consider in preview mode (default = organize.batchSize).' },
+      scope: {
+        type: 'string',
+        description: 'One of "retitle" | "digest" (default "retitle"). "digest" = organize this session\'s captured Q&A into a session-digest note.',
+      },
+      limit: { type: 'number', description: 'How many notes to consider in scope:"retitle" preview mode (default = organize.batchSize).' },
+      session_id: {
+        type: 'string',
+        description: 'Scope:"digest" only. Session to digest; omit to use the most recently captured session.',
+      },
       items: {
         type: 'array',
         items: {
@@ -395,16 +404,47 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): Disposable[] {
         return asCanonical({ skipped: true, reason: 'organize service unavailable' });
       }
       const mode = typeof args.mode === 'string' ? args.mode : 'status';
+      const scope = typeof args.scope === 'string' ? args.scope : 'retitle';
       if (mode === 'status') {
         // `catalog` 里也带一份 `routes` / `routeSource`（与顶层同值）：一个给「开关面」看，
         // 一个给「选模型」看 —— 设置页只读 `catalog`，就不必再拼两处。
-        return asCanonical({ mode: 'status', ...deps.organize.status(), catalog: await deps.organize.catalog() });
+        return asCanonical({ mode: 'status', scope, ...deps.organize.status(), catalog: await deps.organize.catalog() });
       }
       if (mode === 'preview') {
+        if (scope === 'digest') {
+          const sessionId = typeof args.session_id === 'string' ? args.session_id : '';
+          return asCanonical({ mode: 'preview', ...(await deps.organize.previewDigest(sessionId)) });
+        }
         const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : undefined;
         return asCanonical({ mode: 'preview', ...(await deps.organize.preview(limit)) });
       }
       if (mode === 'apply') {
+        if (scope === 'digest') {
+          // 会话整理的落地**不吃 `items`**：草稿是一整份文档，让模型回抄一遍只会多一层出错面。
+          // 它读回的是 `previewDigest` 成功时落下的那一份（人看过的就是它）。
+          const stored = await deps.organize.readDigestProposal();
+          if (stored.draft === null) {
+            return asCanonical({
+              mode: 'apply',
+              scope: 'digest',
+              applied: 0,
+              reason: '没有可落地的会话整理草稿（先 mode:"preview" scope:"digest"）',
+            });
+          }
+          const saved = await deps.organize.applyDigest(stored.draft, stored.sessionId);
+          return asCanonical({
+            mode: 'apply',
+            scope: 'digest',
+            applied: 1,
+            id: saved.id,
+            title: saved.title,
+            topic: saved.topic,
+            sections: saved.sections,
+            note: saved.notePath,
+            item: saved.itemId,
+            edges: saved.entities,
+          });
+        }
         const items = (args.items ?? []) as Array<{ id: string; title: string; tags?: string[] }>;
         let proposals = items.map((it) => ({ id: it.id, title: it.title, tags: it.tags ?? [], file: '', ask: '' }));
         let source = 'items';

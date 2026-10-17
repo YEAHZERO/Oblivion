@@ -25,7 +25,15 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Config, OrganizeConfig } from '../config.js';
+import type { DigestResult, DigestService } from '../digest/index.js';
 import { contentSection, parseNote, type NoteRef, type RetitleResult, type RetitleService } from '../knowledge/retitle.js';
+import {
+  buildDigestPrompt,
+  DIGEST_ITEMS_MAX,
+  parseDigestDraft,
+  type DigestDraft,
+  type DigestSourceItem,
+} from './digest-scope.js';
 import {
   buildRoutes,
   generate,
@@ -49,6 +57,21 @@ export interface OrganizeDeps {
   config: Config;
   retitle: RetitleService;
   /**
+   * 会话整理服务（作用域一的**落盘**端）：组合 markdown + 写笔记 + 写条目 + 建边 + 重建索引。
+   *
+   * 传进来的是完整服务而不是回调：`compose()` 也被用来出**预览**（纯函数、不落盘），
+   * 于是「预览看到的」与「落地写下的」从构造上就是同一份 —— 不会预览一套、落地另一套。
+   */
+  digest: DigestService;
+  /**
+   * 作用域一的**输入**：本会话已沉淀进知识库的问答。
+   *
+   * 为什么是注入的函数而不是直接拿 `KnowledgeService`：这一层要的是「一场会话的沉淀」这一个
+   * 切面（含「`sessionId` 传空串时挑最近有沉淀的那一场」这条策略），把它留在 `index.ts`
+   * 的装配处，本模块就能用一个假函数把作用域一测干净（不必造一个知识库）。
+   */
+  sessionItems: (sessionId: string) => Promise<{ sessionId: string; items: DigestSourceItem[] }>;
+  /**
    * 宿主 LLM 面 —— **每次现取**（懒取），不是装载时抓一份快照。
    *
    * 为什么是函数（2026-10-17 实测 + 上游源码两条证据）：
@@ -68,6 +91,8 @@ export interface OrganizeDeps {
   at?: () => number;
   /** 建议文件路径；默认 `<dataRoot>/organize-proposals.json`。 */
   proposalsPath?: string;
+  /** 会话整理草稿文件路径；默认 `<dataRoot>/organize-digest.json`。 */
+  digestPath?: string;
 }
 
 /** 一条改名建议（`apply()` 直接吃它）。 */
@@ -136,13 +161,59 @@ export interface OrganizePreview {
   raw?: string;
 }
 
+/**
+ * **作用域一（会话整理）**的预览：模型整理出的草稿 + 组合好的 markdown。
+ *
+ * `markdown` 是 `DigestService.compose()` 的产物 —— **纯函数、不落盘**，所以给人看这份预览
+ * 与真落地写下的那份是同一份（不会「预览一套、落地另一套」）。
+ */
+export interface DigestPreview {
+  ok: boolean;
+  scope: 'digest';
+  enabled: boolean;
+  /** 本次实际按序尝试的路（自动切换的顺序证据）。 */
+  routes: LlmRoute[];
+  attempts: LlmAttempt[];
+  /** 实际整理的那一场会话（`sessionId` 传空串时由插件挑「最近有沉淀的那一场」）。 */
+  sessionId: string;
+  sessionIdSource: 'explicit' | 'latest-captured';
+  /** 送进 prompt 的沉淀条数。 */
+  considered: number;
+  draft: DigestDraft | null;
+  markdown: string;
+  /** 写进整理件「关联知识」的源笔记标题（`[[…]]` 互链）。 */
+  links: string[];
+  reason: string;
+  /** 解析失败时带回一小段模型原话。 */
+  raw?: string;
+}
+
+/** 自动路径里「作用域一」这一次的结果（与作用域二分开报，两种失败不互相淹没）。 */
+export interface DigestAutoResult {
+  ran: boolean;
+  reason: string;
+  preview?: DigestPreview;
+  applied?: boolean;
+  saved?: {
+    id: string;
+    notePath: string;
+    itemId: string;
+    title: string;
+    sections: number;
+    entities: number;
+  };
+}
+
 export interface OrganizeAutoResult {
   at: number;
   ran: boolean;
+  /** 作用域二的结论（作用域二没跑时，回落成作用域一的结论）。 */
   reason: string;
   preview?: OrganizePreview;
   applied?: boolean;
   results?: RetitleResult[];
+  /** 作用域一这一次的结果（`organize.digest` 关着时没有这个字段）。 */
+  digest?: DigestAutoResult;
 }
 
 export interface OrganizeService {
@@ -153,6 +224,18 @@ export interface OrganizeService {
   preview(limit?: number): Promise<OrganizePreview>;
   /** 落地一批建议（走 `RetitleService.apply`，`named_by` 记 `'model'`）。 */
   apply(proposals: readonly RetitleProposal[]): Promise<{ results: RetitleResult[]; index: { path: string; count: number } | null }>;
+  /**
+   * 作用域一：让模型把**本会话已沉淀的问答**整理成一页会话整理。
+   *
+   * **只读知识库**（组合结果只回给调用方），但成功时会把草稿写进 `<dataRoot>/organize-digest.json`
+   * —— 与作用域二只有自动路径落盘的差别是**刻意的**：改名建议是一份「可能被模型回抄的清单」，
+   * 而整理草稿是一整份文档，手动路径（工具）落地时必须有个地方读回来。
+   */
+  previewDigest(sessionId?: string): Promise<DigestPreview>;
+  /** 落地一份会话整理草稿（`DigestService.save`：笔记 + 条目 + 建边 + 索引重建）。 */
+  applyDigest(draft: DigestDraft, sessionId: string): Promise<DigestResult>;
+  /** 读回**最后一份可用**的会话整理草稿（工具 `apply scope:"digest"` 吃它）。 */
+  readDigestProposal(): Promise<{ at: number | null; sessionId: string; draft: DigestDraft | null }>;
   /** 触发闸门：告诉它「又过了一轮」。到点才跑，返回 `null` 表示这次没跑。 */
   onTurn(input: { sessionId: string; at: number }): Promise<OrganizeAutoResult | null>;
   /** 上一次自动整理的结果（无则 `null`）。 */
@@ -311,6 +394,7 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
   const cfg: OrganizeConfig = deps.config.organize;
   const at = deps.at ?? (() => Date.now());
   const proposalsPath = deps.proposalsPath ?? join(expandHome(deps.config.dataRoot), 'organize-proposals.json');
+  const digestPath = deps.digestPath ?? join(expandHome(deps.config.dataRoot), 'organize-digest.json');
   /** 宿主 LLM 面：**每次现取**（`ctx.inject` 的回调可能装载后才兑现，见 `OrganizeDeps.runtime`）。 */
   const runtimeNow = deps.runtime;
   /** 宿主默认选路的缓存：`status()` 是同步的，不能在那里 await。 */
@@ -501,8 +585,157 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
     );
   };
 
+  /**
+   * **作用域一（会话整理）**：让模型把「本会话已沉淀的问答」整理成一页。
+   *
+   * 三层闸门与 `preview()` 同形（零请求保证、选路、内容），差别只有「输入从哪来」：
+   * 那里是知识库里的**存量笔记**（要起名），这里是**本会话的沉淀条目**（要成文）。
+   *
+   * 落地是 `applyDigest()` 的事；这里只**读**知识库 + 组合 markdown（`compose` 是纯函数）。
+   */
+  const previewDigest = async (sessionIdArg?: string): Promise<DigestPreview> => {
+    const wanted = sessionIdArg ?? '';
+    const base: DigestPreview = {
+      ok: false,
+      scope: 'digest',
+      enabled: cfg.enabled,
+      routes: [],
+      attempts: [],
+      sessionId: wanted,
+      sessionIdSource: wanted === '' ? 'latest-captured' : 'explicit',
+      considered: 0,
+      draft: null,
+      markdown: '',
+      links: [],
+      reason: '',
+    };
+    // ① 零请求保证：总开关关着，或作用域一没开 —— 都到此为止，不构造 prompt、不碰 runtime。
+    if (!cfg.enabled) {
+      return { ...base, reason: 'organize.enabled is false —— 自动整理没开，未发出任何请求' };
+    }
+    if (!cfg.digest) {
+      return { ...base, reason: 'organize.digest is false —— 作用域一（会话整理）没开，未发出任何请求' };
+    }
+    const runtime = runtimeNow();
+    if (!runtime) {
+      return { ...base, reason: '宿主没有 llm 服务（ctx.llm 不可用）' };
+    }
+    await resolveDefaultRoute();
+    const routes = routesNow();
+    if (routes.length === 0) {
+      return { ...base, routes, reason: '没选出模型：organize.provider/model 为空，且宿主默认选路也拿不到' };
+    }
+
+    const picked = await deps.sessionItems(wanted);
+    if (picked.items.length === 0) {
+      return {
+        ...base,
+        routes,
+        sessionId: picked.sessionId,
+        reason:
+          picked.sessionId === ''
+            ? '知识库里还没有任何会话沉淀（没有带 `#turn-` 来源的条目）—— 没有可整理的内容'
+            : '这场会话还没有沉淀条目（`#turn-` 捕获为空）—— 没有可整理的内容',
+      };
+    }
+    const items = picked.items.slice(-DIGEST_ITEMS_MAX);
+    const { system, prompt } = buildDigestPrompt(items, picked.sessionId);
+    const result = await generate(runtime, routes, { prompt, system }, {
+      maxTokens: cfg.maxTokens,
+      timeoutMs: cfg.timeoutMs,
+      purpose: 'oblivion-organize:digest',
+    });
+    if (!result.ok) {
+      return {
+        ...base,
+        routes,
+        sessionId: picked.sessionId,
+        attempts: result.attempts,
+        considered: items.length,
+        reason: '所有路都失败了：' + String(result.error ?? 'unknown'),
+      };
+    }
+    const parsed = parseDigestDraft(result.text);
+    if (parsed.draft === null) {
+      return {
+        ...base,
+        routes,
+        sessionId: picked.sessionId,
+        attempts: result.attempts,
+        considered: items.length,
+        reason: '模型回话解析失败：' + parsed.error,
+        raw: parsed.raw,
+      };
+    }
+    const links = items
+      .map((item) => item.title)
+      .filter((title) => title !== '')
+      .slice(0, 12);
+    const composed = deps.digest.compose({ ...parsed.draft, sessionId: picked.sessionId, links }, at());
+    // 成功才落草稿文件：**失败不覆盖上一份可用草稿**（一次限流/一次解析失败
+    // 不该把上一次能用的东西擦掉 —— 这跟 diag 的覆盖式落盘是同一个取舍的正反面）。
+    await writeJsonAtomic(digestPath, {
+      at: at(),
+      sessionId: picked.sessionId,
+      routes,
+      attempts: result.attempts,
+      considered: items.length,
+      draft: parsed.draft,
+    }).catch(() => undefined);
+    return {
+      ok: true,
+      scope: 'digest',
+      enabled: true,
+      routes,
+      attempts: result.attempts,
+      sessionId: picked.sessionId,
+      sessionIdSource: base.sessionIdSource,
+      considered: items.length,
+      draft: parsed.draft,
+      markdown: composed.markdown,
+      links,
+      reason: '',
+    };
+  };
+
+  const applyDigest = async (draft: DigestDraft, sessionId: string): Promise<DigestResult> => {
+    const picked = await deps.sessionItems(sessionId);
+    const links = picked.items
+      .map((item) => item.title)
+      .filter((title) => title !== '')
+      .slice(0, 12);
+    return deps.digest.save({ ...draft, sessionId: picked.sessionId, links });
+  };
+
+  const readDigestProposal = async (): Promise<{ at: number | null; sessionId: string; draft: DigestDraft | null }> => {
+    const stored = await readJsonSafe<{ at?: unknown; sessionId?: unknown; draft?: unknown }>(digestPath);
+    if (!stored || stored.draft === null || typeof stored.draft !== 'object') {
+      return { at: null, sessionId: '', draft: null };
+    }
+    // 走同一个解析器：文件是我们自己写的，但它也可能被人手改过 ——
+    // 脏值不该从这里溜进落盘（`parseDigestDraft` 会把不合规的都清掉）。
+    const reparsed = parseDigestDraft(JSON.stringify(stored.draft));
+    return {
+      at: typeof stored.at === 'number' ? stored.at : null,
+      sessionId: typeof stored.sessionId === 'string' ? stored.sessionId : '',
+      draft: reparsed.draft,
+    };
+  };
+
+  /**
+   * 触发闸门：每 `everyTurns` 轮跑一次，两个作用域**各自独立**跑与报。
+   *
+   * 为什么不是「一起跑、一起报」：作用域二（改存量笔记名）与作用域一（写一页会话整理）
+   * 的失败原因完全不同（一个是模型没按清单回，一个是模型没按文档回）。混成一个 `reason`
+   * 就会出现「明明只坏了 A，却看着像两个都坏了」—— 所以 `digest` 单独一个字段报。
+   *
+   * `turn/end` 那边是 `void onTurn(...)`（fire-and-forget），且 `qa-loop` 的捕获本身也是
+   * fire-and-forget ⇒ 本轮刚沉淀的那一条**可能还没进索引**。这不影响正确性（下一拍就看到），
+   * 但决定了作用域一看到的是「到此刻为止的沉淀」。
+   */
   const onTurn = async (input: { sessionId: string; at: number }): Promise<OrganizeAutoResult | null> => {
-    if (!cfg.enabled || !cfg.retitle || cfg.everyTurns <= 0) return null;
+    // 两个作用域都关着 ⇒ 连轮次都不必数（保持「不开=零动作」这条可验证的性质）。
+    if (!cfg.enabled || (!cfg.retitle && !cfg.digest) || cfg.everyTurns <= 0) return null;
     const count = (turns.get(input.sessionId) ?? 0) + 1;
     turns.set(input.sessionId, count);
     if (count % cfg.everyTurns !== 0) return null;
@@ -510,35 +743,81 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
       return { at: input.at, ran: false, reason: '距上次自动整理不足 minIntervalMs，跳过' };
     }
     lastRunAt = input.at;
-    let produced: OrganizePreview;
-    try {
-      produced = await preview();
-    } catch (error: unknown) {
-      const reason = error instanceof Error ? error.message : String(error);
-      deps.logger?.warn?.('oblivion organize 自动产出建议失败：%s', reason);
-      lastAuto = { at: input.at, ran: true, reason: 'preview threw: ' + reason };
-      return lastAuto;
+
+    const auto: OrganizeAutoResult = { at: input.at, ran: true, reason: '' };
+
+    // ── 作用域二：存量笔记的标题/标签 ───────────────────────────────────────────
+    if (cfg.retitle) {
+      let produced: OrganizePreview | null = null;
+      try {
+        produced = await preview();
+      } catch (error: unknown) {
+        const reason = error instanceof Error ? error.message : String(error);
+        deps.logger?.warn?.('oblivion organize 自动产出建议失败：%s', reason);
+        auto.reason = 'preview threw: ' + reason;
+      }
+      if (produced !== null) {
+        // 建议先落盘 —— 无论 autoApply 与否，人/面板都看得到这一轮产出了什么。
+        await writeJsonAtomic(proposalsPath, {
+          at: input.at,
+          sessionId: input.sessionId,
+          routes: produced.routes,
+          attempts: produced.attempts,
+          proposals: produced.proposals,
+        }).catch(() => undefined);
+        auto.reason = produced.reason;
+        auto.preview = produced;
+        if (produced.ok && cfg.autoApply && produced.proposals.length > 0) {
+          try {
+            const { results } = await apply(produced.proposals);
+            auto.applied = true;
+            auto.results = results;
+          } catch (error: unknown) {
+            auto.reason = 'apply failed: ' + (error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
     }
-    // 建议先落盘 —— 无论 autoApply 与否，人/面板都看得到这一轮产出了什么。
-    await writeJsonAtomic(proposalsPath, {
-      at: input.at,
-      sessionId: input.sessionId,
-      routes: produced.routes,
-      attempts: produced.attempts,
-      proposals: produced.proposals,
-    }).catch(() => undefined);
-    lastAuto = { at: input.at, ran: true, reason: produced.reason, preview: produced };
-    if (!produced.ok || !cfg.autoApply || produced.proposals.length === 0) return lastAuto;
-    try {
-      const { results } = await apply(produced.proposals);
-      lastAuto = { ...lastAuto, applied: true, results };
-    } catch (error: unknown) {
-      lastAuto = {
-        ...lastAuto,
-        reason: 'apply failed: ' + (error instanceof Error ? error.message : String(error)),
-      };
+
+    // ── 作用域一：本会话的沉淀 → 一页会话整理 ───────────────────────────────────
+    if (cfg.digest) {
+      const digestAuto: DigestAutoResult = { ran: true, reason: '' };
+      let produced: DigestPreview | null = null;
+      try {
+        produced = await previewDigest(input.sessionId);
+      } catch (error: unknown) {
+        const reason = error instanceof Error ? error.message : String(error);
+        deps.logger?.warn?.('oblivion organize 自动产出会话整理失败：%s', reason);
+        digestAuto.reason = 'preview threw: ' + reason;
+      }
+      if (produced !== null) {
+        digestAuto.reason = produced.reason;
+        digestAuto.preview = produced;
+        // 草稿文件由 `previewDigest` 在成功时写入（见那里的取舍说明），这里不重复写。
+        if (produced.ok && produced.draft !== null && cfg.autoApply) {
+          try {
+            const saved = await applyDigest(produced.draft, produced.sessionId);
+            digestAuto.applied = true;
+            digestAuto.saved = {
+              id: saved.id,
+              notePath: saved.notePath,
+              itemId: saved.itemId,
+              title: saved.title,
+              sections: saved.sections,
+              entities: saved.entities,
+            };
+          } catch (error: unknown) {
+            digestAuto.reason = 'apply failed: ' + (error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
+      auto.digest = digestAuto;
+      // 作用域二没跑（关着或没产出结论）时，顶层 reason 回落成作用域一的结论。
+      if (auto.reason === '') auto.reason = digestAuto.reason;
     }
-    return lastAuto;
+
+    lastAuto = auto;
+    return auto;
   };
 
   const readProposals = async (): Promise<{ at: number | null; proposals: RetitleProposal[] }> => {
@@ -560,5 +839,16 @@ export function createOrganizeService(deps: OrganizeDeps): OrganizeService {
     return { at: typeof stored.at === 'number' ? stored.at : null, proposals };
   };
 
-  return { status, catalog, preview, apply, onTurn, lastAuto: () => lastAuto, readProposals };
+  return {
+    status,
+    catalog,
+    preview,
+    apply,
+    previewDigest,
+    applyDigest,
+    readDigestProposal,
+    onTurn,
+    lastAuto: () => lastAuto,
+    readProposals,
+  };
 }

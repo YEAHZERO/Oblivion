@@ -25,6 +25,7 @@ import { llmRuntimeOf, type LlmRuntimeLike } from './llm/client.js';
 import { buildChannelDiag, createMcpEndpoint, publishMcp, writeChannelDiag } from './mcp/index.js';
 import type { ChannelReport } from './mcp/index.js';
 import { createOrganizeService } from './organize/index.js';
+import { DIGEST_EXCERPT_CHARS, DIGEST_ITEMS_MAX, type DigestSourceItem } from './organize/digest-scope.js';
 import { createRetitleService } from './knowledge/retitle.js';
 import { createWikiService } from './knowledge/wiki.js';
 import { configSources, createSettingsService, mergeSettingsConfig, readSettingsSync } from './settings-file.js';
@@ -232,15 +233,67 @@ function applyInner(
     host: knowledge,
   });
   /**
+   * 作用域一的输入：**本会话已沉淀的问答**。
+   *
+   * 「这一场会话沉淀了什么」在条目里是**自证**的，不需要另建会话索引表：捕获时
+   * `ref = <sessionId>#turn-<n>`（`qa-loop/extract.ts`），所以按 `sources[].ref` 前缀筛即可。
+   * 整理件自己的来源是 `#digest-`，天然不会被当成输入（不会自我循环）。
+   *
+   * `sessionId` 传空串 = 挑「最近沉淀过的那一场」：工具路径（模型调 `oblivion_organize`）
+   * 拿不到会话 id，但「把最近这场整理一页」仍然是它想要的那件事。
+   */
+  const sessionItemsOf = async (
+    sessionId: string,
+  ): Promise<{ sessionId: string; items: DigestSourceItem[] }> => {
+    const all = knowledge.index.all();
+    const prefix = (sid: string): string => sid + '#turn-';
+    const hasTurnRef = (item: { sources: ReadonlyArray<{ type: string; ref: string }> }, sid: string): boolean =>
+      item.sources.some((source) => source.type === 'session' && source.ref.startsWith(prefix(sid)));
+
+    let wanted = sessionId;
+    if (wanted === '') {
+      const withTurns = all.filter((item) =>
+        item.sources.some((source) => source.type === 'session' && source.ref.includes('#turn-')),
+      );
+      if (withTurns.length === 0) return { sessionId: '', items: [] };
+      // 「最近」按条目的 updated_at（`appended` 也会刷新它），不看 created_at ——
+      // 一场老会话刚追加了新内容时，它才是「最近沉淀过的那一场」。
+      const newest = withTurns.reduce((best, item) => (item.updated_at > best.updated_at ? item : best));
+      const ref = newest.sources.find((source) => source.type === 'session' && source.ref.includes('#turn-'))?.ref ?? '';
+      wanted = ref.slice(0, ref.indexOf('#turn-'));
+      if (wanted === '') return { sessionId: '', items: [] };
+    }
+
+    const items = all
+      .filter((item) => hasTurnRef(item, wanted))
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(-DIGEST_ITEMS_MAX)
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        topic: item.topic,
+        // 捕获条目的 `content` 就是答案正文（`knowledge/index.ts` 的 created 分支），
+        // 所以这里不必读盘 —— 索引里的内容已经够拼 prompt。
+        text: item.content.replace(/\s+/g, ' ').trim().slice(0, DIGEST_EXCERPT_CHARS),
+      }));
+    return { sessionId: wanted, items };
+  };
+
+  /**
    * 自动整理（DEC-030）：**默认全关**，开了才经 `ctx.llm` 调模型。
    *
    * `llm` / `agentDefaultModel` 都**不**写进 `inject`（那里列的是**必需**服务，缺了插件就不装载），
    * 而是经 `lazyService()` **懒取 + 优雅降级**（缺了只让自动整理不可用）。
    * 模型选路优先级：`organize.provider/model` > 宿主默认选路（`currentSelection`）> 无（`preview` 会回「没选出模型」）。
+   *
+   * 两个作用域各自独立跑与报（见 `organize/index.ts` 的 `onTurn`）：
+   * `digest` 管「本会话的沉淀 → 一页会话整理」，`retitle` 管「存量笔记 → 内容名 + 标签」。
    */
   const organize = createOrganizeService({
     config,
     retitle,
+    digest,
+    sessionItems: sessionItemsOf,
     runtime: () => llmRuntimeOf({ llm: llmService() }),
     defaultRoute: () =>
       (defaultModelService() as { currentSelection?: () => unknown } | null)?.currentSelection?.(),

@@ -1444,7 +1444,7 @@ function registerQaLoop(ctx, config, deps) {
   }
   const diagPath = join4(expandHome(config.dataRoot), "mount-diag.json");
   const diag = {
-    version: "0.2.17",
+    version: "0.2.18",
     mountedAt: Date.now(),
     hasOn: typeof ctx.on === "function",
     hasInject: typeof ctx.inject === "function",
@@ -3231,10 +3231,18 @@ function registerTools(ctx, deps) {
   }));
   register(defineTool({
     name: "oblivion_organize",
-    description: 'Auto-organize the Oblivion knowledge base with a model (plugin-side LLM call). mode:"status" (default) reports whether it is enabled, which model route would be used, and every provider/model the host offers (including custom providers) \u2014 no request is made. mode:"preview" asks the model for content-based titles/tags for existing notes (READ ONLY, nothing is written). mode:"apply" writes proposals back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). It is OFF by default: with organize.enabled=false nothing calls any model.',
+    description: 'Auto-organize the Oblivion knowledge base with a model (plugin-side LLM call). mode:"status" (default) reports whether it is enabled, which model route would be used, and every provider/model the host offers (including custom providers) \u2014 no request is made. mode:"preview" asks the model (READ ONLY on the knowledge base). scope:"retitle" (default) works on EXISTING notes: preview returns content-based titles/tags, apply writes them back (pass `items` from a preview, or omit it to apply the last preview this plugin produced). scope:"digest" works on THIS session\'s already-captured Q&A: preview has the model write a session digest and returns the composed markdown (it also stores the draft under <dataRoot>/organize-digest.json), and apply lands that stored draft as a note + knowledge item. It is OFF by default: with organize.enabled=false nothing calls any model.',
     parameters: {
       mode: { type: "string", description: 'One of "status" | "preview" | "apply" (default "status").' },
-      limit: { type: "number", description: "How many notes to consider in preview mode (default = organize.batchSize)." },
+      scope: {
+        type: "string",
+        description: `One of "retitle" | "digest" (default "retitle"). "digest" = organize this session's captured Q&A into a session-digest note.`
+      },
+      limit: { type: "number", description: 'How many notes to consider in scope:"retitle" preview mode (default = organize.batchSize).' },
+      session_id: {
+        type: "string",
+        description: 'Scope:"digest" only. Session to digest; omit to use the most recently captured session.'
+      },
       items: {
         type: "array",
         items: {
@@ -3255,14 +3263,43 @@ function registerTools(ctx, deps) {
         return asCanonical({ skipped: true, reason: "organize service unavailable" });
       }
       const mode = typeof args.mode === "string" ? args.mode : "status";
+      const scope = typeof args.scope === "string" ? args.scope : "retitle";
       if (mode === "status") {
-        return asCanonical({ mode: "status", ...deps.organize.status(), catalog: await deps.organize.catalog() });
+        return asCanonical({ mode: "status", scope, ...deps.organize.status(), catalog: await deps.organize.catalog() });
       }
       if (mode === "preview") {
+        if (scope === "digest") {
+          const sessionId = typeof args.session_id === "string" ? args.session_id : "";
+          return asCanonical({ mode: "preview", ...await deps.organize.previewDigest(sessionId) });
+        }
         const limit = typeof args.limit === "number" && args.limit > 0 ? Math.floor(args.limit) : void 0;
         return asCanonical({ mode: "preview", ...await deps.organize.preview(limit) });
       }
       if (mode === "apply") {
+        if (scope === "digest") {
+          const stored = await deps.organize.readDigestProposal();
+          if (stored.draft === null) {
+            return asCanonical({
+              mode: "apply",
+              scope: "digest",
+              applied: 0,
+              reason: '\u6CA1\u6709\u53EF\u843D\u5730\u7684\u4F1A\u8BDD\u6574\u7406\u8349\u7A3F\uFF08\u5148 mode:"preview" scope:"digest"\uFF09'
+            });
+          }
+          const saved = await deps.organize.applyDigest(stored.draft, stored.sessionId);
+          return asCanonical({
+            mode: "apply",
+            scope: "digest",
+            applied: 1,
+            id: saved.id,
+            title: saved.title,
+            topic: saved.topic,
+            sections: saved.sections,
+            note: saved.notePath,
+            item: saved.itemId,
+            edges: saved.entities
+          });
+        }
         const items = args.items ?? [];
         let proposals = items.map((it) => ({ id: it.id, title: it.title, tags: it.tags ?? [], file: "", ask: "" }));
         let source = "items";
@@ -4344,6 +4381,118 @@ function buildRoutes(primary, fallbacks = []) {
 // src/organize/index.ts
 import { readFile as readFile9 } from "node:fs/promises";
 import { join as join14 } from "node:path";
+
+// src/organize/digest-scope.ts
+var DIGEST_EXCERPT_CHARS = 500;
+var DIGEST_ITEMS_MAX = 24;
+var DIGEST_SECTIONS_MAX = 6;
+var DIGEST_TITLE_MAX = 40;
+function cleanDigestTitle(input) {
+  if (typeof input !== "string") return "";
+  return input.replace(/\s+/g, " ").trim().replace(/^[#\s]+/, "").replace(/\.md$/i, "").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, DIGEST_TITLE_MAX).trim();
+}
+function cleanShort(input, max) {
+  if (typeof input !== "string") return "";
+  return input.replace(/[\\/:*?"<>|\r\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim();
+}
+function cleanList(input, max) {
+  const raw = Array.isArray(input) ? input : [];
+  const out = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const text = item.replace(/\s+/g, " ").trim();
+    if (text === "" || out.includes(text)) continue;
+    out.push(text);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+function buildDigestPrompt(items, sessionId) {
+  const system = [
+    "\u4F60\u662F\u4E2D\u6587\u77E5\u8BC6\u5E93\u7684\u6574\u7406\u52A9\u624B\uFF1A\u628A\u4E00\u573A\u4F1A\u8BDD\u91CC**\u5DF2\u7ECF\u6C89\u6DC0\u8FDB\u77E5\u8BC6\u5E93\u7684\u95EE\u7B54**\uFF0C\u6574\u7406\u6210\u4E00\u9875\u300C\u4F1A\u8BDD\u6574\u7406\u300D\u3002",
+    "\u6CE8\u610F\uFF1A\u4F60\u770B\u5230\u7684\u4E0D\u662F\u5BF9\u8BDD\u539F\u6587\uFF0C\u53EA\u662F\u8FD9\u573A\u4F1A\u8BDD\u5DF2\u7ECF\u6C89\u6DC0\u4E0B\u6765\u7684\u95EE\u7B54\u7247\u6BB5\uFF08\u53EF\u80FD\u4E0D\u5168\uFF09\u3002",
+    "\u53EA\u8F93\u51FA\u4E00\u4E2A JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981\u89E3\u91CA\u3001\u4E0D\u8981 Markdown \u4EE3\u7801\u5757\u56F4\u680F\u3001\u4E0D\u8981\u591A\u4F59\u6587\u5B57\u3002"
+  ].join("\n");
+  const blocks = items.slice(0, DIGEST_ITEMS_MAX).map((item, index) => {
+    const lines = ["### " + String(index + 1) + ". " + (item.title === "" ? "\uFF08\u65E0\u6807\u9898\uFF09" : item.title)];
+    lines.push("entry_id: " + item.id);
+    if (item.topic !== "") lines.push("topic: " + item.topic);
+    if (item.text !== "") lines.push("\u5185\u5BB9\u7247\u6BB5\uFF1A" + item.text);
+    return lines.join("\n");
+  });
+  const prompt = [
+    "\u4E0B\u9762\u662F\u8FD9\u573A\u4F1A\u8BDD\u5DF2\u7ECF\u6C89\u6DC0\u8FDB\u77E5\u8BC6\u5E93\u7684 " + String(Math.min(items.length, DIGEST_ITEMS_MAX)) + " \u6761\u95EE\u7B54" + (sessionId === "" ? "" : "\uFF08\u4F1A\u8BDD " + sessionId + "\uFF09") + "\u3002\u8BF7\u628A\u5B83\u4EEC\u6574\u7406\u6210\u4E00\u9875\u4F1A\u8BDD\u6574\u7406\uFF0C\u8F93\u51FA JSON \u5BF9\u8C61\uFF1A",
+    "",
+    '{"title":"<\u6807\u9898>","topic":"<\u4E00\u4E2A\u77ED\u8BCD>","sections":[{"heading":"<\u5C0F\u8282\u6807\u9898>","body":"<\u8FD9\u4E00\u8282\u7684\u5185\u5BB9>"}],"decisions":["<\u51B3\u7B56>"],"todos":["<\u5F85\u529E>"],"openQuestions":["<\u672A\u51B3\u95EE\u9898>"]}',
+    "",
+    "\u89C4\u5219\uFF1A",
+    "- `title`\uFF1A\u4E00\u773C\u770B\u51FA\u8FD9\u573A\u4F1A\u8BDD\u5728\u505A\u4EC0\u4E48\uFF0C\u4E0D\u8D85\u8FC7 " + DIGEST_TITLE_MAX + " \u4E2A\u5B57\uFF0C\u4E0D\u8981 `.md` \u540E\u7F00\u3002",
+    "- `sections`\uFF1A2-" + DIGEST_SECTIONS_MAX + " \u8282\uFF0C\u6BCF\u8282 `heading` + `body`\uFF1B`body` \u5199\u300C\u8FD9\u51E0\u6761\u5408\u8D77\u6765\u8BF4\u4E86\u4EC0\u4E48\u300D\uFF0C",
+    "  \u800C\u4E0D\u662F\u9010\u6761\u590D\u8FF0\u3002",
+    "- `decisions` / `todos` / `openQuestions`\uFF1A\u6CA1\u6709\u5C31\u7ED9**\u7A7A\u6570\u7EC4**\uFF0C\u4E0D\u8981\u786C\u51D1\u3002",
+    "- **\u53EA\u4F9D\u636E\u4E0B\u9762\u7ED9\u51FA\u7684\u5185\u5BB9**\u5199\uFF0C\u4E0D\u8981\u8865\u5145\u4F60\u6CA1\u770B\u5230\u7684\u80CC\u666F\u3002",
+    "- `topic`\uFF1A\u4E00\u4E2A\u77ED\u8BCD\uFF0C\u7528\u6765\u505A\u6587\u4EF6\u6876\u540D\uFF1B\u62FF\u4E0D\u51C6\u5C31\u7559\u7A7A\u3002",
+    "",
+    "\u5DF2\u6C89\u6DC0\u7684\u95EE\u7B54\uFF1A",
+    blocks.join("\n\n")
+  ].join("\n");
+  return { system, prompt };
+}
+function sliceJsonObject(text) {
+  const bare = text.replace(/```[a-zA-Z]*\s*/g, "").replace(/```/g, "").trim();
+  const start = bare.indexOf("{");
+  const end = bare.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  return bare.slice(start, end + 1);
+}
+function parseDigestDraft(text) {
+  const sliced = sliceJsonObject(text);
+  if (sliced === null) {
+    return { draft: null, error: "\u6A21\u578B\u56DE\u8BDD\u91CC\u6CA1\u6709 JSON \u5BF9\u8C61\uFF08\u5F00\u5934\u8981\u6709 `{`\uFF0C\u7ED3\u5C3E\u8981\u6709 `}`\uFF09", raw: text.slice(0, 400) };
+  }
+  let value;
+  try {
+    value = JSON.parse(sliced);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { draft: null, error: "JSON \u89E3\u6790\u5931\u8D25\uFF1A" + detail, raw: text.slice(0, 400) };
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { draft: null, error: "JSON \u9876\u5C42\u4E0D\u662F\u5BF9\u8C61", raw: text.slice(0, 400) };
+  }
+  const rec = value;
+  const title = cleanDigestTitle(rec.title);
+  if (title === "") {
+    return { draft: null, error: "\u6A21\u578B\u6CA1\u7ED9 `title`\uFF08\u6216\u5168\u662F\u7A7A\u767D\uFF09", raw: text.slice(0, 400) };
+  }
+  const rawSections = Array.isArray(rec.sections) ? rec.sections : [];
+  const sections = [];
+  for (const item of rawSections) {
+    if (item === null || typeof item !== "object") continue;
+    const section = item;
+    const heading = cleanShort(section.heading, 60);
+    const body = typeof section.body === "string" ? section.body.replace(/\r\n/g, "\n").trim() : "";
+    if (body === "") continue;
+    sections.push({ heading: heading === "" ? "\u8981\u70B9" : heading, body });
+    if (sections.length >= DIGEST_SECTIONS_MAX) break;
+  }
+  if (sections.length === 0) {
+    return { draft: null, error: "`sections` \u4E3A\u7A7A\uFF08\u6CA1\u6709\u4E00\u8282\u6709\u6B63\u6587\uFF09", raw: text.slice(0, 400) };
+  }
+  return {
+    draft: {
+      title,
+      topic: cleanShort(rec.topic, 24),
+      sections,
+      decisions: cleanList(rec.decisions, 10),
+      todos: cleanList(rec.todos, 10),
+      openQuestions: cleanList(rec.openQuestions, 10)
+    },
+    error: ""
+  };
+}
+
+// src/organize/index.ts
 var EXCERPT_CHARS = 600;
 var TITLE_MAX = 40;
 var TAGS_MAX = 8;
@@ -4460,6 +4609,7 @@ function createOrganizeService(deps) {
   const cfg = deps.config.organize;
   const at = deps.at ?? (() => Date.now());
   const proposalsPath = deps.proposalsPath ?? join14(expandHome(deps.config.dataRoot), "organize-proposals.json");
+  const digestPath = deps.digestPath ?? join14(expandHome(deps.config.dataRoot), "organize-digest.json");
   const runtimeNow = deps.runtime;
   let cachedDefault = null;
   let lastAuto = null;
@@ -4617,8 +4767,119 @@ function createOrganizeService(deps) {
       }))
     );
   };
+  const previewDigest = async (sessionIdArg) => {
+    const wanted = sessionIdArg ?? "";
+    const base = {
+      ok: false,
+      scope: "digest",
+      enabled: cfg.enabled,
+      routes: [],
+      attempts: [],
+      sessionId: wanted,
+      sessionIdSource: wanted === "" ? "latest-captured" : "explicit",
+      considered: 0,
+      draft: null,
+      markdown: "",
+      links: [],
+      reason: ""
+    };
+    if (!cfg.enabled) {
+      return { ...base, reason: "organize.enabled is false \u2014\u2014 \u81EA\u52A8\u6574\u7406\u6CA1\u5F00\uFF0C\u672A\u53D1\u51FA\u4EFB\u4F55\u8BF7\u6C42" };
+    }
+    if (!cfg.digest) {
+      return { ...base, reason: "organize.digest is false \u2014\u2014 \u4F5C\u7528\u57DF\u4E00\uFF08\u4F1A\u8BDD\u6574\u7406\uFF09\u6CA1\u5F00\uFF0C\u672A\u53D1\u51FA\u4EFB\u4F55\u8BF7\u6C42" };
+    }
+    const runtime = runtimeNow();
+    if (!runtime) {
+      return { ...base, reason: "\u5BBF\u4E3B\u6CA1\u6709 llm \u670D\u52A1\uFF08ctx.llm \u4E0D\u53EF\u7528\uFF09" };
+    }
+    await resolveDefaultRoute();
+    const routes = routesNow();
+    if (routes.length === 0) {
+      return { ...base, routes, reason: "\u6CA1\u9009\u51FA\u6A21\u578B\uFF1Aorganize.provider/model \u4E3A\u7A7A\uFF0C\u4E14\u5BBF\u4E3B\u9ED8\u8BA4\u9009\u8DEF\u4E5F\u62FF\u4E0D\u5230" };
+    }
+    const picked = await deps.sessionItems(wanted);
+    if (picked.items.length === 0) {
+      return {
+        ...base,
+        routes,
+        sessionId: picked.sessionId,
+        reason: picked.sessionId === "" ? "\u77E5\u8BC6\u5E93\u91CC\u8FD8\u6CA1\u6709\u4EFB\u4F55\u4F1A\u8BDD\u6C89\u6DC0\uFF08\u6CA1\u6709\u5E26 `#turn-` \u6765\u6E90\u7684\u6761\u76EE\uFF09\u2014\u2014 \u6CA1\u6709\u53EF\u6574\u7406\u7684\u5185\u5BB9" : "\u8FD9\u573A\u4F1A\u8BDD\u8FD8\u6CA1\u6709\u6C89\u6DC0\u6761\u76EE\uFF08`#turn-` \u6355\u83B7\u4E3A\u7A7A\uFF09\u2014\u2014 \u6CA1\u6709\u53EF\u6574\u7406\u7684\u5185\u5BB9"
+      };
+    }
+    const items = picked.items.slice(-DIGEST_ITEMS_MAX);
+    const { system, prompt } = buildDigestPrompt(items, picked.sessionId);
+    const result = await generate(runtime, routes, { prompt, system }, {
+      maxTokens: cfg.maxTokens,
+      timeoutMs: cfg.timeoutMs,
+      purpose: "oblivion-organize:digest"
+    });
+    if (!result.ok) {
+      return {
+        ...base,
+        routes,
+        sessionId: picked.sessionId,
+        attempts: result.attempts,
+        considered: items.length,
+        reason: "\u6240\u6709\u8DEF\u90FD\u5931\u8D25\u4E86\uFF1A" + String(result.error ?? "unknown")
+      };
+    }
+    const parsed = parseDigestDraft(result.text);
+    if (parsed.draft === null) {
+      return {
+        ...base,
+        routes,
+        sessionId: picked.sessionId,
+        attempts: result.attempts,
+        considered: items.length,
+        reason: "\u6A21\u578B\u56DE\u8BDD\u89E3\u6790\u5931\u8D25\uFF1A" + parsed.error,
+        raw: parsed.raw
+      };
+    }
+    const links = items.map((item) => item.title).filter((title) => title !== "").slice(0, 12);
+    const composed = deps.digest.compose({ ...parsed.draft, sessionId: picked.sessionId, links }, at());
+    await writeJsonAtomic(digestPath, {
+      at: at(),
+      sessionId: picked.sessionId,
+      routes,
+      attempts: result.attempts,
+      considered: items.length,
+      draft: parsed.draft
+    }).catch(() => void 0);
+    return {
+      ok: true,
+      scope: "digest",
+      enabled: true,
+      routes,
+      attempts: result.attempts,
+      sessionId: picked.sessionId,
+      sessionIdSource: base.sessionIdSource,
+      considered: items.length,
+      draft: parsed.draft,
+      markdown: composed.markdown,
+      links,
+      reason: ""
+    };
+  };
+  const applyDigest = async (draft, sessionId) => {
+    const picked = await deps.sessionItems(sessionId);
+    const links = picked.items.map((item) => item.title).filter((title) => title !== "").slice(0, 12);
+    return deps.digest.save({ ...draft, sessionId: picked.sessionId, links });
+  };
+  const readDigestProposal = async () => {
+    const stored = await readJsonSafe(digestPath);
+    if (!stored || stored.draft === null || typeof stored.draft !== "object") {
+      return { at: null, sessionId: "", draft: null };
+    }
+    const reparsed = parseDigestDraft(JSON.stringify(stored.draft));
+    return {
+      at: typeof stored.at === "number" ? stored.at : null,
+      sessionId: typeof stored.sessionId === "string" ? stored.sessionId : "",
+      draft: reparsed.draft
+    };
+  };
   const onTurn = async (input) => {
-    if (!cfg.enabled || !cfg.retitle || cfg.everyTurns <= 0) return null;
+    if (!cfg.enabled || !cfg.retitle && !cfg.digest || cfg.everyTurns <= 0) return null;
     const count = (turns.get(input.sessionId) ?? 0) + 1;
     turns.set(input.sessionId, count);
     if (count % cfg.everyTurns !== 0) return null;
@@ -4626,34 +4887,72 @@ function createOrganizeService(deps) {
       return { at: input.at, ran: false, reason: "\u8DDD\u4E0A\u6B21\u81EA\u52A8\u6574\u7406\u4E0D\u8DB3 minIntervalMs\uFF0C\u8DF3\u8FC7" };
     }
     lastRunAt = input.at;
-    let produced;
-    try {
-      produced = await preview();
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      deps.logger?.warn?.("oblivion organize \u81EA\u52A8\u4EA7\u51FA\u5EFA\u8BAE\u5931\u8D25\uFF1A%s", reason);
-      lastAuto = { at: input.at, ran: true, reason: "preview threw: " + reason };
-      return lastAuto;
+    const auto = { at: input.at, ran: true, reason: "" };
+    if (cfg.retitle) {
+      let produced = null;
+      try {
+        produced = await preview();
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        deps.logger?.warn?.("oblivion organize \u81EA\u52A8\u4EA7\u51FA\u5EFA\u8BAE\u5931\u8D25\uFF1A%s", reason);
+        auto.reason = "preview threw: " + reason;
+      }
+      if (produced !== null) {
+        await writeJsonAtomic(proposalsPath, {
+          at: input.at,
+          sessionId: input.sessionId,
+          routes: produced.routes,
+          attempts: produced.attempts,
+          proposals: produced.proposals
+        }).catch(() => void 0);
+        auto.reason = produced.reason;
+        auto.preview = produced;
+        if (produced.ok && cfg.autoApply && produced.proposals.length > 0) {
+          try {
+            const { results } = await apply(produced.proposals);
+            auto.applied = true;
+            auto.results = results;
+          } catch (error) {
+            auto.reason = "apply failed: " + (error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
     }
-    await writeJsonAtomic(proposalsPath, {
-      at: input.at,
-      sessionId: input.sessionId,
-      routes: produced.routes,
-      attempts: produced.attempts,
-      proposals: produced.proposals
-    }).catch(() => void 0);
-    lastAuto = { at: input.at, ran: true, reason: produced.reason, preview: produced };
-    if (!produced.ok || !cfg.autoApply || produced.proposals.length === 0) return lastAuto;
-    try {
-      const { results } = await apply(produced.proposals);
-      lastAuto = { ...lastAuto, applied: true, results };
-    } catch (error) {
-      lastAuto = {
-        ...lastAuto,
-        reason: "apply failed: " + (error instanceof Error ? error.message : String(error))
-      };
+    if (cfg.digest) {
+      const digestAuto = { ran: true, reason: "" };
+      let produced = null;
+      try {
+        produced = await previewDigest(input.sessionId);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        deps.logger?.warn?.("oblivion organize \u81EA\u52A8\u4EA7\u51FA\u4F1A\u8BDD\u6574\u7406\u5931\u8D25\uFF1A%s", reason);
+        digestAuto.reason = "preview threw: " + reason;
+      }
+      if (produced !== null) {
+        digestAuto.reason = produced.reason;
+        digestAuto.preview = produced;
+        if (produced.ok && produced.draft !== null && cfg.autoApply) {
+          try {
+            const saved = await applyDigest(produced.draft, produced.sessionId);
+            digestAuto.applied = true;
+            digestAuto.saved = {
+              id: saved.id,
+              notePath: saved.notePath,
+              itemId: saved.itemId,
+              title: saved.title,
+              sections: saved.sections,
+              entities: saved.entities
+            };
+          } catch (error) {
+            digestAuto.reason = "apply failed: " + (error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
+      auto.digest = digestAuto;
+      if (auto.reason === "") auto.reason = digestAuto.reason;
     }
-    return lastAuto;
+    lastAuto = auto;
+    return auto;
   };
   const readProposals = async () => {
     const stored = await readJsonSafe(proposalsPath);
@@ -4673,7 +4972,18 @@ function createOrganizeService(deps) {
     }
     return { at: typeof stored.at === "number" ? stored.at : null, proposals };
   };
-  return { status, catalog, preview, apply, onTurn, lastAuto: () => lastAuto, readProposals };
+  return {
+    status,
+    catalog,
+    preview,
+    apply,
+    previewDigest,
+    applyDigest,
+    readDigestProposal,
+    onTurn,
+    lastAuto: () => lastAuto,
+    readProposals
+  };
 }
 export {
   CHANNEL_SCOPES,
@@ -4681,6 +4991,10 @@ export {
   DEFAULT_CONFIG,
   DEFAULT_MAX_TOKENS,
   DEFAULT_TIMEOUT_MS,
+  DIGEST_EXCERPT_CHARS,
+  DIGEST_ITEMS_MAX,
+  DIGEST_SECTIONS_MAX,
+  DIGEST_TITLE_MAX,
   DIMENSIONS,
   ENTRY_FILE_RE,
   EXCERPT_CHARS,
@@ -4707,6 +5021,7 @@ export {
   appendRelatedLinks,
   applyRetitle,
   buildChannelDiag,
+  buildDigestPrompt,
   buildRetitlePrompt,
   buildRoutes,
   channelKey,
@@ -4763,6 +5078,7 @@ export {
   newId,
   normalizeForHash,
   organizeOf,
+  parseDigestDraft,
   parseNote,
   parseProposals,
   pruneGraph,

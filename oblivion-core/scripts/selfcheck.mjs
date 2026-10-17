@@ -214,6 +214,92 @@ await check('自动整理的可选模型清单经门面露出，自定义 provid
   return 'providers=' + cat.providers.map((p) => p.id).join(',') + ' route=agnes/agnes-2.5-flash';
 });
 
+// ---- 会话整理作用域（organize.digest，0.2.18）：本会话的沉淀 → 一页整理 ----
+await check('会话整理作用域（organize.digest）：本会话沉淀 → 提示词 → 草稿文件 → 落地成笔记+条目', async () => {
+  const digestRoot = join(tmp, 'kb-organize-digest');
+  const digestData = join(tmp, 'data-organize-digest');
+  mkdir(digestRoot, { recursive: true });
+  mkdir(digestData, { recursive: true });
+  const llmCalls = [];
+  const draftJson = JSON.stringify({
+    title: 'DSH 插件安装与重启',
+    topic: 'DSH',
+    sections: [{ heading: '安装', body: '走 dshx 装，装完完全重启。' }],
+    decisions: ['不用 HMR 改 Host 侧代码'],
+    todos: [],
+    openQuestions: [],
+  });
+  const dctx = makeCtx({
+    llm: {
+      listProviders: () => [{ id: 'fake' }],
+      listModels: async () => [{ provider: 'fake', id: 'm1' }],
+      stream(payload) {
+        llmCalls.push(payload);
+        return (async function* stream() {
+          yield { type: 'text-delta', index: 0, text: draftJson };
+          yield { type: 'finish', reason: 'stop' };
+        })();
+      },
+    },
+  });
+  mod.apply(dctx.ctx, {
+    dataRoot: digestData,
+    mdRoot: digestRoot,
+    organize: { enabled: true, digest: true, provider: 'fake', model: 'm1' },
+  });
+  const facade = dctx.reg.provides.oblivion;
+  const st = facade.organize.status();
+  assert.equal(st.enabled, true);
+  assert.deepEqual(st.scopes, { digest: true, retitle: true }, '两个作用域各自一个开关');
+
+  // ① 真的按 `#turn-` 来源筛「本会话的沉淀」（不是把整库都送进去）
+  await facade.knowledge.saveStructured({
+    title: '插件怎么装',
+    topic: '安装',
+    content: '用 dshx install，装完要完全重启 DSH。',
+    tags: [],
+    sources: [{ type: 'session', ref: 'selfcheck-digest#turn-1', hash: 'h1' }],
+  });
+  await facade.knowledge.saveStructured({
+    title: '别的会话的笔记',
+    topic: '安装',
+    content: '这场会话不该被整理进去。',
+    tags: [],
+    sources: [{ type: 'session', ref: 'other-session#turn-1', hash: 'h2' }],
+  });
+
+  // ② 没沉淀的那一场：**在发请求之前**就返回（不打扰模型）
+  const empty = await facade.organize.previewDigest('no-such-session');
+  assert.equal(empty.ok, false);
+  assert.match(empty.reason, /还没有沉淀条目/);
+  assert.equal(llmCalls.length, 0, '没有可整理的内容就不该发请求');
+
+  // ③ 有沉淀的那一场：拼提示词 → 解析 → 组合 markdown（知识库一个字都不写）
+  const before = readdirSync(join(digestRoot, '04_会话整理')).length;
+  const out = await facade.organize.previewDigest('selfcheck-digest');
+  assert.equal(out.ok, true, '预览应成功：' + out.reason);
+  assert.equal(out.considered, 1, '只该带上**这一场**会话的沉淀');
+  assert.deepEqual(out.links, ['插件怎么装']);
+  assert.ok(out.markdown.includes('## 安装'), '组合结果应含模型给的小节');
+  assert.ok(!out.markdown.includes('别的会话'), '别的会话的内容不该混进来');
+  assert.equal(llmCalls.length, 1);
+  assert.equal(llmCalls[0].purpose, 'oblivion-organize:digest', '用途要能分辨是哪个作用域');
+  assert.ok(llmCalls[0].messages[0].content[0].text.includes('插件怎么装'), '提示词里应带沉淀条目');
+  assert.equal(readdirSync(join(digestRoot, '04_会话整理')).length, before, '预览不落笔记');
+  assert.ok(existsSync(join(digestData, 'organize-digest.json')), '成功时草稿文件要落盘（手动落地靠它读回）');
+
+  // ④ 落地：走 DigestService.save（笔记 + 条目 + 互链），且是**同一份**草稿
+  const back = await facade.organize.readDigestProposal();
+  assert.equal(back.sessionId, 'selfcheck-digest');
+  const saved = await facade.organize.applyDigest(back.draft, back.sessionId);
+  assert.ok(existsSync(saved.notePath), '落地后笔记应存在：' + saved.notePath);
+  assert.ok(saved.notePath.includes('04_会话整理'));
+  const note = readFileSync(saved.notePath, 'utf8');
+  assert.ok(note.includes('[[插件怎么装]]'), '源笔记应成为互链');
+  assert.ok(note.includes('id=' + saved.itemId), '笔记标记应回填真实条目 id');
+  return '本会话 1 条 → 笔记 ' + saved.notePath.replace(/\\/g, '/').split('/').slice(-1)[0] + ' / 条目 ' + saved.itemId;
+});
+
 // ---- 设置页的 HTTP 通路（DEC-030）----
 await check('设置路由真被 apply() 挂上：GET 出生效值+来源+自定义 provider；POST 落到 settings.json', async () => {
   const dir = join(tmp, 'data-settings-route');

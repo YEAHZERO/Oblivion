@@ -119,6 +119,8 @@ export {
   parseProposals,
 } from './organize/index.js';
 export type {
+  DigestAutoResult,
+  DigestPreview,
   OrganizeAutoResult,
   OrganizeDeps,
   OrganizePreview,
@@ -126,6 +128,15 @@ export type {
   OrganizeStatus,
   RetitleProposal,
 } from './organize/index.js';
+export {
+  DIGEST_EXCERPT_CHARS,
+  DIGEST_ITEMS_MAX,
+  DIGEST_SECTIONS_MAX,
+  DIGEST_TITLE_MAX,
+  buildDigestPrompt,
+  parseDigestDraft,
+} from './organize/digest-scope.js';
+export type { DigestDraft, DigestSourceItem } from './organize/digest-scope.js';
 export { expandHome } from './util/paths.js';
 export { normalizeForHash, sha1, shortHash } from './util/hash.js';
 export { ageDays, newId, isoDate, MS_PER_DAY } from './util/time.js';

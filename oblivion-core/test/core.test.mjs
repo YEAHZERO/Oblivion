@@ -9,7 +9,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync as mkdtemp, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync as mkdtemp, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
@@ -97,7 +97,26 @@ describe('产物形状', () => {
   it('产物把框架包留作 external，没有把 dsh-tools 打包进去', () => {
     const code = readFileSync(LIB, 'utf8');
     assert.ok(code.includes('@deepseek-ai/dsh-tools'), '应保留对 dsh-tools 的外部导入');
-    assert.ok(code.length < 200_000, '产物应远小于把框架包打进去的体积（实测约 43 KB）');
+    // 判据从「绝对体积」改成「与框架包本身比」：
+    //   把框架打进来，产物**必然**至少长出它自己的体积，而正常功能增长是每次几百字节~十几 KB
+    //   （0.2.18 的会话整理作用域一次 +15.5 KB）。原来的绝对值 200 KB 是「增长计速器」——
+    //   0.2.17 已经涨到 192 KB，任何一片新功能都会把它顶红，而它想抓的「框架被内联」一点没变。
+    let frameworkBytes = 0;
+    try {
+      const dir = join(ROOT, 'node_modules', '@deepseek-ai', 'dsh-tools');
+      for (const rel of readdirSync(dir, { recursive: true })) {
+        if (!/\.[cm]?js$/.test(String(rel))) continue;
+        frameworkBytes += statSync(join(dir, String(rel))).size;
+      }
+    } catch {
+      frameworkBytes = 0;
+    }
+    // 取不到框架包时退回一个仍然远小于「内联后」（实测框架 377 KB ⇒ 内联至少 580 KB+）的上限。
+    const ceiling = frameworkBytes > 0 ? frameworkBytes : 500_000;
+    assert.ok(
+      code.length < ceiling,
+      '产物应小于框架包本身的体积（框架被内联时必然超过它）：产物 ' + code.length + ' B，上限 ' + ceiling + ' B',
+    );
   });
 });
 
@@ -1323,6 +1342,25 @@ describe('自动整理（DEC-030）', () => {
     };
   }
 
+  /** 假的会话整理服务：`compose` 用**真**实现（预览与落地必须同一份），`save` 只记一笔。 */
+  function fakeDigest(saved = []) {
+    return {
+      compose: (input, at) => kit.composeDigest(input, at ?? 1_000_000),
+      save: async (input) => {
+        saved.push(input);
+        const composed = kit.composeDigest(input, 1_000_000);
+        const id = 'di' + String(saved.length);
+        return {
+          ...composed,
+          id,
+          itemId: id,
+          notePath: join(tmpdir(), '04_会话整理', composed.fileName),
+          entities: 3,
+        };
+      },
+    };
+  }
+
   function organizeWith(overrides = {}, deps = {}) {
     return kit.createOrganizeService({
       config: {
@@ -1330,11 +1368,16 @@ describe('自动整理（DEC-030）', () => {
         organize: { ...kit.DEFAULT_CONFIG.organize, ...overrides },
       },
       retitle: deps.retitle ?? fakeRetitle(),
+      digest: deps.digest ?? fakeDigest(),
+      // 默认「这场会话一条沉淀都没有」：作用域一于是在**发请求之前**就短路，
+      // 既有那些「只该发一次请求」的断言不受新作用域影响。想验作用域一就自己给 `sessionItems`。
+      sessionItems: deps.sessionItems ?? (async (sessionId) => ({ sessionId, items: [] })),
       // `runtime` 是**取值函数**（懒取）：真宿主上 `ctx.llm` 只能经 `ctx.inject` 拿，
       // 且回调可能装载后才兑现 —— 抓一份快照会把「稍后可用的 llm」永久记成 null。
       runtime: () => (deps.runtime === undefined ? fakeLlm({}) : deps.runtime),
       at: deps.at ?? (() => 1_000_000),
       proposalsPath: deps.proposalsPath,
+      digestPath: deps.digestPath,
       defaultRoute: deps.defaultRoute,
     });
   }
@@ -1673,6 +1716,282 @@ describe('自动整理（DEC-030）', () => {
       assert.equal(out.proposals.length, 0);
       assert.match(out.reason, /没给出可用建议/);
       assert.match(String(out.raw), /挺好/);
+    });
+  });
+
+  describe('作用域一：会话整理（本会话的沉淀 → 一页整理）', () => {
+    const DRAFT_JSON = JSON.stringify({
+      title: 'DSH 插件安装与重启',
+      topic: 'DSH',
+      sections: [{ heading: '安装', body: '走 dshx 装，装完要完全重启。' }],
+      decisions: ['不用 HMR 改 Host 侧代码'],
+      todos: ['修 push 脚本'],
+      openQuestions: [],
+    });
+    const ITEMS = [
+      { id: 'i1', title: '插件怎么装', topic: '安装', text: '用 dshx install。' },
+      { id: 'i2', title: '为什么 HMR 不生效', topic: '安装', text: 'Host 侧代码不重导入。' },
+    ];
+    /** 假的「本会话沉淀」来源：`wanted` 空串时挑最近那一场（这里直接给 `fallbackSession`）。 */
+    const itemsOf = (items = ITEMS, fallbackSession = 's9') => async (wanted) => ({
+      sessionId: wanted === '' ? fallbackSession : wanted,
+      items,
+    });
+
+    it('作用域一没开：一个请求都不发（零请求保证）', async () => {
+      const runtime = fakeLlm({ 'fake/m1': DRAFT_JSON });
+      const svc = organizeWith(
+        { enabled: true, digest: false, provider: 'fake', model: 'm1' },
+        { runtime, sessionItems: itemsOf() },
+      );
+      const out = await svc.previewDigest('s9');
+      assert.equal(out.ok, false);
+      assert.match(out.reason, /organize\.digest is false/);
+      assert.equal(runtime.calls.length, 0, '作用域一关着就不该发请求');
+    });
+
+    it('没有沉淀：在发请求之前就返回（不是「请求了但模型没回」）', async () => {
+      const runtime = fakeLlm({ 'fake/m1': DRAFT_JSON });
+      const svc = organizeWith(
+        { enabled: true, provider: 'fake', model: 'm1' },
+        { runtime, sessionItems: itemsOf([], 's9') },
+      );
+      const out = await svc.previewDigest('s9');
+      assert.equal(out.ok, false);
+      assert.match(out.reason, /还没有沉淀条目/);
+      assert.equal(runtime.calls.length, 0, '没有可整理的内容就不该打扰模型');
+    });
+
+    it('有沉淀：拼 prompt → 解析 → 组合 markdown；预览期间知识库一个字都不写', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-digest-'));
+      try {
+        const runtime = fakeLlm({ 'fake/m1': DRAFT_JSON });
+        const saved = [];
+        const svc = organizeWith(
+          { enabled: true, provider: 'fake', model: 'm1' },
+          { runtime, sessionItems: itemsOf(), digest: fakeDigest(saved), digestPath: join(dir, 'organize-digest.json') },
+        );
+        const out = await svc.previewDigest('s9');
+        assert.equal(out.ok, true);
+        assert.equal(out.scope, 'digest');
+        assert.equal(out.sessionId, 's9');
+        assert.equal(out.sessionIdSource, 'explicit');
+        assert.equal(out.considered, 2);
+        assert.deepEqual(out.links, ['插件怎么装', '为什么 HMR 不生效']);
+        assert.match(out.markdown, /DSH 插件安装与重启/);
+        assert.match(out.markdown, /## 安装/);
+        assert.match(out.markdown, /- 修 push 脚本/);
+        assert.equal(saved.length, 0, '预览绝不能落知识库');
+        // 请求真的走了「会话整理」这条用途，且 prompt 里带上了沉淀的条目
+        assert.equal(runtime.calls.length, 1);
+        assert.equal(runtime.calls[0].purpose, 'oblivion-organize:digest');
+        const prompt = runtime.calls[0].messages[0].content[0].text;
+        assert.match(prompt, /插件怎么装/);
+        assert.match(prompt, /entry_id: i2/);
+        assert.match(prompt, /只依据下面给出的内容/);
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('`session_id` 留空 = 挑最近沉淀过的那一场，并如实标注来源', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-digest-'));
+      try {
+        const runtime = fakeLlm({ 'fake/m1': DRAFT_JSON });
+        const svc = organizeWith(
+          { enabled: true, provider: 'fake', model: 'm1' },
+          {
+            runtime,
+            sessionItems: async () => ({ sessionId: 'latest-01', items: ITEMS }),
+            digestPath: join(dir, 'organize-digest.json'),
+          },
+        );
+        const out = await svc.previewDigest();
+        assert.equal(out.ok, true);
+        assert.equal(out.sessionId, 'latest-01');
+        assert.equal(out.sessionIdSource, 'latest-captured');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('模型没按格式回：不落草稿、报错并把原话带回', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-digest-'));
+      try {
+        const runtime = fakeLlm({ 'fake/m1': '这场会话挺顺利的，没什么要整理的。' });
+        const path = join(dir, 'organize-digest.json');
+        const svc = organizeWith(
+          { enabled: true, provider: 'fake', model: 'm1' },
+          { runtime, sessionItems: itemsOf(), digestPath: path },
+        );
+        const out = await svc.previewDigest('s9');
+        assert.equal(out.ok, false);
+        assert.match(out.reason, /没有 JSON 对象/);
+        assert.match(String(out.raw), /挺顺利/);
+        assert.ok(!existsSync(path), '解析失败不该写草稿文件');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('草稿文件里永远是**最后一份可用**草稿：后一次失败不擦掉前一次成功', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-digest-'));
+      try {
+        const path = join(dir, 'organize-digest.json');
+        const ok = organizeWith(
+          { enabled: true, provider: 'fake', model: 'm1' },
+          { runtime: fakeLlm({ 'fake/m1': DRAFT_JSON }), sessionItems: itemsOf(), digestPath: path },
+        );
+        assert.equal((await ok.previewDigest('s9')).ok, true);
+        const first = await ok.readDigestProposal();
+        assert.equal(first.draft.title, 'DSH 插件安装与重启');
+
+        const bad = organizeWith(
+          { enabled: true, provider: 'fake', model: 'm1' },
+          { runtime: fakeLlm({ 'fake/m1': '随便说两句' }), sessionItems: itemsOf(), digestPath: path },
+        );
+        assert.equal((await bad.previewDigest('s9')).ok, false);
+        const after = await bad.readDigestProposal();
+        assert.equal(after.draft.title, 'DSH 插件安装与重启', '失败不该把上一份可用草稿擦掉');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('落地走 DigestService.save（笔记 + 条目 + 互链），并把链接交给它', async () => {
+      const saved = [];
+      const svc = organizeWith(
+        { enabled: true, provider: 'fake', model: 'm1' },
+        { runtime: fakeLlm({}), sessionItems: itemsOf(), digest: fakeDigest(saved) },
+      );
+      const out = await svc.applyDigest(
+        { title: '甲', topic: 't', sections: [{ heading: 'h', body: 'b' }], decisions: [], todos: [], openQuestions: [] },
+        's9',
+      );
+      assert.equal(saved.length, 1);
+      assert.deepEqual(saved[0].links, ['插件怎么装', '为什么 HMR 不生效']);
+      assert.equal(saved[0].sessionId, 's9');
+      assert.equal(out.itemId, 'di1');
+      assert.match(out.notePath, /04_会话整理/);
+    });
+
+    it('自动路径：作用域一关着就没有 digest 字段；开着才跑，且与作用域二各报各的', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-digest-'));
+      try {
+        // ① 只开作用域二
+        const onlyRetitle = organizeWith(
+          { enabled: true, digest: false, provider: 'fake', model: 'm1', everyTurns: 1, minIntervalMs: 0 },
+          { runtime: fakeLlm({ 'fake/m1': '[]' }), proposalsPath: join(dir, 'p.json') },
+        );
+        const a = await onlyRetitle.onTurn({ sessionId: 's1', at: 10 });
+        assert.ok(a !== null && a.ran);
+        assert.equal(a.digest, undefined, '作用域一没开就不该有它的报告');
+
+        // ② 两个都开：各跑各的，作用域一也能独立报出失败原因
+        const both = organizeWith(
+          { enabled: true, provider: 'fake', model: 'm1', everyTurns: 1, minIntervalMs: 0 },
+          {
+            runtime: fakeLlm({ 'fake/m1': '[]' }), // 作用域二：空数组（合法）；作用域一：不是 JSON ⇒ 失败
+            sessionItems: itemsOf(),
+            proposalsPath: join(dir, 'p.json'),
+            digestPath: join(dir, 'd.json'),
+          },
+        );
+        const b = await both.onTurn({ sessionId: 's1', at: 10 });
+        assert.ok(b !== null && b.digest !== undefined);
+        assert.equal(b.digest.ran, true);
+        assert.match(b.digest.reason, /没有 JSON 对象/, '作用域一自己的失败原因要留在自己的字段里');
+        assert.ok(b.preview !== undefined, '作用域二的产出照常回带');
+        assert.match(b.reason, /没给出可用建议/, '顶层 reason 仍是作用域二的结论');
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('autoApply=true：作用域一自动落地；false：只留草稿', async () => {
+      const dir = mkdtemp(join(tmpdir(), 'obl-digest-'));
+      try {
+        const saved = [];
+        const off = organizeWith(
+          { enabled: true, provider: 'fake', model: 'm1', everyTurns: 1, minIntervalMs: 0, autoApply: false },
+          {
+            runtime: fakeLlm({ 'fake/m1': DRAFT_JSON }),
+            sessionItems: itemsOf(),
+            digest: fakeDigest(saved),
+            proposalsPath: join(dir, 'p.json'),
+            digestPath: join(dir, 'd.json'),
+          },
+        );
+        const a = await off.onTurn({ sessionId: 's1', at: 10 });
+        assert.equal(a.digest.applied, undefined);
+        assert.equal(saved.length, 0, 'autoApply=false 时不能碰知识库');
+
+        const on = organizeWith(
+          { enabled: true, provider: 'fake', model: 'm1', everyTurns: 1, minIntervalMs: 0, autoApply: true },
+          {
+            runtime: fakeLlm({ 'fake/m1': DRAFT_JSON }),
+            sessionItems: itemsOf(),
+            digest: fakeDigest(saved),
+            proposalsPath: join(dir, 'p.json'),
+            digestPath: join(dir, 'd.json'),
+          },
+        );
+        const b = await on.onTurn({ sessionId: 's2', at: 20 });
+        assert.equal(b.digest.applied, true);
+        assert.equal(saved.length, 1);
+        assert.match(b.digest.saved.notePath, /04_会话整理/);
+      } finally {
+        cleanupDir(dir);
+      }
+    });
+
+    it('提示词：只输出 JSON、明说看到的是沉淀而非对话、缺的清单给空数组', () => {
+      const { system, prompt } = kit.buildDigestPrompt(
+        [{ id: 'i1', title: '插件怎么装', topic: '安装', text: '用 dshx install。' }],
+        's1',
+      );
+      assert.match(system, /只输出一个 JSON 对象/);
+      assert.match(system, /不是对话原文/);
+      assert.match(prompt, /entry_id: i1/);
+      assert.match(prompt, /只依据下面给出的内容/);
+      assert.match(prompt, /空数组/);
+    });
+
+    it('解析：标题消毒 / 丢空节 / 只留前 6 节 / 清单去重去空', () => {
+      const text = JSON.stringify({
+        title: '  # 甲.md  ',
+        topic: 'a/b',
+        sections: [
+          { heading: '一', body: '正文' },
+          { heading: '二', body: '   ' },
+          { heading: '三', body: '正文三' },
+          { heading: '四', body: '正文四' },
+          { heading: '五', body: '正文五' },
+          { heading: '六', body: '正文六' },
+          { heading: '七', body: '正文七' },
+        ],
+        decisions: ['甲', '甲', ' ', 7],
+        todos: 'not-an-array',
+        openQuestions: ['乙'],
+      });
+      const { draft, error } = kit.parseDigestDraft(text);
+      assert.equal(error, '');
+      assert.equal(draft.title, '甲');
+      assert.equal(draft.topic, 'a b');
+      assert.equal(draft.sections.length, kit.DIGEST_SECTIONS_MAX, '最多 6 节');
+      assert.deepEqual(draft.sections[0], { heading: '一', body: '正文' });
+      assert.deepEqual(draft.decisions, ['甲']);
+      assert.deepEqual(draft.todos, []);
+      assert.deepEqual(draft.openQuestions, ['乙']);
+    });
+
+    it('解析：没有 title 或没有一节正文，都算失败（不落半成品）', () => {
+      const noTitle = kit.parseDigestDraft(JSON.stringify({ sections: [{ heading: '一', body: '正文' }] }));
+      assert.equal(noTitle.draft, null);
+      assert.match(noTitle.error, /没给 `title`/);
+      const noSection = kit.parseDigestDraft(JSON.stringify({ title: '甲', sections: [] }));
+      assert.equal(noSection.draft, null);
+      assert.match(noSection.error, /`sections` 为空/);
     });
   });
 
