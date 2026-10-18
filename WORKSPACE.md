@@ -95,27 +95,6 @@ node --import "file:///$($dshx -replace '\\','/')/node_modules/tsx/dist/esm/inde
 > 注意 `--import` 必须接收 `file://` URL：裸 Windows 路径会被当成 `c:` 协议而报
 > `ERR_UNSUPPORTED_ESM_URL_SCHEME`。
 
-### 搜索链路的密钥自检：`tools/key-search.ps1`
-
-`dsh-free-search` / `dsh-web-search-pro` 重装、换引擎，或改了 profile 补丁之后，用它**绕过插件路由**直连带密钥的搜索 API，把"key 还在"和"网络通"分开验证：
-
-```powershell
-powershell -NoProfile -File tools\key-search.ps1 -KeyStatus                        # key 有没有、来自哪一层
-powershell -NoProfile -File tools\key-search.ps1 -Query '关键词' -Provider all -N 5  # exa + tavily + firecrawl 并发合并
-powershell -NoProfile -File tools\key-search.ps1 -Query '关键词' -Text -MaxChars 4000 # 取正文
-```
-
-也可以走工作区脚本别名（参数直接追加，不需要 `--`；本机 `pnpm` 不在 PATH 上，用 `corepack` 带着走）：
-
-```powershell
-corepack pnpm key-search -KeyStatus
-corepack pnpm key-search -Query '关键词' -Provider all -N 5
-```
-
-引擎用的环境变量名与 `dsh-free-search/lib/index.js:2903-2921` 的映射一致（`EXA_API_KEY` / `TAVILY_API_KEY` / `FIRECRAWL_API_KEY`）。**读 key 顺序 = 显式参数 > User 注册表 > Machine > Process**：DSH 给 agent shell 做了脱敏，会话里 `$env:EXA_API_KEY` 是空的，只有 User 层注册表拿得到，所以 User 排最前。
-
-退出码 `0` 有结果 / `1` 引擎失败或零结果 / `2` 用法错误。两个坑别踩：5.1 的 `-File` **不能绑定名为 `-Engine` 的参数**（exit `-1`、零输出），所以参数叫 `-Provider`；`opencode` 引擎在 5.1 下要转义 JSON 里的引号（脚本内已按版本处理）。
-
 ### 平台登录态采集：`tools/dsh-browser-login.mjs`
 
 `dsh-web-search-pro` 的平台搜索（知乎 / 微博）要**浏览器登录态**。这个脚本用 `dsh-browser` 自带的 Playwright + 本机 Edge 打开登录页，**你自己**扫码/输密码；脚本每 2 秒轮询会话 cookie，一出现就把 `storageState`（cookies + localStorage）原子写到输出路径并关窗。它**不接触账号密码**，只搬运浏览器已经拿到的 cookie：

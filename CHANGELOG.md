@@ -12,6 +12,16 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — 工具链：`tools/key-search.ps1` 迁出仓库，移入本机个人工具库 `C:\Projects\YEAHZERO\scripts\opencode\`
+
+该脚本是**本机自用**的搜索自检工具，不属于本工作区（DSH 外部插件工作区），因此从仓库移除、独立维护：
+
+- 删除 `tools/key-search.ps1`；`package.json` 去掉 `key-search` 脚本别名；`WORKSPACE.md` 去掉「搜索链路的密钥自检」一节（工具已不在仓库内，文档不再指向它）。
+- 迁出后更名为 `opencode-search.ps1`，与新增的 `oc-export.ps1` / `oc-import.ps1`（OpenCode 设置打包 / 还原）、`update-free-models.mjs`（免费模型 whitelist + 中文备注更新）同目录维护。
+- 迁移同时修两处：**Tavily 中文乱码**（5.1 的 `Invoke-RestMethod` 在响应无 charset 时按 ISO-8859-1 解码 → 读原始字节强制 UTF-8）、**opencode 多词查询崩溃**（改直连本地 server，不再经 CLI）；并新增 `-Provider auto` / `-ProviderId` / `-Recent`。
+
+> 工具迁出后不随本仓库的 `pnpm check` 自检/构建；仓库侧改动仅「删除 + 去引用 + 版本递增 + 文档」。
+
 ## [未发布] — `@oblivion/brand` v0.1.8 + `@oblivion/core` v0.2.20：**重启链路 v2.1（守夜人）** —— 「关了不回来」的根因是 helper 与主进程在同一个 job 里 + 面板侧三条新路由（活动任务 / 检查更新 / 应用更新）
 
 面板上点「重启」曾出现最难解释的一种现场：**关了，但不回来**。原因是重启 helper（PowerShell）与

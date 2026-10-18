@@ -1,7 +1,7 @@
 {
   "name": "oblivion",
   "private": true,
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Oblivion —— DSH 外部插件工作区（pnpm workspace；依赖只存一份）",
   "packageManager": "pnpm@11.7.0",
   "engines": {
@@ -17,7 +17,6 @@
     "check:version": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task version",
     "verify:dsh": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-dsh-compat.ps1",
     "compat": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check-workspace.ps1 -Task compat",
-    "key-search": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/key-search.ps1",
     "dsh-browser-login": "node tools/dsh-browser-login.mjs"
   }
 }
