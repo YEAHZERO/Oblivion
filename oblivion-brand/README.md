@@ -74,10 +74,56 @@ protocolVersion / browser / deviceInfo / keyboard / shortcuts / updates
 ### 已知行为
 
 - **强制结束**：`Stop-Process -Force`，不弹 DSH 自身的退出确认，正在运行的会话与任务会被中断。
-- 脚本与日志在临时目录：`%TEMP%\obl-brand-restart.ps1` / `obl-brand-restart.log`。失败时先看日志。
+- 脚本与日志在临时目录：`%TEMP%\obl-brand-restart.log`（启动时由 watcher 写）。失败时先看日志。
 - 路由 `POST /obl-brand/restart` 校验 `Origin` 必须是本机回环，挡掉跨站页面发起的重启。
 - 重启前会先清掉 web-login 遗留的无头 Edge 传输进程（见「孤儿进程清扫」一节）—— 它们本来会在这次硬杀之后变成孤儿。
 - 另有 `POST /obl-brand/orphans`：**不重启**，只做那一次清扫（面板「清理孤儿进程」按钮用它）。
+
+### v2.1 守夜人（2026-10-18）
+
+v2.1 把「重新拉起」这一步从 helper 里剥离出来，改成「**守夜人**」：一个经 WMI 创建的**游离 cmd 进程**，跑在 Electron 的 job 之外，主进程怎么死都牵连不到它。逻辑链：
+
+```
+POST /obl-brand/restart
+  → 删旧锁
+  → 写 %TEMP%\obl-brand-watch-restart.cmd
+  → ARM：WMI 拉起 cmd（armWatcher）
+  → 202 + 面板遮罩
+  → window.close()（两帧后）
+  → 900ms 后 process.kill(ppid, SIGTERM)
+  → watcher 轮询 tasklist 等镜像消失
+  → start "" <exe> 拉起
+  → curl 探 42081（http-bridge 固定端口）
+  → netstat 反查 host pid + 列监听口
+  → 逐口探活，取第一个 HTTP 应答口写日志
+```
+
+**顺序是结论的一部分**：先 ARM 再清扫/杀。反过来（先杀后 arm）在实测里就是「关了就回不来」—— arm 与 app 共享 job。ARM 失败（无 PowerShell / WMI 不可用）仍回退到旧的 helper 路径。
+
+四个坑钉在 `WATCH_CMD` 正文里并由自检守卫：
+
+| 坑 | 现象 | 修法 |
+| --- | --- | --- |
+| `for /f` 命令形式在 WMI 游离子进程整体空产出 | `host pid=` 永远空、端口清单永远不打印 | 先 `netstat > 文件`，再 `for /f "usebackq" … in ("文件")` |
+| `%DATE%` 含中文星期（GBK） | 按 UTF-8 读日志乱码 | 时间戳切片：`%DATE:~0,10% %TIME%` |
+| web 口每次启动都变 | 按固定端口探活永远等不到 | 只认镜像名判消失；拉起后按 42081 验活，再现场发现 web 口 |
+| 陈旧守夜人 / 连点 | 以后每次宿主退出都被「重启」一次 | 锁文件 + 20s TTL（应用 20s 没消失 → `expired`） |
+
+实测（2026-10-18）：3/3 全绿；宿主空窗约 **1.5s**；`ready` **9.9–12.7s**（大头是冷启动）；托盘退出不会被误拉起；事后无残留 watcher。**限制照实说**：强杀丢未落盘增量；`app.quit()` 那条优雅链插件够不着（只有托盘退出走）。
+
+面板「点完即消失」：收到 202 后 `BrandSettingsPanel` 铺全屏遮罩 + 等两帧再 `window.close()`。
+
+### 三条新路由（v2.1 同批）
+
+| 路由 | 方法 | 说明 |
+| --- | --- | --- |
+| `/obl-brand/tasks` | `GET` | **只读**：有 `running` agent 或 `running|stopping` 后台 job → `active: true`；服务缺失回 503（面板按「无法确认就不弹」处理）。**2026-10-18 收窄**：不再把 `inbox.nextTurn/nextStep` 积压算「正在跑」—— 队列空闲后仍留一条消息，会误报中断提醒 |
+| `/obl-brand/updates` | `GET` | **只读**：读 profile `package.json` 依赖 → 跳过 `link:` / `file:` / `workspace:` / `npm:`、`@oblivion/*`、`@deepseek-ai/*` → 逐个查 `registry.npmjs.org/<pkg>/latest` → 回 `{ ok, items:[{ name, current, latest }] }`。首次约 8s |
+| `/obl-brand/updates/apply` | `POST` | 白名单校验 → 备份 `package.json.bak-before-updates-<ms>` → 写 latest → 用**内置 pnpm**（`resources/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.cjs`，经 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`）跑 `pnpm install --no-frozen-lockfile --config.minimumReleaseAge=0` → **回读安装版本**（不信 pnpm 退出码）→ 失败回滚。首次升级约 8s |
+
+**这一轮刻意不做兼容预检**：不兼容的插件（`dsh-web-search-pro`、`@anweat/dsh-browser`，最新版仍是 `0.2.1` 且 peers `<0.2.1-0`）更新后仍会被 DSH 0.2.1 的预检跳过，等作者发版 —— 面板如实提示，不假装能修。
+
+⚠️ **又一次同一类坑**：`server.register(...)` 返回的是 **dispose 函数**，`ctx.effect` 必须**返回**它；写成 `() => { check(); apply(); }` 会在挂载瞬间把路由自己注销掉 —— 现象正是「路由 404，但日志还打了 `mounted`」。自检里加了一条 fiber 语义断言把这条钉住。
 
 ### ⚠️ 三个实测踩出来的坑
 

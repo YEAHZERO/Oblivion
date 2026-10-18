@@ -1,18 +1,9 @@
 /**
- * **面板内的两个宿主动作：「重启 DSH」与「清理孤儿进程」。**
+ * 面板内的两个宿主动作（拆成两个组件，便于排成一行）：
+ *   - `RestartControl`：「重启 DSH」（POST /obl-brand/restart）
+ *   - `OrphanControl`：「清理孤儿进程」（POST /obl-brand/orphans，不重启）
  *
- * 重启复用 `@oblivion/brand` 已有的路由 `POST /obl-brand/restart`（完整机制在那边：
- * 临时 PowerShell 助手强制结束进程再拉起，因为插件够不到 Electron 主进程的 `app.relaunch()`）。
- *
- * 「清理孤儿进程」走 `POST /obl-brand/orphans`，解的是另一个现场：web-login 的无头 Edge
- * 传输进程在 DSH 被**硬杀**（重启按钮 / 任务管理器 / 崩溃）之后活了下来，继续占着
- * `~/.dsh/web-login/transport-profile`，于是下一次探活 `rmSync` 抛 EPERM，面板上表现为
- * 「几个账号全部校验失败」。这个动作**不重启**，只把被占住的目录解开，所以现场能一条命令
- * 治好，不必打断会话。
- *
- * 两边都**不在这里复制机制**：宿主只回计数与路径，文案在这里拼 —— 机制只有一份，坏了只修一处。
- * 判定与安全边界（只认 transport profile 命令行、只杀父进程已死的）见 brand 的 `src/orphans.ts`。
- *
+ * 两者都**不在这里复制机制**：宿主只回计数与路径，文案在这里拼 —— 机制只有一份。
  * 降级：brand 未装/被停用时路由 404，这里给明确文案而不是静默失败。
  */
 
@@ -22,6 +13,9 @@ import type { JSX } from 'react';
 /** 与 `@oblivion/brand` 的 `RESTART_PATH` 保持一致。 */
 const RESTART_PATH = '/obl-brand/restart';
 
+/** 与 `@oblivion/brand` 的 `TASKS_PATH` 保持一致（GET，只读）。 */
+const TASKS_PATH = '/obl-brand/tasks';
+
 /** 与 `@oblivion/brand` 的 `ORPHANS_PATH` 保持一致。 */
 const ORPHANS_PATH = '/obl-brand/orphans';
 
@@ -29,7 +23,7 @@ type Phase = 'idle' | 'confirming' | 'sending' | 'done' | 'error';
 
 const BTN: Record<Phase, string> = {
   idle: '重启 DSH',
-  confirming: '确认重启',
+  confirming: '确认退出',
   sending: '正在重启…',
   done: '已发出重启',
   error: '重试',
@@ -91,6 +85,28 @@ function describeSweep(payload: HostPayload | null, fallback: string): string {
     : `已清理 ${report.killed.length} 个孤儿进程（扫描 ${report.scanned} 个进程，命中 ${report.matched} 个传输进程）`;
 }
 
+/**
+ * 问宿主「现在有没有活动任务」。
+ *
+ * 语义对齐托盘退出时的原生弹窗：有任务才弹「任务将会中断」提醒。
+ * 2026-10-18 修正：路由不可用 / 版本错配 / 503 一律按**没有任务**处理（不弹窗直接重启）
+ * ——「未知就当有任务」会在宿主没更新出 `/obl-brand/tasks` 时每次点击都误报。
+ */
+async function probeActiveTasks(): Promise<boolean> {
+  try {
+    const response = await fetch(TASKS_PATH, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      credentials: 'same-origin',
+    });
+    if (!response.ok) return false;
+    const body = (await response.json()) as { ok?: boolean; active?: boolean } | null;
+    return body?.ok === true && body.active === true;
+  } catch {
+    return false;
+  }
+}
+
 const BUTTON_STYLE = {
   border: '1px solid rgba(127,127,127,0.35)',
   borderRadius: 5,
@@ -100,10 +116,26 @@ const BUTTON_STYLE = {
   fontSize: 11,
 } as const;
 
+const MSG_STYLE = { fontSize: 11, opacity: 0.75 } as const;
+
+/** 「重启 DSH」：有活动任务先弹确认 → 202 后遮罩 + window.close（窗口秒隐藏）。 */
 export function RestartControl(): JSX.Element {
   const [phase, setPhase] = useState<Phase>('idle');
-  const [sweepPhase, setSweepPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState<string>('');
+  const [closing, setClosing] = useState(false);
+
+  const hideUiForRestart = useCallback((): void => {
+    setClosing(true);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        try {
+          window.close();
+        } catch {
+          /* 关窗被拦时保持遮罩，进程仍会被 helper 终止 */
+        }
+      });
+    });
+  }, []);
 
   const restart = useCallback(async (): Promise<void> => {
     setPhase('sending');
@@ -127,14 +159,142 @@ export function RestartControl(): JSX.Element {
       }
       setPhase('done');
       setMessage(describeRestartSweep(payload) ?? 'DSH 将在数秒内重启，本页会断开。');
+      hideUiForRestart();
     } catch (error) {
       setPhase('error');
       setMessage(error instanceof Error ? error.message : String(error));
     }
-  }, []);
+  }, [hideUiForRestart]);
+
+  const beginRestart = useCallback(async (): Promise<void> => {
+    const active = await probeActiveTasks();
+    if (!active) {
+      void restart();
+      return;
+    }
+    setPhase('confirming');
+    setMessage('当前正在运行的任务将会中断');
+  }, [restart]);
+
+  return (
+    <>
+      {closing ? (
+        <div
+          data-obl-panel-restart-cover=""
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 2147483000,
+            background: '#111',
+            color: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 13,
+            letterSpacing: '0.02em',
+          }}
+        >
+          正在重启 DSH…
+        </div>
+      ) : null}
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          style={{
+            ...BUTTON_STYLE,
+            color: phase === 'error' ? '#d9534f' : 'inherit',
+            cursor: phase === 'sending' ? 'default' : 'pointer',
+          }}
+          disabled={phase === 'sending'}
+          onClick={() => {
+            if (phase === 'idle') {
+              void beginRestart();
+              return;
+            }
+            void restart();
+          }}
+        >
+          {BTN[phase] ?? '重启 DSH'}
+        </button>
+        {message ? <span style={MSG_STYLE}>{message}</span> : null}
+      </span>
+      {phase === 'confirming' ? (
+        <div
+          data-obl-panel-restart-dialog=""
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 2147483000,
+            background: 'rgba(0,0,0,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="退出 DeepSeek Harness？"
+            style={{
+              width: 360,
+              maxWidth: 'calc(100vw - 48px)',
+              background: '#ffffff',
+              color: '#1a1a1a',
+              borderRadius: 8,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+              padding: '18px 20px 16px',
+              fontFamily: 'system-ui, "Segoe UI", sans-serif',
+            }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>
+              退出 DeepSeek Harness？
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.6, opacity: 0.85, marginBottom: 18 }}>
+              当前正在运行的任务将会中断
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                style={{
+                  ...BUTTON_STYLE,
+                  padding: '4px 16px',
+                  fontSize: 12,
+                  background: '#2d6cdf',
+                  border: '1px solid #2d6cdf',
+                  color: '#fff',
+                  borderRadius: 5,
+                }}
+                onClick={() => {
+                  void restart();
+                }}
+              >
+                退出
+              </button>
+              <button
+                type="button"
+                style={{ ...BUTTON_STYLE, padding: '4px 16px', fontSize: 12, borderRadius: 5 }}
+                onClick={() => {
+                  setPhase('idle');
+                  setMessage('');
+                }}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** 「清理孤儿进程」：只杀 web-login 遗留的传输进程，不重启。 */
+export function OrphanControl(): JSX.Element {
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [message, setMessage] = useState<string>('');
 
   const sweep = useCallback(async (): Promise<void> => {
-    setSweepPhase('sending');
+    setPhase('sending');
     setMessage('');
     try {
       const response = await fetch(ORPHANS_PATH, {
@@ -145,7 +305,7 @@ export function RestartControl(): JSX.Element {
       });
       const payload = await readPayload(response);
       if (!response.ok) {
-        setSweepPhase('error');
+        setPhase('error');
         setMessage(
           response.status === 404
             ? '找不到清扫路由 —— @oblivion/brand 未装载？清扫由它提供。'
@@ -153,11 +313,10 @@ export function RestartControl(): JSX.Element {
         );
         return;
       }
-      // 成功就回到 idle：这个按钮可以反复按（现场可能连续踩第二次）。
-      setSweepPhase('idle');
+      setPhase('idle');
       setMessage(describeSweep(payload, '清理完成。'));
     } catch (error) {
-      setSweepPhase('error');
+      setPhase('error');
       setMessage(error instanceof Error ? error.message : String(error));
     }
   }, []);
@@ -172,38 +331,19 @@ export function RestartControl(): JSX.Element {
           cursor: phase === 'sending' ? 'default' : 'pointer',
         }}
         disabled={phase === 'sending'}
+        title="结束 web-login 遗留的无头 Edge 传输进程（它们占着 transport-profile 目录，会让账号校验全部报错）。不重启 DSH。"
         onClick={() => {
           if (phase === 'idle') {
             setPhase('confirming');
-            setMessage('重启会强制结束当前 DSH 进程：正在跑的会话与任务会中断。');
-            return;
-          }
-          void restart();
-        }}
-      >
-        {BTN[phase] ?? '重启 DSH'}
-      </button>
-      <button
-        type="button"
-        style={{
-          ...BUTTON_STYLE,
-          color: sweepPhase === 'error' ? '#d9534f' : 'inherit',
-          cursor: sweepPhase === 'sending' ? 'default' : 'pointer',
-        }}
-        disabled={sweepPhase === 'sending'}
-        title="结束 web-login 遗留的无头 Edge 传输进程（它们占着 transport-profile 目录，会让账号校验全部报错）。不重启 DSH。"
-        onClick={() => {
-          if (sweepPhase === 'idle') {
-            setSweepPhase('confirming');
             setMessage('只结束 web-login 遗留的传输进程，不重启 DSH；正在用的传输进程不受影响。');
             return;
           }
           void sweep();
         }}
       >
-        {SWEEP_BTN[sweepPhase] ?? '清理孤儿进程'}
+        {SWEEP_BTN[phase] ?? '清理孤儿进程'}
       </button>
-      {message ? <span style={{ fontSize: 11, opacity: 0.75 }}>{message}</span> : null}
+      {message ? <span style={MSG_STYLE}>{message}</span> : null}
     </span>
   );
 }

@@ -22,7 +22,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { RestartControl } from './RestartControl.js';
+import { OrphanControl, RestartControl } from './RestartControl.js';
+import { PluginUpdates } from './PluginUpdates.js';
 import { ScoreChart } from './ScoreChart.js';
 import { buildScoreCurve, curveCaption, thresholdOf } from './chart.js';
 import type { DecisionStats } from '../snapshot.js';
@@ -308,9 +309,11 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
             刷新
           </button>
         </div>
-        {/* 重启入口：复用 @oblivion/brand 的 /obl-brand/restart（机制只有一份） */}
-        <div style={{ ...S.row, marginTop: 6 }}>
+        {/* 三个宿主动作一行：重启 → 检查更新 → 清理孤儿 */}
+        <div style={{ ...S.row, marginTop: 6, justifyContent: 'flex-start', gap: 8 }}>
           <RestartControl />
+          <PluginUpdates />
+          <OrphanControl />
         </div>
 
         <div style={S.kpi}>

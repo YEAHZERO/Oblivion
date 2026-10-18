@@ -63,20 +63,28 @@ core v0.1.6 · 面板 v0.0.14 · 刷新于 刚刚            [刷新]
   另有**两个宿主动作按钮**（见下），它们不属于数据面，走 `@oblivion/brand` 的路由。
 - 点笔记用 side bar 自己的 `onOpenFile`，所以走的还是它的编辑器与预览。
 
-### 两个宿主动作（`RestartControl`）
+### 三个宿主动作（一行，顺序固定）
+
+面板底部现在是**一行三按钮**（`flex-start` gap 8）：
 
 | 按钮 | 路由 | 作用 |
 | --- | --- | --- |
 | 重启 DSH | `POST /obl-brand/restart` | 强制结束并重新拉起桌面端（服务端代码改动要靠它生效） |
+| 检查更新 | 弹窗内触发 | `GET /obl-brand/updates` 拿到清单 → 勾选 → `POST /obl-brand/updates/apply {names}` → 提示「重启 DSH 后生效」 |
 | 清理孤儿进程 | `POST /obl-brand/orphans` | **不重启**：结束 web-login 遗留的无头 Edge 传输进程 |
 
 「清理孤儿进程」解的是这个现场：web-login 的无头 Edge 传输进程在 DSH 被硬杀之后活了下来，
 继续占着 `~/.dsh/web-login/transport-profile`，于是下一次探活 `rmSync` 抛 EPERM，**几个账号全部校验失败**。
 按钮会显示「已清理 N 个孤儿进程（扫描 M 个进程，命中 K 个传输进程）」，没有孤儿时明说「没有发现」。
 判定与安全边界（只认 transport profile 命令行、`orphans` 模式只杀父进程已死的）全在 brand 的
-`src/orphans.ts`，面板这边只做按钮 + 文案 —— 机制只有一份。brand 未装/被停用时两条路由 404，会给出明确文案。
+`src/orphans.ts`，面板这边只做按钮 + 文案 —— 机制只有一份。brand 未装/被停用时三条路由都 404，会给出明确文案。
 
-### 设置页：**设置 → Oblivion 知识库**（0.0.17）
+「重启 DSH」的确认口径是**先问一次任务状态再决定**：点下后先 `GET /obl-brand/tasks`，
+`active: true` 才弹页面内复刻的原生确认「退出 DeepSeek Harness？当前正在运行的任务将会中断」；
+`active: false` 直接走重启，不弹确认（与托盘「退出」同一条纪律）。收到 202 后铺全屏遮罩
+并等两帧再 `window.close()` —— 真正的进程终止仍由 brand 的 helper/watcher 负责。
+
+### 设置页：**设置 → Oblivion 知识库**（0.0.17 / 0.0.18 继承）
 
 同一个插件的**第四个注册**：官方 `settings.section` 座位（`id: oblivion-knowledge`，`order: 47` ——
 品牌 45 → 键盘导航 46 → 知识库 47）。面板那一列是**只读观测**，配置改在设置里，
@@ -219,10 +227,11 @@ Invoke-WebRequest 'http://127.0.0.1:19387/oblivion-panel/status' -UseBasicParsin
 | `pnpm run build` | ✅ `lib/index.js` + `lib/testkit.js` + `lib/client.js` |
 | `pnpm run typecheck` | ✅ 0 错误（strict） |
 | `pnpm run test` | ✅ **34 → 44/44**（快照装配 / 坏行容忍 / 空态回退 / 注册三态 / 展示层纯函数 / 知识库合栏 / **文档下方三段** / 判定曲线 / **设置分节：表单 → 补丁**） |
-| `pnpm run selfcheck` | ✅ **15 → 18/18**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放、合栏、**三段**、曲线、**设置分节的跨包契约**） |
+| `pnpm run selfcheck` | ✅ **15 → 18/18**（路由真跑返回 JSON、非 GET 405、webServer 缺席不抛错、disposer 随 effect 释放、合栏、**三段**、曲线、**设置分节的跨包契约**、三按钮渲染、PluginUpdates fetch） |
 | `dshx check` | ✅ manifest / export / boot-marker / client-platform（**无 default export**） |
 | `pnpm run verify:dsh`（根） | ✅ 契约 **6 → 8/8**（host / `webServer` / `npmPkg dsh-better-sidebar` / `clientPkg dsh-client-ui-settings` / `__ModuleLoader__` / `sidebar.footer.action` / **`settings.section`** / mount dependencies） |
 | **设置页真机验收（0.0.17）** | ✅ **14/14**（2026-10-17，完全重启 DSH 后）：座位**真挂载**（`panel-client-diag.json` 的 `where=settings-section` / `id=oblivion-knowledge` / `order=47`）/ 分节内 GET 200 `version=0.2.17` / provider 清单含 `agnes`·`agnes-api` / 「打开会用哪条路」`host-default → agnes-api/agnes-3.0-flash` / `pending=[]` 且 `values=[]` / **`settings.json` 仍不存在**（只读面没碰配置层） |
+| **三按钮 + PluginUpdates 真机验收（0.0.18）** | ✅ 2026-10-18 复现 v2.1 日志；`GET /obl-brand/updates` 200 / `items=[dsh-creator-mode-plus 0.3.12→0.3.13]`；`GET /obl-brand/tasks` 200 `{ok:true, active:true}`（本轮对话为活动任务，重启会弹确认） |
 | Node 半边真实装载 | ✅ **已验证**：路由 `HTTP 200` + `%TEMP%\oblivion-panel\host-mount.json` |
 | 浏览器半边渲染 | ✅ **已验证**（左栏入口 → 右侧 Oblivion 页；合栏 / 判定曲线 / **设置分节四组卡片与两个下拉框**均由所有者目视复核） |
 

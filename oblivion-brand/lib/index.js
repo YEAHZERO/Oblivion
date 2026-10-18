@@ -1,11 +1,11 @@
-// src/index.ts
-import { spawn as spawn2 } from "node:child_process";
+// oblivion-brand/src/index.ts
+import { spawn as spawn2, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir as homedir3, tmpdir as tmpdir2 } from "node:os";
-import { join as join4 } from "node:path";
+import { basename as basename2, dirname, join as join4 } from "node:path";
 
-// src/orphans.ts
+// oblivion-brand/src/orphans.ts
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -255,18 +255,21 @@ function describeSweep(report) {
   return `${cleaned}\uFF08\u626B\u63CF ${String(report.scanned)} \u4E2A\u8FDB\u7A0B\uFF0C\u547D\u4E2D ${String(report.matched)} \u4E2A\u4F20\u8F93\u8FDB\u7A0B${failed}\uFF09`;
 }
 
-// src/paths.ts
+// oblivion-brand/src/paths.ts
 var RESTART_PATH = "/obl-brand/restart";
+var TASKS_PATH = "/obl-brand/tasks";
 var PLUGINS_PATH = "/obl-brand/plugins";
+var UPDATES_PATH = "/obl-brand/updates";
+var UPDATES_APPLY_PATH = "/obl-brand/updates/apply";
 var ORPHANS_PATH = "/obl-brand/orphans";
 var SESSION_MESSAGE_PATH = "/obl-brand/session/message";
 var SESSION_TAIL_PATH = "/obl-brand/session/tail";
 
-// src/profile-plugins.ts
+// oblivion-brand/src/profile-plugins.ts
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join as join2, resolve } from "node:path";
 
-// src/plugin-list.ts
+// oblivion-brand/src/plugin-list.ts
 var SAFE_ARG = /^[A-Za-z0-9@._/+^~-]+$/;
 function quoteArg(value) {
   if (value !== "" && SAFE_ARG.test(value)) return value;
@@ -336,7 +339,7 @@ function normalizePluginList(raw) {
   };
 }
 
-// src/profile-plugins.ts
+// oblivion-brand/src/profile-plugins.ts
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -476,7 +479,7 @@ function readInstalledPlugins(location, at = Date.now()) {
   };
 }
 
-// src/session-tail.ts
+// oblivion-brand/src/session-tail.ts
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join3 } from "node:path";
@@ -619,7 +622,7 @@ function readSessionTail(sessionsRoot, sessionId, limit, windowBytes = TAIL_WIND
   };
 }
 
-// src/session-inject.ts
+// oblivion-brand/src/session-inject.ts
 var SESSION_INJECT_ENV = "OBLIVION_BRAND_SESSION_INJECT";
 var MAX_SESSION_MESSAGE_CHARS = 2e4;
 var MAX_SESSION_MESSAGE_BYTES = 256 * 1024;
@@ -696,7 +699,7 @@ function httpStatusForPromptFailure(code) {
   return 502;
 }
 
-// src/index.ts
+// oblivion-brand/src/index.ts
 var SCRIPT_PATH = join4(tmpdir2(), "obl-brand-restart.ps1");
 var LOG_PATH = join4(tmpdir2(), "obl-brand-restart.log");
 var MARKET_REGISTRY_ENV = "DSHM_NPM_MIRROR";
@@ -823,6 +826,30 @@ try {
     exit 0
   }
 
+  # Arm the relauncher BEFORE anything slow or destructive.
+  #
+  # 2026-10-18 order change: the old order was sweep -> arm -> kill. If the host or
+  # the app was ended by another path in between (user closed it, tray quit, crash),
+  # the helper died with the job object and the relauncher was never armed -- the
+  # app closed and never came back (user had to reopen it by hand).
+  # Now the relauncher is armed first (a WMI-created cmd lives outside the job),
+  # then the sweep runs, then the kill lands.
+  #
+  # Measured: this helper dies together with the Electron main process (they share
+  # a job object), so an in-process "stop, wait, Start-Process" never reaches its
+  # last step. A process created through WMI has the WMI provider host as its
+  # parent, so it is OUTSIDE that job and survives. It must be cmd.exe, not
+  # PowerShell: Windows PowerShell 5.1 needs a console, and a WMI-created process
+  # has none. Win32_ProcessStartup with ShowWindow = 0 hides the console.
+  try {
+    $startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
+    $startup.ShowWindow = 0
+    $created = ([wmiclass]'Win32_Process').Create(('cmd.exe /c "{0}"' -f $batPath), (Split-Path -Parent $batPath), $startup)
+    Write-Log ("relauncher armed via WMI: returnValue={0} pid={1}" -f $created.ReturnValue, $created.ProcessId)
+  } catch {
+    Write-Log ("relauncher arm failed: {0}" -f $_)
+  }
+
   # -------------------------------------------------------------------- orphan cleanup
   # Sweep EVERY web-login transport process before the app goes down.
   #
@@ -836,7 +863,7 @@ try {
   # The heuristic itself lives in the shared script (obl-brand-orphans.ps1,
   # written by the plugin next to this one) so there is exactly ONE
   # implementation of it. That script must not call exit: it runs inside THIS
-  # session, and exit would end the helper before the relauncher is armed.
+  # session.
   if ($SweepScript -ne '' -and $ProfileDir -ne '' -and (Test-Path -LiteralPath $SweepScript -PathType Leaf)) {
     try {
       & $SweepScript -Mode all -ProfileDir $ProfileDir -LogPath $LogPath | Out-Null
@@ -851,31 +878,6 @@ try {
     Write-Log 'transport sweep: script missing, skipped'
   }
 
-  # Arm the relauncher BEFORE killing anything.
-  #
-  # Measured: this helper dies together with the Electron main process (they share
-  # a job object), so an in-process "stop, wait, Start-Process" never reaches its
-  # last step -- the log ended at "stopped pid=..." and the app stayed closed until
-  # the user reopened it by hand.
-  #
-  # A process created through WMI has the WMI provider host as its parent, so it is
-  # OUTSIDE that job and survives. It must be cmd.exe, not PowerShell: Windows
-  # PowerShell 5.1 needs a console, and a WMI-created process has none -- it exits 0
-  # without running a single line (same root cause as the detached trap). wscript is
-  # no good either: a GUI-subsystem host does not start under WMI at all.
-  #
-  # Win32_ProcessStartup with ShowWindow = 0 hides the console that cmd would
-  # otherwise flash on screen. It has to go through the WMI v1 [wmiclass] call --
-  # Invoke-CimMethod cannot infer a CimType for the embedded startup instance.
-  try {
-    $startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
-    $startup.ShowWindow = 0
-    $created = ([wmiclass]'Win32_Process').Create(('cmd.exe /c "{0}"' -f $batPath), (Split-Path -Parent $batPath), $startup)
-    Write-Log ("relauncher armed via WMI: returnValue={0} pid={1}" -f $created.ReturnValue, $created.ProcessId)
-  } catch {
-    Write-Log ("relauncher arm failed: {0}" -f $_)
-  }
-
   # Let the HTTP 202 reach the browser first, otherwise the page drops the response.
   Start-Sleep -Milliseconds 700
 
@@ -886,6 +888,118 @@ try {
   exit 1
 }
 `;
+var WATCH_PATH = join4(tmpdir2(), "obl-brand-watch-restart.cmd");
+var WATCH_LOCK_PATH = join4(tmpdir2(), "obl-brand-watch-restart.lock");
+var ARM_WATCH_PATH = join4(tmpdir2(), "obl-brand-arm-watch.ps1");
+var WATCH_CMD = String.raw`@echo off
+setlocal
+set "APP={APP}"
+set "IMG={IMG}"
+set "LOG={LOG}"
+set "LOCK={LOCK}"
+if exist "%LOCK%" exit /b 0
+>>"%LOCK%" echo.
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher start
+set /a N=0
+:wait
+tasklist /FI "IMAGENAME eq %IMG%" 2>nul | find /I "%IMG%" >nul
+if errorlevel 1 goto relaunch
+set /a N+=1
+if %N% GEQ 200 goto expired
+ping -n 1 -w 100 192.0.2.1 >nul
+goto wait
+:expired
+del "%LOCK%" >nul 2>&1
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher expired: app still running, no relaunch
+exit /b 0
+:relaunch
+del "%LOCK%" >nul 2>&1
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher relaunch
+start "" "%APP%"
+set /a P=0
+:probe
+curl -s -o NUL -m 2 http://127.0.0.1:42081/ >nul 2>&1
+if not errorlevel 1 goto ready
+set /a P+=1
+if %P% GEQ 120 goto probe_timeout
+ping -n 1 -w 250 192.0.2.1 >nul
+goto probe
+:ready
+set "PIDFILE=%TEMP%\obl-brand-host.pid.tmp"
+netstat -ano | findstr ":42081" | findstr LISTENING > "%PIDFILE%"
+set "HOSTPID="
+for /f "usebackq tokens=5" %%p in ("%PIDFILE%") do set "HOSTPID=%%p"
+del "%PIDFILE%" >nul 2>&1
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher ready: bridge 42081 up (host pid=%HOSTPID%)
+set "WEBPORT="
+set "PORTFILE=%TEMP%\obl-brand-host.ports.tmp"
+if not "%HOSTPID%"=="" (
+  netstat -ano | findstr LISTENING | findstr "%HOSTPID%" > "%PORTFILE%"
+  >>"%LOG%" echo %DATE:~0,10% %TIME% watcher host listening ports:
+  type "%PORTFILE%" >> "%LOG%" 2>&1
+  for /f "usebackq tokens=2" %%q in ("%PORTFILE%") do call :webprobe %%q
+  del "%PORTFILE%" >nul 2>&1
+)
+if not "%WEBPORT%"=="" (
+  >>"%LOG%" echo %DATE:~0,10% %TIME% watcher web ready: http://127.0.0.1:%WEBPORT%/
+) else (
+  >>"%LOG%" echo %DATE:~0,10% %TIME% watcher web not detected
+)
+exit /b 0
+
+:webprobe
+rem %~1 = host:port (e.g. 127.0.0.1:30909); skip bridge 42081, take the first HTTP-answering port.
+for /f "tokens=1,2 delims=:" %%a in ("%~1") do set "PCAND=%%b"
+if "%PCAND%"=="" goto :eof
+if "%PCAND%"=="42081" goto :eof
+if not "%WEBPORT%"=="" goto :eof
+curl -s -o NUL -m 2 http://127.0.0.1:%PCAND%/ >nul 2>&1
+if not errorlevel 1 set "WEBPORT=%PCAND%"
+goto :eof
+
+:probe_timeout
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher ready timeout: bridge 42081 not up after 30s
+exit /b 0
+`;
+var ARM_WATCH_SCRIPT = String.raw`param(
+  [Parameter(Mandatory = $true)][string]$Cmd
+)
+$ErrorActionPreference = 'Stop'
+# 先清掉还活着的旧守夜人（连点/重复点击时避免两个 watcher 同时拉起）。
+try {
+  Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" |
+    Where-Object { $_.CommandLine -like ('*' + $Cmd + '*') } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch { }
+$startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
+$startup.ShowWindow = 0
+$created = ([wmiclass]'Win32_Process').Create(('cmd.exe /c "{0}"' -f $Cmd), (Split-Path -Parent $Cmd), $startup)
+if ($created.ReturnValue -ne 0) { exit 1 }
+`;
+function armWatcher(exePath) {
+  try {
+    const image = basename2(exePath);
+    const cmd = WATCH_CMD.replace("{APP}", exePath).replace("{IMG}", image).replace("{LOG}", LOG_PATH).replace("{LOCK}", WATCH_LOCK_PATH);
+    writeFileSync2(WATCH_PATH, cmd, "ascii");
+    writeFileSync2(ARM_WATCH_PATH, `\uFEFF${ARM_WATCH_SCRIPT}`, "utf8");
+    const shell = resolvePowerShell();
+    if (shell === null) {
+      appendLog("watcher arm: no PowerShell");
+      return false;
+    }
+    const run = spawnSync(
+      shell,
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ARM_WATCH_PATH, "-Cmd", WATCH_PATH],
+      { encoding: "utf8", timeout: 15e3 }
+    );
+    const detail = String(run.stderr ?? "").trim().slice(0, 200);
+    appendLog(`watcher arm: exit=${String(run.status)} stderr=${detail}`);
+    return run.status === 0;
+  } catch (error) {
+    appendLog(`watcher arm failed: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
 function isTrustedCaller(request) {
   const origin = request.headers["origin"];
   if (origin === void 0 || origin === "") return true;
@@ -1010,6 +1124,23 @@ function installRestartRoute(ctx, warn) {
           response.end(JSON.stringify({ ok: false, error: "untrusted origin" }));
           return;
         }
+        try {
+          unlinkSync(WATCH_LOCK_PATH);
+        } catch {
+        }
+        if (armWatcher(process.execPath)) {
+          response.writeHead(202, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: true, mode: "watcher", logPath: WATCH_PATH }));
+          const parent = process.ppid;
+          setTimeout(() => {
+            try {
+              process.kill(parent, "SIGTERM");
+            } catch (error) {
+              appendLog(`kill parent failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }, 900);
+          return;
+        }
         const shell = resolvePowerShell();
         const sweep = shell === null ? { ok: false, error: "no PowerShell on this platform" } : await sweepTransportOrphans({ shell, mode: "orphans" });
         if (sweep.ok) {
@@ -1029,6 +1160,57 @@ function installRestartRoute(ctx, warn) {
     });
     ctx.effect?.(() => dispose, "oblivion-brand: restart route");
     ctx.logger?.("@oblivion/brand").info(`\u91CD\u542F\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${RESTART_PATH}`);
+  });
+}
+function hasActiveTasks(agents, jobs) {
+  const agentList = agents?.list?.() ?? [];
+  const running = agentList.some((agent) => agent["status"] === "running");
+  if (running) return true;
+  const jobList = jobs?.list;
+  if (jobList === void 0) return false;
+  const ids = [void 0, ...agentList.map((agent) => agent["id"])];
+  return ids.some(
+    (id) => (jobList(id) ?? []).some((job) => job.status === "running" || job.status === "stopping")
+  );
+}
+function installTasksRoute(ctx, warn) {
+  ctx.inject?.(["webServer"], (scope) => {
+    const server = scope.webServer;
+    if (server === void 0 || typeof server.register !== "function") {
+      warn("webServer \u4E0D\u53EF\u7528\uFF0C\u4EFB\u52A1\u67E5\u8BE2\u8DEF\u7531\u672A\u6302\u8F7D");
+      return;
+    }
+    const dispose = server.register({
+      kind: "exact",
+      path: TASKS_PATH,
+      handler: async (request, response) => {
+        const json = (status, body) => {
+          response.writeHead(status, { "content-type": "application/json" });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== "GET") {
+          json(405, { ok: false, error: "method not allowed" });
+          return;
+        }
+        const agents = ctx.get?.("agents");
+        const jobs = ctx.get?.("jobs");
+        if (agents === void 0 || jobs === void 0) {
+          json(503, { ok: false, active: false, error: "task services unavailable" });
+          return;
+        }
+        try {
+          json(200, { ok: true, active: hasActiveTasks(agents, jobs) });
+        } catch (error) {
+          json(500, {
+            ok: false,
+            active: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    });
+    ctx.effect?.(() => dispose, "oblivion-brand: tasks route");
+    ctx.logger?.("@oblivion/brand").info(`\u4EFB\u52A1\u67E5\u8BE2\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1AGET ${TASKS_PATH}`);
   });
 }
 function installOrphanRoute(ctx, warn) {
@@ -1110,6 +1292,217 @@ function installPluginsRoute(ctx, warn) {
     });
     ctx.effect?.(() => dispose, "oblivion-brand: plugins route");
     ctx.logger?.("@oblivion/brand").info(`\u5DF2\u5B89\u88C5\u63D2\u4EF6\u6E05\u5355\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1AGET ${PLUGINS_PATH}`);
+  });
+}
+function resolvePnpmCjs() {
+  const candidates = [
+    join4(dirname(process.execPath), "resources", "runtime", "primary-runtime", "dependencies", "pnpm", "bin", "pnpm.cjs"),
+    join4(process.env["DSH_HOME"] ?? join4(homedir3(), ".dsh"), "dsh-runtimes", "dsh-primary-runtime", "dependencies", "pnpm", "bin", "pnpm.cjs")
+  ];
+  return candidates.find((candidate) => existsSync2(candidate)) ?? null;
+}
+function compareVersions(a, b) {
+  const pa = a.split(/[.+-]/);
+  const pb = b.split(/[.+-]/);
+  for (let i = 0; i < 3; i += 1) {
+    const x = Number.parseInt(pa[i] ?? "0", 10) || 0;
+    const y = Number.parseInt(pb[i] ?? "0", 10) || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+function readJsonFile(file) {
+  try {
+    return JSON.parse(readFileSync2(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function installedVersionOf(profileDir, name) {
+  const parsed = readJsonFile(join4(profileDir, "node_modules", ...name.split("/"), "package.json"));
+  const version = parsed?.["version"];
+  return typeof version === "string" ? version : null;
+}
+function isManagedDependency(name, spec) {
+  if (typeof spec !== "string") return false;
+  if (/^(link:|file:|workspace:|npm:)/.test(spec)) return false;
+  if (name.startsWith("@oblivion/") || name.startsWith("@deepseek-ai/")) return false;
+  return true;
+}
+async function fetchLatestVersion(name) {
+  try {
+    const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`, {
+      signal: AbortSignal.timeout(8e3)
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return typeof body.version === "string" ? body.version : null;
+  } catch {
+    return null;
+  }
+}
+async function scanUpdates(profileDir) {
+  const pkg = readJsonFile(join4(profileDir, "package.json"));
+  const deps = pkg?.["dependencies"] ?? {};
+  const items = [];
+  await Promise.all(
+    Object.entries(deps).map(async ([name, spec]) => {
+      if (!isManagedDependency(name, spec)) return;
+      const current = installedVersionOf(profileDir, name);
+      if (current === null) return;
+      const latest = await fetchLatestVersion(name);
+      if (latest === null) return;
+      if (compareVersions(current, latest) < 0) items.push({ name, current, latest });
+    })
+  );
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  return items;
+}
+function runPnpmInstall(pnpm, cwd) {
+  return new Promise((resolve2) => {
+    const child = spawn2(
+      process.execPath,
+      ["--expose-internals", pnpm, "install", "--no-frozen-lockfile", "--config.minimumReleaseAge=0"],
+      { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, windowsHide: true }
+    );
+    let tail = "";
+    const push = (chunk) => {
+      tail = (tail + chunk.toString("utf8")).slice(-4e3);
+    };
+    child.stdout?.on("data", push);
+    child.stderr?.on("data", push);
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve2({ ok: false, tail, error: "pnpm install \u8D85\u65F6\uFF08180s\uFF09" });
+    }, 18e4);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolve2({ ok: false, tail, error: error.message });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve2({ ok: code === 0, tail, ...code === 0 ? {} : { error: `pnpm install exit ${String(code)}` } });
+    });
+  });
+}
+async function applyUpdates(profileDir, names) {
+  const pnpm = resolvePnpmCjs();
+  if (pnpm === null) return { ok: false, changed: [], installed: [], outputTail: "", error: "\u627E\u4E0D\u5230\u5185\u7F6E pnpm" };
+  const candidates = await scanUpdates(profileDir);
+  const selected = candidates.filter((item) => names.includes(item.name));
+  if (selected.length === 0) return { ok: false, changed: [], installed: [], outputTail: "", error: "\u6CA1\u6709\u53EF\u66F4\u65B0\u7684\u9879" };
+  const pkgPath = join4(profileDir, "package.json");
+  const raw = readFileSync2(pkgPath, "utf8");
+  const backup = `${pkgPath}.bak-before-updates-${String(Date.now())}`;
+  writeFileSync2(backup, raw, "utf8");
+  try {
+    const pkg = JSON.parse(raw);
+    const deps = pkg.dependencies ?? {};
+    for (const item of selected) deps[item.name] = item.latest;
+    pkg.dependencies = deps;
+    writeFileSync2(pkgPath, `${JSON.stringify(pkg, null, 2)}
+`, "utf8");
+    const result = await runPnpmInstall(pnpm, profileDir);
+    const installed = selected.map((item) => ({ name: item.name, version: installedVersionOf(profileDir, item.name) }));
+    if (!result.ok) return { ok: false, changed: selected, installed, outputTail: result.tail, error: result.error };
+    return { ok: true, changed: selected, installed, outputTail: result.tail };
+  } catch (error) {
+    try {
+      writeFileSync2(pkgPath, raw, "utf8");
+    } catch {
+    }
+    return {
+      ok: false,
+      changed: [],
+      installed: [],
+      outputTail: "",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+function installUpdatesRoutes(ctx, warn) {
+  ctx.inject?.(["webServer"], (scope) => {
+    try {
+      const server = scope.webServer;
+      if (server === void 0 || typeof server.register !== "function") {
+        warn("webServer \u4E0D\u53EF\u7528\uFF0C\u66F4\u65B0\u63D2\u4EF6\u8DEF\u7531\u672A\u6302\u8F7D");
+        return;
+      }
+      const location = resolveProfile(process.env, homedir3());
+      if (location === null) {
+        warn("DSH_PROFILE_DIR \u4E0E DSH_HOME \u90FD\u6CA1\u6709\uFF0C\u66F4\u65B0\u63D2\u4EF6\u8DEF\u7531\u672A\u6302\u8F7D");
+        return;
+      }
+      const jsonOf = (response) => {
+        return (status, body) => {
+          response.writeHead(status, { "content-type": "application/json" });
+          response.end(JSON.stringify(body));
+        };
+      };
+      const check = server.register({
+        kind: "exact",
+        path: UPDATES_PATH,
+        handler: async (request, response) => {
+          const json = jsonOf(response);
+          if (request.method !== "GET") {
+            json(405, { ok: false, error: "method not allowed" });
+            return;
+          }
+          if (!isTrustedCaller(request)) {
+            json(403, { ok: false, error: "untrusted origin" });
+            return;
+          }
+          try {
+            json(200, { ok: true, items: await scanUpdates(location.dir) });
+          } catch (error) {
+            json(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+          }
+        }
+      });
+      const apply2 = server.register({
+        kind: "exact",
+        path: UPDATES_APPLY_PATH,
+        handler: async (request, response) => {
+          const json = jsonOf(response);
+          if (request.method !== "POST") {
+            json(405, { ok: false, error: "method not allowed" });
+            return;
+          }
+          if (!isTrustedCaller(request)) {
+            json(403, { ok: false, error: "untrusted origin" });
+            return;
+          }
+          let names = [];
+          try {
+            const parsed = JSON.parse(await readRequestBody(request));
+            if (Array.isArray(parsed.names)) names = parsed.names.filter((n) => typeof n === "string");
+          } catch {
+            json(400, { ok: false, error: "bad request body" });
+            return;
+          }
+          try {
+            const result = await applyUpdates(location.dir, names);
+            json(result.ok ? 200 : 500, result);
+          } catch (error) {
+            json(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+          }
+        }
+      });
+      ctx.effect?.(
+        () => () => {
+          check();
+          apply2();
+        },
+        "oblivion-brand: updates routes"
+      );
+      ctx.logger?.("@oblivion/brand").info(`\u66F4\u65B0\u63D2\u4EF6\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1AGET ${UPDATES_PATH} / POST ${UPDATES_APPLY_PATH}`);
+      appendLog(`updates routes mounted: ${UPDATES_PATH} / ${UPDATES_APPLY_PATH} profile=${location.dir}`);
+    } catch (error) {
+      appendLog(
+        `updates routes mount FAILED: ${error instanceof Error ? error.stack ?? error.message : String(error)}`
+      );
+      throw error;
+    }
   });
 }
 function installSessionMessageRoute(ctx, warn) {
@@ -1316,8 +1709,10 @@ function apply(ctx) {
   installMarketRegistryOverride(ctx);
   sweepOnMount(logger);
   installRestartRoute(ctx, warn);
+  installTasksRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
+  installUpdatesRoutes(ctx, warn);
   try {
     installSessionMessageRoute(ctx, warn);
   } catch (error) {
@@ -1350,6 +1745,10 @@ export {
   SESSION_MESSAGE_PATH,
   SESSION_TAIL_PATH,
   TAIL_WINDOW_BYTES,
+  TASKS_PATH,
+  UPDATES_APPLY_PATH,
+  UPDATES_PATH,
+  WATCH_CMD,
   apply,
   decodeFrames,
   describePromptFailure,

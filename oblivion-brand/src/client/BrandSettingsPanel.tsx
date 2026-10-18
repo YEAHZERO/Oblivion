@@ -103,6 +103,8 @@ export function createBrandSettingsPanel(
     const [error, setError] = useState<string | null>(null);
     const [restartState, setRestartState] = useState<'idle' | 'confirming' | 'sending'>('idle');
     const [restartMessage, setRestartMessage] = useState<string | null>(null);
+    /** 已受理重启：铺全屏遮罩并请求关窗，让页面"点完即消失"而不是等强杀落地。 */
+    const [closing, setClosing] = useState(false);
     const fileRef = useRef<HTMLInputElement | null>(null);
 
     const nameDirty = draft !== settings.name;
@@ -112,6 +114,28 @@ export function createBrandSettingsPanel(
     const apply = (patch: Parameters<typeof updateBrandSettings>[0]): void => {
       const failure = updateBrandSettings(patch);
       setError(failure);
+    };
+
+    /**
+     * 「点完即消失」：先铺全屏遮罩，再让主窗口走 close（DSH 主窗口的 close 会被
+     * preventDefault 并隐藏到托盘 —— 首次关闭的确认标记已存在时是立即隐藏）。
+     *
+     * 为什么不是等 helper 杀进程：helper 从 PowerShell 启动 → ARM relauncher →
+     * 400ms 后才 Stop-Process，页面会干等 1-2 秒。这里先把 UI 收掉，体感与
+     * 托盘「退出」一致；真正的进程终止仍由 helper 完成。
+     */
+    const hideUiForRestart = (): void => {
+      setClosing(true);
+      // 先让遮罩渲染出来（两帧），再请求关窗；关窗失败时遮罩兜底。
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            window.close();
+          } catch {
+            /* 关窗被拦时保持遮罩，进程仍会被 helper 终止 */
+          }
+        });
+      });
     };
 
     /**
@@ -138,12 +162,14 @@ export function createBrandSettingsPanel(
           return;
         }
         setRestartMessage(`已受理，应用即将重启${body.logPath ? `（日志：${body.logPath}）` : ''}`);
+        hideUiForRestart();
       } catch (cause) {
         // 应用已被停掉时 fetch 会直接失败，这属于正常路径而非错误。
         setRestartMessage(
           `连接已断开，应用应正在重启：${cause instanceof Error ? cause.message : String(cause)}`,
         );
         setRestartState('idle');
+        hideUiForRestart();
       }
     };
 
@@ -175,6 +201,26 @@ export function createBrandSettingsPanel(
     };
 
     return (
+      <>
+        {closing ? (
+          <div
+            data-obl-brand-restart-cover=""
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 2147483000,
+              background: '#111',
+              color: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '14px',
+              letterSpacing: '0.02em',
+            }}
+          >
+            正在重启 DSH…
+          </div>
+        ) : null}
       <div
         data-obl-brand-settings=""
         style={{
@@ -433,6 +479,7 @@ export function createBrandSettingsPanel(
 
         {error !== null ? <p style={{ ...hintStyle, color: DANGER }}>{error}</p> : null}
       </div>
+      </>
     );
   };
 }

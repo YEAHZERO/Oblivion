@@ -1,9 +1,9 @@
-// src/index.ts
+// oblivion-panel/src/index.ts
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join as join2, resolve } from "node:path";
 
-// src/snapshot.ts
+// oblivion-panel/src/snapshot.ts
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 var MAX_JSON_BYTES = 256 * 1024;
@@ -303,7 +303,7 @@ async function buildSnapshot(options) {
   };
 }
 
-// src/index.ts
+// oblivion-panel/src/index.ts
 var name = "@oblivion/panel";
 var inject = [];
 var VERSION = readVersion();

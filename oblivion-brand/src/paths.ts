@@ -9,8 +9,28 @@
 /** 重启 DSH 桌面端（POST，宿主派生游离 helper）。 */
 export const RESTART_PATH = '/obl-brand/restart';
 
+/**
+ * 当前是否有活动任务（GET，只读）。
+ *
+ * 与桌面端 `hasDesktopActiveTasks` 同口径：有 running 的 agent、排队的 inbox 消息、
+ * 或 running/stopping 的后台 job。供面板在重启前弹「任务将会中断」确认用。
+ */
+export const TASKS_PATH = '/obl-brand/tasks';
+
 /** 个人已安装插件清单（GET，只读；供设置面板列出并复制恢复命令）。 */
 export const PLUGINS_PATH = '/obl-brand/plugins';
+
+/**
+ * 检查插件更新（GET，只读）：读 profile 依赖 + 查 npm latest，返回可更新项。
+ * 跳过 link: / file: / @oblivion/* / @deepseek-ai/*（本机链接或宿主包）。
+ */
+export const UPDATES_PATH = '/obl-brand/updates';
+
+/**
+ * 应用插件更新（POST）：把选中项写进 profile package.json 并跑内置 pnpm install。
+ * 不改会话、不重启；重启由面板的「重启 DSH」按钮负责。
+ */
+export const UPDATES_APPLY_PATH = '/obl-brand/updates/apply';
 
 /**
  * 清理 web-login 遗留的孤儿 Chromium 进程（POST，**不重启**）。

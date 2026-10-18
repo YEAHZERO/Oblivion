@@ -12,6 +12,90 @@
 > 必须显式开关，位置参数写 `minor` / `major` 会被拒绝（exit 2）。`oblivion-brand` 于 v0.1.1 同步完成
 > （此前它仍写着旧映射 `feat → minor`）。
 
+## [未发布] — `@oblivion/brand` v0.1.8 + `@oblivion/core` v0.2.20：**重启链路 v2.1（守夜人）** —— 「关了不回来」的根因是 helper 与主进程在同一个 job 里 + 面板侧三条新路由（活动任务 / 检查更新 / 应用更新）
+
+面板上点「重启」曾出现最难解释的一种现场：**关了，但不回来**。原因是重启 helper（PowerShell）与
+Electron 主进程**在同一个作业对象里**：主进程一死，job 里剩下的进程被枚举结束，helper 还没跑到
+`Start-Process` 就已经没了。v2.1 换成「守夜人」：
+
+1. 面板 `POST /obl-brand/restart` → 删旧锁 → 写 `%TEMP%\obl-brand-watch-restart.cmd`；
+2. 经 **WMI** 拉起这个 cmd（**游离在 Electron 的 job 之外**，主进程怎么死都牵连不到它）——这一步就叫 **ARM**；
+3. 路由回 `202`，面板铺遮罩 + `window.close()`（窗口立即收进托盘，体感与托盘「退出」一致）；
+4. **900ms 后**宿主 `process.kill(ppid, 'SIGTERM')` 杀 Electron 主进程；
+5. watcher 用 `tasklist` 等镜像消失 → `start "" <exe>` 拉起 → `curl` 探 `42081` → `netstat` 反查宿主 pid →
+   列出它的监听口 → 逐口探活，取第一个 HTTP 应答口写成 `watcher web ready: http://127.0.0.1:<port>/`。
+
+**顺序是结论的一部分：先 ARM 再清扫/杀。** 反过来（先杀后 arm）在实测里就是「关了就回不来」——arm 与 app 共享 job。
+ARM 失败（无 PowerShell / WMI 不可用）仍回退到旧的 helper 路径，功能不会因此消失。
+
+四个坑都靠真机实验隔离出来，现在钉在 `WATCH_CMD` 的正文里并由自检守卫：
+
+| 坑 | 现象 | 修法 |
+| --- | --- | --- |
+| `for /f` 的「命令形式」在 **WMI 游离子进程**里整体空产出 | 连 `for /f ... in ('echo hello')` 都是空；`host pid=` 永远空、端口清单永远不打印 | 先 `netstat … > 文件`，再 `for /f "usebackq" … in ("文件")` —— **读文件形式正常** |
+| `%DATE%` 含中文星期（GBK 字节） | 按 UTF-8 读日志就是乱码 | 时间戳切成纯 ASCII：`%DATE:~0,10% %TIME%` |
+| web 口**每次启动都变**（19387→5903→16433→46419…） | 按固定端口探活永远等不到新宿主 | **只认镜像名**判「应用是否消失」，拉起后按固定锚点 `42081`（`@oblivion/http-bridge`）验活，再现场发现新 web 口 |
+| 陈旧守夜人 / 连点 | 以后每次宿主退出都被「重启」一次 | 锁文件 + **20s TTL**（应用 20s 没消失 → `watcher expired` 退出，不重拉） |
+
+**实测**（2026-10-18，装在本机 desktop profile）：3/3 全绿；宿主空窗约 **1.5s**；`ready` **9.9–12.7s**，
+其中约 8–10s 是冷启动；托盘退出不会被误拉起；事后无残留 watcher。今天这次是本会话开场前的复现
+（日志 `09:12:30 watcher start` → `09:12:42 watcher web ready: http://127.0.0.1:11186/`）。
+**限制照实说**：强杀会丢掉最后一点未落盘的增量；`app.quit()` 那条优雅链插件够不着（只有托盘退出走）。
+
+判「点完即消失」的那半在前端：`BrandSettingsPanel` 先铺全屏遮罩，再等**两帧**后 `window.close()`
+（主窗口的 close 会被 `preventDefault` 并隐藏到托盘），真正的进程终止仍由 watcher 负责。
+
+### 三条新路由
+
+- **`GET /obl-brand/tasks`（只读）** —— 面板重启前先问一次。口径是桌面端 `hasDesktopActiveTasks` 的**核心**部分：
+  有 `running` 的 agent，或 `running|stopping` 的后台 job。**2026-10-18 收窄**：不再把 `inbox.nextTurn/nextStep`
+  的积压算作「正在跑」—— 实测队列在 agent 空闲后仍会留一条消息，导致「没有任务也弹中断提醒」；
+  宁可漏一次提醒，也不要每次误报。服务缺失回 **503**，面板按「无法确认就不弹」处理。
+- **`GET /obl-brand/updates`（只读）** —— 读 profile `package.json` 的依赖 → 跳过
+  `link:` / `file:` / `workspace:` / `npm:`、`@oblivion/*`、`@deepseek-ai/*` → 查 `registry.npmjs.org/<pkg>/latest`，
+  回 `{ ok, items:[{ name, current, latest }] }`。首次约 **8s**（逐个查 npm）。
+- **`POST /obl-brand/updates/apply { names }`** —— 白名单校验 → 备份 `package.json.bak-before-updates-<ts>` →
+  写 latest → 用**与宿主同一个内置 pnpm**（`resources/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.cjs`，
+  经 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 跑）执行 `pnpm install --no-frozen-lockfile --config.minimumReleaseAge=0`
+  → **回读安装版本**（不信 pnpm 的退出码）→ 失败回滚 `package.json`。
+
+**这一轮刻意不做兼容预检**：不兼容的插件（`dsh-web-search-pro`、`@anweat/dsh-browser`，最新版仍是 `0.2.1`
+且 peers `<0.2.1-0`）更新后仍会被 DSH 0.2.1 的预检跳过，等作者发版 —— 面板如实提示，不假装能修。
+
+⚠️ **又一次同一类坑**：`server.register(...)` 返回的是 **dispose 函数**，`ctx.effect` 必须**返回**它；
+写成 `() => { check(); apply(); }` 会在挂载瞬间把路由自己注销掉 —— 现象正是「路由 404，但日志还打了 `mounted`」。
+自检里加了一条 fiber 语义断言把这条钉住。
+
+**`@oblivion/core` 0.2.20**：只在 `package.json` 补 `engines.dsh: ">=0.2.0-rc.2 <0.3.0"` —— DSH 0.2.1 的装载器
+规则是「**有 `engines.dsh` 就按它判、忽略 peers**」，没有这一行的 core 会被整包拒载（症状是认知层静默不见）。
+
+验证：`oblivion-brand` typecheck ✅ / 构建 ✅ / 自检 **21/21**（含 8 条路由断言、守夜人正文断言、effect disposer 断言）/ `check:version` ✅。
+
+## [未发布] — `@oblivion/panel` v0.0.18：**面板三按钮一行**（重启 / 检查更新 / 清理孤儿）+ 更新弹窗
+
+`panel-client-diag.json` 的 `where=settings-section` 之外，现在把三个宿主动作收拢到面板最下方**一行**：
+
+```
+[ 重启 DSH ]  [ 检查更新 ]  [ 清理孤儿进程 ]
+```
+
+**`RestartControl` 拆分**：原来的单组件拆成 `RestartControl`（重启 + 确认弹窗 + 遮罩秒关）和
+`OrphanControl`（清理孤儿进程），`Panel.tsx` 三按钮 `flex-start` gap 8。
+
+**重启确认口径**（对齐托盘退出的原生确认）：
+1. 点「重启 DSH」先 `GET /obl-brand/tasks`；
+2. `active: true` 才弹页面内复刻的原生弹窗「退出 DeepSeek Harness？当前正在运行的任务将会中断」（两个按钮：取消 / 退出）；
+3. `active: false` 直接发 `POST /obl-brand/restart`（不弹确认）；
+4. 收到 202 后铺遮罩 + `window.close()`（与 `BrandSettingsPanel` 同纪律）。
+
+**`PluginUpdates`**（新增组件）：
+- 点「检查更新」先 `GET /obl-brand/updates`，拿到可更新清单（`name / current / latest`）；
+- 弹窗里勾选想要更新的项目（默认全选），点「更新所选」→ `POST /obl-brand/updates/apply { names }`；
+- 路由回写提示「重启 DSH 后生效」；机制全在 brand，这里只做展示与触发（与「重启 / 清理孤儿」同一条纪律）。
+
+**验收**：`oblivion-panel` typecheck ✅ / 自检 **15 → 18**（三按钮 + PluginUpdates 的渲染与 fetch 断言）/
+构建 v0.0.18 / check:version ✅。
+
 ## [未发布] — `@oblivion/core` v0.2.19：**改名预览不再写 `raw: undefined`**（会挂宿主的无损 JSON 校验）
 
 `preview()` 的返回对象在「有建议」时写 `raw: full.length > 0 ? undefined : …` ——

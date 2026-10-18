@@ -40,11 +40,11 @@
  * 找不到就**拒绝重启**，绝不猜。
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   MOUNT_SWEEP_ENV,
   ORPHAN_SCRIPT_PATH,
@@ -54,7 +54,7 @@ import {
   sweepTransportOrphans,
   writeOrphanScript,
 } from './orphans.js';
-import { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH } from './paths.js';
+import { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH } from './paths.js';
 import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
 import { parseTailQuery, readSessionTail, resolveDshHome } from './session-tail.js';
 import {
@@ -77,7 +77,7 @@ import {
  * ESM，Node 里 import 不了）。宿主半边与浏览器半边共用 `paths.ts` / `plugin-list.ts`，
  * 所以这里导出的是同一份实现，不是副本。
  */
-export { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH };
+export { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH };
 export { layerLabel, normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
 export type { InstalledPlugin, PluginLayer, PluginListPayload } from './plugin-list.js';
 export { readInstalledPlugins, resolveProfile };
@@ -291,6 +291,30 @@ try {
     exit 0
   }
 
+  # Arm the relauncher BEFORE anything slow or destructive.
+  #
+  # 2026-10-18 order change: the old order was sweep -> arm -> kill. If the host or
+  # the app was ended by another path in between (user closed it, tray quit, crash),
+  # the helper died with the job object and the relauncher was never armed -- the
+  # app closed and never came back (user had to reopen it by hand).
+  # Now the relauncher is armed first (a WMI-created cmd lives outside the job),
+  # then the sweep runs, then the kill lands.
+  #
+  # Measured: this helper dies together with the Electron main process (they share
+  # a job object), so an in-process "stop, wait, Start-Process" never reaches its
+  # last step. A process created through WMI has the WMI provider host as its
+  # parent, so it is OUTSIDE that job and survives. It must be cmd.exe, not
+  # PowerShell: Windows PowerShell 5.1 needs a console, and a WMI-created process
+  # has none. Win32_ProcessStartup with ShowWindow = 0 hides the console.
+  try {
+    $startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
+    $startup.ShowWindow = 0
+    $created = ([wmiclass]'Win32_Process').Create(('cmd.exe /c "{0}"' -f $batPath), (Split-Path -Parent $batPath), $startup)
+    Write-Log ("relauncher armed via WMI: returnValue={0} pid={1}" -f $created.ReturnValue, $created.ProcessId)
+  } catch {
+    Write-Log ("relauncher arm failed: {0}" -f $_)
+  }
+
   # -------------------------------------------------------------------- orphan cleanup
   # Sweep EVERY web-login transport process before the app goes down.
   #
@@ -304,7 +328,7 @@ try {
   # The heuristic itself lives in the shared script (obl-brand-orphans.ps1,
   # written by the plugin next to this one) so there is exactly ONE
   # implementation of it. That script must not call exit: it runs inside THIS
-  # session, and exit would end the helper before the relauncher is armed.
+  # session.
   if ($SweepScript -ne '' -and $ProfileDir -ne '' -and (Test-Path -LiteralPath $SweepScript -PathType Leaf)) {
     try {
       & $SweepScript -Mode all -ProfileDir $ProfileDir -LogPath $LogPath | Out-Null
@@ -319,31 +343,6 @@ try {
     Write-Log 'transport sweep: script missing, skipped'
   }
 
-  # Arm the relauncher BEFORE killing anything.
-  #
-  # Measured: this helper dies together with the Electron main process (they share
-  # a job object), so an in-process "stop, wait, Start-Process" never reaches its
-  # last step -- the log ended at "stopped pid=..." and the app stayed closed until
-  # the user reopened it by hand.
-  #
-  # A process created through WMI has the WMI provider host as its parent, so it is
-  # OUTSIDE that job and survives. It must be cmd.exe, not PowerShell: Windows
-  # PowerShell 5.1 needs a console, and a WMI-created process has none -- it exits 0
-  # without running a single line (same root cause as the detached trap). wscript is
-  # no good either: a GUI-subsystem host does not start under WMI at all.
-  #
-  # Win32_ProcessStartup with ShowWindow = 0 hides the console that cmd would
-  # otherwise flash on screen. It has to go through the WMI v1 [wmiclass] call --
-  # Invoke-CimMethod cannot infer a CimType for the embedded startup instance.
-  try {
-    $startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
-    $startup.ShowWindow = 0
-    $created = ([wmiclass]'Win32_Process').Create(('cmd.exe /c "{0}"' -f $batPath), (Split-Path -Parent $batPath), $startup)
-    Write-Log ("relauncher armed via WMI: returnValue={0} pid={1}" -f $created.ReturnValue, $created.ProcessId)
-  } catch {
-    Write-Log ("relauncher arm failed: {0}" -f $_)
-  }
-
   # Let the HTTP 202 reach the browser first, otherwise the page drops the response.
   Start-Sleep -Milliseconds 700
 
@@ -354,6 +353,158 @@ try {
   exit 1
 }
 `;
+
+/** 快速重启的「守夜人」：等应用进程全部消失后重新拉起（2026-10-18）。 */
+const WATCH_PATH = join(tmpdir(), 'obl-brand-watch-restart.cmd');
+const WATCH_LOCK_PATH = join(tmpdir(), 'obl-brand-watch-restart.lock');
+const ARM_WATCH_PATH = join(tmpdir(), 'obl-brand-arm-watch.ps1');
+
+/**
+ * 守夜人批处理。
+ *
+ * 由 WMI 创建（游离在 Electron 的 job 之外），所以即使宿主与主进程一起被结束、
+ * 甚至用户在启动窗口里手动关了应用，它依然活着。
+ *
+ * 2026-10-18 改版：
+ *  - **只盯进程，不盯端口**：DSH 的 web 口每次启动都换（19387→5903→16433→46419…），
+ *    按固定端口探永远等不到；"应用是否消失"用镜像名判断最可靠。
+ *  - **拉起后按 42081 验活**：Oblivion http-bridge 固定监听 42081，curl 能连通即说明
+ *    新宿主起来了；再用 netstat 反查该 PID 的监听端口，把**新的 web 口**写进日志
+ *    （端口不能硬编码，只能现场发现）。
+ *  - **20 秒 TTL**：若 20s 内应用没消失（kill 失败/陈旧守夜人），过期退出，
+ *    不再"以后每次宿主退出都重启一次"。
+ *  - 锁文件防止连点/重复点击时拉起两个实例。
+ *
+ * 2026-10-18 二次修正（现场隔离实验结论）：
+ *  - **WMI 拉起的游离 cmd 里，`for /f` 的"命令形式"整体空产出**：连
+ *    `for /f "tokens=1" %%p in ('echo hello')` 都是空的（与管道/COMSPEC/PATH 无关）。
+ *    所以 `host pid=` 才一直是空、端口清单一直不打印。修法：先 `netstat … > 文件`，
+ *    再 `for /f "usebackq tokens=5" … in ("文件")` —— 读文件形式正常。
+ *  - 日志时间戳切片成纯 ASCII：`%DATE:~0,10% %TIME%`（`%DATE%` 里的中文星期是
+ *    GBK 字节，按 UTF-8 读就是乱码）。
+ */
+export const WATCH_CMD = String.raw`@echo off
+setlocal
+set "APP={APP}"
+set "IMG={IMG}"
+set "LOG={LOG}"
+set "LOCK={LOCK}"
+if exist "%LOCK%" exit /b 0
+>>"%LOCK%" echo.
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher start
+set /a N=0
+:wait
+tasklist /FI "IMAGENAME eq %IMG%" 2>nul | find /I "%IMG%" >nul
+if errorlevel 1 goto relaunch
+set /a N+=1
+if %N% GEQ 200 goto expired
+ping -n 1 -w 100 192.0.2.1 >nul
+goto wait
+:expired
+del "%LOCK%" >nul 2>&1
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher expired: app still running, no relaunch
+exit /b 0
+:relaunch
+del "%LOCK%" >nul 2>&1
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher relaunch
+start "" "%APP%"
+set /a P=0
+:probe
+curl -s -o NUL -m 2 http://127.0.0.1:42081/ >nul 2>&1
+if not errorlevel 1 goto ready
+set /a P+=1
+if %P% GEQ 120 goto probe_timeout
+ping -n 1 -w 250 192.0.2.1 >nul
+goto probe
+:ready
+set "PIDFILE=%TEMP%\obl-brand-host.pid.tmp"
+netstat -ano | findstr ":42081" | findstr LISTENING > "%PIDFILE%"
+set "HOSTPID="
+for /f "usebackq tokens=5" %%p in ("%PIDFILE%") do set "HOSTPID=%%p"
+del "%PIDFILE%" >nul 2>&1
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher ready: bridge 42081 up (host pid=%HOSTPID%)
+set "WEBPORT="
+set "PORTFILE=%TEMP%\obl-brand-host.ports.tmp"
+if not "%HOSTPID%"=="" (
+  netstat -ano | findstr LISTENING | findstr "%HOSTPID%" > "%PORTFILE%"
+  >>"%LOG%" echo %DATE:~0,10% %TIME% watcher host listening ports:
+  type "%PORTFILE%" >> "%LOG%" 2>&1
+  for /f "usebackq tokens=2" %%q in ("%PORTFILE%") do call :webprobe %%q
+  del "%PORTFILE%" >nul 2>&1
+)
+if not "%WEBPORT%"=="" (
+  >>"%LOG%" echo %DATE:~0,10% %TIME% watcher web ready: http://127.0.0.1:%WEBPORT%/
+) else (
+  >>"%LOG%" echo %DATE:~0,10% %TIME% watcher web not detected
+)
+exit /b 0
+
+:webprobe
+rem %~1 = host:port (e.g. 127.0.0.1:30909); skip bridge 42081, take the first HTTP-answering port.
+for /f "tokens=1,2 delims=:" %%a in ("%~1") do set "PCAND=%%b"
+if "%PCAND%"=="" goto :eof
+if "%PCAND%"=="42081" goto :eof
+if not "%WEBPORT%"=="" goto :eof
+curl -s -o NUL -m 2 http://127.0.0.1:%PCAND%/ >nul 2>&1
+if not errorlevel 1 set "WEBPORT=%PCAND%"
+goto :eof
+
+:probe_timeout
+>>"%LOG%" echo %DATE:~0,10% %TIME% watcher ready timeout: bridge 42081 not up after 30s
+exit /b 0
+`;
+
+/**
+ * ARM 脚本：用 WMI 创建守夜人。
+ * 2026-10-18 实测过的坑：PowerShell 5.1 需要控制台，WMI 创建的无控制台进程
+ * 若用 powershell 会"exit 0 但一行不跑"；cmd 可以。这里由「有控制台」的
+ * PowerShell 去创建「游离的 cmd」。
+ */
+const ARM_WATCH_SCRIPT = String.raw`param(
+  [Parameter(Mandatory = $true)][string]$Cmd
+)
+$ErrorActionPreference = 'Stop'
+# 先清掉还活着的旧守夜人（连点/重复点击时避免两个 watcher 同时拉起）。
+try {
+  Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" |
+    Where-Object { $_.CommandLine -like ('*' + $Cmd + '*') } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch { }
+$startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
+$startup.ShowWindow = 0
+$created = ([wmiclass]'Win32_Process').Create(('cmd.exe /c "{0}"' -f $Cmd), (Split-Path -Parent $Cmd), $startup)
+if ($created.ReturnValue -ne 0) { exit 1 }
+`;
+
+/** 写守夜人并以 WMI 拉起；成功返回 `true`（调用方据此选择"快速"或"回退 helper"）。 */
+function armWatcher(exePath: string): boolean {
+  try {
+    const image = basename(exePath);
+    const cmd = WATCH_CMD
+      .replace('{APP}', exePath)
+      .replace('{IMG}', image)
+      .replace('{LOG}', LOG_PATH)
+      .replace('{LOCK}', WATCH_LOCK_PATH);
+    writeFileSync(WATCH_PATH, cmd, 'ascii');
+    writeFileSync(ARM_WATCH_PATH, `\uFEFF${ARM_WATCH_SCRIPT}`, 'utf8');
+    const shell = resolvePowerShell();
+    if (shell === null) {
+      appendLog('watcher arm: no PowerShell');
+      return false;
+    }
+    const run = spawnSync(
+      shell,
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ARM_WATCH_PATH, '-Cmd', WATCH_PATH],
+      { encoding: 'utf8', timeout: 15_000 },
+    );
+    const detail = String(run.stderr ?? '').trim().slice(0, 200);
+    appendLog(`watcher arm: exit=${String(run.status)} stderr=${detail}`);
+    return run.status === 0;
+  } catch (error) {
+    appendLog(`watcher arm failed: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
 
 /** 本插件用到的最小宿主 ctx 面。 */
 interface HostCtx {
@@ -612,6 +763,32 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
 
         // 先做一次**只杀孤儿**的清扫并把结果回给浏览器：这一步不影响正在跑的传输进程，
         // 因此可以安全地放在 helper 之前；真正的「全杀」在 helper 里（见 RESTART_SCRIPT）。
+        //
+        // 2026-10-18：优先走「守夜人」路径 —— 先 ARM 一个游离 cmd（WMI 创建，不在 app 的
+        // job 里），它等应用进程全部消失后重新拉起；随后路由自己杀主进程。即使用户在
+        // 启动窗口内手动关了应用/托盘退出，守夜人依然活着，应用会被拉回来（此前现场：
+        // helper 还在 PowerShell 启动阶段就随 job 被杀，导致"只能手动开"）。
+        // 删除旧锁 → 写守夜人 → WMI-ARM → 202 → 900ms 后杀 Electron 主进程。
+        try {
+          unlinkSync(WATCH_LOCK_PATH);
+        } catch {
+          /* 没有旧锁：正常 */
+        }
+        if (armWatcher(process.execPath)) {
+          response.writeHead(202, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ ok: true, mode: 'watcher', logPath: WATCH_PATH }));
+          const parent = process.ppid;
+          setTimeout(() => {
+            try {
+              process.kill(parent, 'SIGTERM');
+            } catch (error) {
+              appendLog(`kill parent failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }, 900);
+          return;
+        }
+
+        // 回退：守夜人武装失败（无 PowerShell / WMI 不可用）时走旧 helper。
         const shell = resolvePowerShell();
         const sweep =
           shell === null
@@ -637,6 +814,78 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
 
     ctx.effect?.(() => dispose, 'oblivion-brand: restart route');
     ctx.logger?.('@oblivion/brand').info(`重启路由已挂载：POST ${RESTART_PATH}`);
+  });
+}
+
+/**
+ * 活动任务判定（只读）：对齐桌面端 `hasDesktopActiveTasks` 的**核心**口径 ——
+ * running 的 agent，或 running|stopping 的后台 job。
+ *
+ * 2026-10-18 收窄：不再把 `inbox.nextTurn/nextStep` 的积压算作"正在跑"。
+ * 实测里队列会在 agent 空闲后仍留一条消息，导致"没有任务也弹中断提醒"
+ * （用户现场反馈）。队列积压交给下一轮开始时自然进入 running 状态，弹窗
+ * 只在真正跑着时出现 —— 宁可漏一次提醒，不要每次都误报。
+ */
+function hasActiveTasks(agents: unknown, jobs: unknown): boolean {
+  const agentList =
+    (agents as { list?: () => Array<Record<string, unknown>> } | undefined)?.list?.() ?? [];
+  const running = agentList.some((agent) => agent['status'] === 'running');
+  if (running) return true;
+  const jobList = (jobs as { list?: (agentId?: string | undefined) => Array<{ status?: string }> } | undefined)?.list;
+  if (jobList === undefined) return false;
+  const ids: Array<string | undefined> = [undefined, ...agentList.map((agent) => agent['id'] as string | undefined)];
+  return ids.some((id) =>
+    (jobList(id) ?? []).some((job) => job.status === 'running' || job.status === 'stopping'),
+  );
+}
+
+/**
+ * 注册「是否有活动任务」查询路由（GET，只读）。
+ *
+ * 面板点「重启 DSH」后先问这里：有活动任务才弹「当前正在运行的任务将会中断」，
+ * 与托盘退出的原生确认保持同一种提醒语义。服务不可用时回 503，面板侧按
+ * 「无法确认就不弹」处理（避免版本错配/服务缺失时每次点都误报有任务）。
+ */
+function installTasksRoute(ctx: HostCtx, warn: (message: string) => void): void {
+  ctx.inject?.(['webServer'], (scope) => {
+    const server = scope.webServer;
+    if (server === undefined || typeof server.register !== 'function') {
+      warn('webServer 不可用，任务查询路由未挂载');
+      return;
+    }
+
+    const dispose = server.register({
+      kind: 'exact',
+      path: TASKS_PATH,
+      handler: async (request, response) => {
+        const json = (status: number, body: unknown): void => {
+          response.writeHead(status, { 'content-type': 'application/json' });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== 'GET') {
+          json(405, { ok: false, error: 'method not allowed' });
+          return;
+        }
+        const agents = ctx.get?.('agents');
+        const jobs = ctx.get?.('jobs');
+        if (agents === undefined || jobs === undefined) {
+          json(503, { ok: false, active: false, error: 'task services unavailable' });
+          return;
+        }
+        try {
+          json(200, { ok: true, active: hasActiveTasks(agents, jobs) });
+        } catch (error) {
+          json(500, {
+            ok: false,
+            active: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+    });
+
+    ctx.effect?.(() => dispose, 'oblivion-brand: tasks route');
+    ctx.logger?.('@oblivion/brand').info(`任务查询路由已挂载：GET ${TASKS_PATH}`);
   });
 }
 
@@ -749,6 +998,255 @@ function installPluginsRoute(ctx: HostCtx, warn: (message: string) => void): voi
 
     ctx.effect?.(() => dispose, 'oblivion-brand: plugins route');
     ctx.logger?.('@oblivion/brand').info(`已安装插件清单路由已挂载：GET ${PLUGINS_PATH}`);
+  });
+}
+
+/** 检查更新/应用更新：面板「更新插件」用（2026-10-18）。 */
+interface UpdateItem {
+  name: string;
+  current: string;
+  latest: string;
+}
+
+function resolvePnpmCjs(): string | null {
+  const candidates = [
+    join(dirname(process.execPath), 'resources', 'runtime', 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'),
+    join(process.env['DSH_HOME'] ?? join(homedir(), '.dsh'), 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+/** 只比较前 3 段数字（本项目所有版本都是发布版）。 */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(/[.+-]/);
+  const pb = b.split(/[.+-]/);
+  for (let i = 0; i < 3; i += 1) {
+    const x = Number.parseInt(pa[i] ?? '0', 10) || 0;
+    const y = Number.parseInt(pb[i] ?? '0', 10) || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+function readJsonFile(file: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function installedVersionOf(profileDir: string, name: string): string | null {
+  const parsed = readJsonFile(join(profileDir, 'node_modules', ...name.split('/'), 'package.json'));
+  const version = parsed?.['version'];
+  return typeof version === 'string' ? version : null;
+}
+
+function isManagedDependency(name: string, spec: unknown): boolean {
+  if (typeof spec !== 'string') return false;
+  if (/^(link:|file:|workspace:|npm:)/.test(spec)) return false;
+  if (name.startsWith('@oblivion/') || name.startsWith('@deepseek-ai/')) return false;
+  return true;
+}
+
+async function fetchLatestVersion(name: string): Promise<string | null> {
+  try {
+    const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { version?: unknown };
+    return typeof body.version === 'string' ? body.version : null;
+  } catch {
+    return null;
+  }
+}
+
+async function scanUpdates(profileDir: string): Promise<UpdateItem[]> {
+  const pkg = readJsonFile(join(profileDir, 'package.json'));
+  const deps = (pkg?.['dependencies'] ?? {}) as Record<string, unknown>;
+  const items: UpdateItem[] = [];
+  await Promise.all(
+    Object.entries(deps).map(async ([name, spec]) => {
+      if (!isManagedDependency(name, spec)) return;
+      const current = installedVersionOf(profileDir, name);
+      if (current === null) return;
+      const latest = await fetchLatestVersion(name);
+      if (latest === null) return;
+      if (compareVersions(current, latest) < 0) items.push({ name, current, latest });
+    }),
+  );
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  return items;
+}
+
+function runPnpmInstall(pnpm: string, cwd: string): Promise<{ ok: boolean; tail: string; error?: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      process.execPath,
+      ['--expose-internals', pnpm, 'install', '--no-frozen-lockfile', '--config.minimumReleaseAge=0'],
+      { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true },
+    );
+    let tail = '';
+    const push = (chunk: Buffer): void => {
+      tail = (tail + chunk.toString('utf8')).slice(-4000);
+    };
+    child.stdout?.on('data', push);
+    child.stderr?.on('data', push);
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({ ok: false, tail, error: 'pnpm install 超时（180s）' });
+    }, 180_000);
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolve({ ok: false, tail, error: error.message });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ ok: code === 0, tail, ...(code === 0 ? {} : { error: `pnpm install exit ${String(code)}` }) });
+    });
+  });
+}
+
+async function applyUpdates(
+  profileDir: string,
+  names: string[],
+): Promise<{
+  ok: boolean;
+  changed: UpdateItem[];
+  installed: Array<{ name: string; version: string | null }>;
+  outputTail: string;
+  error?: string;
+}> {
+  const pnpm = resolvePnpmCjs();
+  if (pnpm === null) return { ok: false, changed: [], installed: [], outputTail: '', error: '找不到内置 pnpm' };
+  const candidates = await scanUpdates(profileDir);
+  const selected = candidates.filter((item) => names.includes(item.name));
+  if (selected.length === 0) return { ok: false, changed: [], installed: [], outputTail: '', error: '没有可更新的项' };
+
+  const pkgPath = join(profileDir, 'package.json');
+  const raw = readFileSync(pkgPath, 'utf8');
+  const backup = `${pkgPath}.bak-before-updates-${String(Date.now())}`;
+  writeFileSync(backup, raw, 'utf8');
+  try {
+    const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> };
+    const deps = pkg.dependencies ?? {};
+    for (const item of selected) deps[item.name] = item.latest;
+    pkg.dependencies = deps;
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8');
+
+    const result = await runPnpmInstall(pnpm, profileDir);
+    const installed = selected.map((item) => ({ name: item.name, version: installedVersionOf(profileDir, item.name) }));
+    if (!result.ok) return { ok: false, changed: selected, installed, outputTail: result.tail, error: result.error };
+    return { ok: true, changed: selected, installed, outputTail: result.tail };
+  } catch (error) {
+    try {
+      writeFileSync(pkgPath, raw, 'utf8');
+    } catch {
+      /* 恢复失败：备份文件路径仍在 error 里可查 */
+    }
+    return {
+      ok: false,
+      changed: [],
+      installed: [],
+      outputTail: '',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** 注册「检查更新 / 应用更新」两条路由（GET 只读；POST 写 package.json + pnpm install）。 */
+function installUpdatesRoutes(ctx: HostCtx, warn: (message: string) => void): void {
+  ctx.inject?.(['webServer'], (scope) => {
+    try {
+    const server = scope.webServer;
+    if (server === undefined || typeof server.register !== 'function') {
+      warn('webServer 不可用，更新插件路由未挂载');
+      return;
+    }
+    const location = resolveProfile(process.env, homedir());
+    if (location === null) {
+      warn('DSH_PROFILE_DIR 与 DSH_HOME 都没有，更新插件路由未挂载');
+      return;
+    }
+
+    const jsonOf = (response: HostResponse) => {
+      return (status: number, body: unknown): void => {
+        response.writeHead(status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(body));
+      };
+    };
+
+    const check = server.register({
+      kind: 'exact',
+      path: UPDATES_PATH,
+      handler: async (request, response) => {
+        const json = jsonOf(response);
+        if (request.method !== 'GET') {
+          json(405, { ok: false, error: 'method not allowed' });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: 'untrusted origin' });
+          return;
+        }
+        try {
+          json(200, { ok: true, items: await scanUpdates(location.dir) });
+        } catch (error) {
+          json(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    });
+
+    const apply = server.register({
+      kind: 'exact',
+      path: UPDATES_APPLY_PATH,
+      handler: async (request, response) => {
+        const json = jsonOf(response);
+        if (request.method !== 'POST') {
+          json(405, { ok: false, error: 'method not allowed' });
+          return;
+        }
+        if (!isTrustedCaller(request)) {
+          json(403, { ok: false, error: 'untrusted origin' });
+          return;
+        }
+        let names: string[] = [];
+        try {
+          const parsed = JSON.parse(await readRequestBody(request)) as { names?: unknown };
+          if (Array.isArray(parsed.names)) names = parsed.names.filter((n): n is string => typeof n === 'string');
+        } catch {
+          json(400, { ok: false, error: 'bad request body' });
+          return;
+        }
+        try {
+          const result = await applyUpdates(location.dir, names);
+          json(result.ok ? 200 : 500, result);
+        } catch (error) {
+          json(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    });
+
+    // 注意：`server.register(...)` 返回的是 **dispose 函数**，不是 handler。
+    // effect 回调要**返回** disposer（等 fiber 拆除时才调用）；写成
+    // `() => { check(); apply(); }` 会在挂载瞬间把它们自己注销掉 —— 现象就是
+    // 路由 404、但日志还打了 "mounted"（2026-10-18 真机踩坑）。
+    ctx.effect?.(
+      () => () => {
+        check();
+        apply();
+      },
+      'oblivion-brand: updates routes',
+    );
+    ctx.logger?.('@oblivion/brand').info(`更新插件路由已挂载：GET ${UPDATES_PATH} / POST ${UPDATES_APPLY_PATH}`);
+    appendLog(`updates routes mounted: ${UPDATES_PATH} / ${UPDATES_APPLY_PATH} profile=${location.dir}`);
+    } catch (error) {
+      appendLog(
+        `updates routes mount FAILED: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+      );
+      throw error;
+    }
   });
 }
 
@@ -1111,8 +1609,10 @@ export function apply(ctx: HostCtx): void {
   // 装载即清扫一次：覆盖不经过本插件按钮的那些重启路径（崩溃 / 任务管理器 / 升级）。
   sweepOnMount(logger);
   installRestartRoute(ctx, warn);
+  installTasksRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
+  installUpdatesRoutes(ctx, warn);
   // 挂载期抛错 = 这条路由**静默消失**（外部只见 404，与「这个版本没装」无法区分）。
   // `installSessionMessageRoute` 自己已经不再碰未声明的服务，这里再兜一层：
   // 万一以后有人加了一行危险读取，至少日志里会留下一条 warn，而不是无声缺一条路由。

@@ -120,7 +120,7 @@ function guardedScope(available) {
  * `options.sessionController` 给 `null` 可造出「宿主里没有会话服务」的现场（验 503）。
  */
 function makeCtx(options = {}) {
-  const reg = { routes: [], effects: [], logs: [], injected: [], prompts: [] };
+  const reg = { routes: [], effects: [], effectFns: [], logs: [], injected: [], prompts: [] };
   const controller =
     options.sessionController === null
       ? undefined
@@ -154,7 +154,10 @@ function makeCtx(options = {}) {
         }
         callback(guardedScope(available));
       },
-      effect: (fn, label) => reg.effects.push(label),
+      effect: (fn, label) => {
+      reg.effects.push(label);
+      reg.effectFns.push(fn);
+    },
     },
   };
 }
@@ -307,26 +310,32 @@ await check('导出形状符合本包约定', () => {
   return '五条路径 / 两个开关常量 / 恢复命令 / 清单校验 / 清扫面 / 会话注入面 / 会话读回面 / apply 齐备';
 });
 
-await check('apply 挂载五条路由；四条只要 webServer，会话注入额外绑 sessionController', async () => {
+await check('apply 挂载八条路由；七条只要 webServer，会话注入额外绑 sessionController', async () => {
   const { ctx, reg } = makeCtx();
   await withEnv(undefined, () => mod.apply(ctx));
   assert.deepEqual(
     reg.injected,
     ['webServer', 'sessionController'],
-    '会话服务要单独 inject（先挂路由、后绑服务），其余四条只依赖 webServer（读回也不需要宿主服务）',
+    '会话服务要单独 inject（先挂路由、后绑服务），其余七条只依赖 webServer（读回/任务查询/更新也不需要宿主服务）',
   );
-  assert.equal(reg.routes.length, 5, '应注册五条路由（重启 + 孤儿清扫 + 已装插件清单 + 会话消息 + 会话读回）');
+  assert.equal(reg.routes.length, 8, '应注册八条路由（重启 + 任务查询 + 孤儿清扫 + 已装插件 + 更新检查 + 更新应用 + 会话消息 + 会话读回）');
   const restart = reg.routes.find((route) => route.path === mod.RESTART_PATH);
+  const tasks = reg.routes.find((route) => route.path === mod.TASKS_PATH);
   const orphans = reg.routes.find((route) => route.path === mod.ORPHANS_PATH);
   const plugins = reg.routes.find((route) => route.path === mod.PLUGINS_PATH);
+  const updates = reg.routes.find((route) => route.path === mod.UPDATES_PATH);
+  const updatesApply = reg.routes.find((route) => route.path === mod.UPDATES_APPLY_PATH);
   const session = reg.routes.find((route) => route.path === mod.SESSION_MESSAGE_PATH);
   const tail = reg.routes.find((route) => route.path === mod.SESSION_TAIL_PATH);
   assert.ok(restart, '缺少重启路由');
+  assert.ok(tasks, '缺少任务查询路由');
   assert.ok(orphans, '缺少孤儿进程清扫路由');
   assert.ok(plugins, '缺少已装插件清单路由');
+  assert.ok(updates, '缺少更新检查路由');
+  assert.ok(updatesApply, '缺少更新应用路由');
   assert.ok(session, '缺少会话消息路由');
   assert.ok(tail, '缺少会话读回路由');
-  for (const route of [restart, orphans, plugins, session, tail]) {
+  for (const route of [restart, tasks, orphans, plugins, updates, updatesApply, session, tail]) {
     assert.equal(route.kind, 'exact');
     assert.equal(typeof route.handler, 'function');
   }
@@ -335,6 +344,22 @@ await check('apply 挂载五条路由；四条只要 webServer，会话注入额
   const warns = reg.logs.filter(([level]) => level === 'warn');
   assert.deepEqual(warns, [], 'apply 期间不得有 warn（挂载异常会在这里留痕）');
   return reg.routes.map((route) => route.path).join(' + ');
+});
+
+await check('fiber 语义：effect 回调必须返回 disposer（挂载时不自我注销）', async () => {
+  const { ctx, reg } = makeCtx();
+  await withEnv(undefined, () => mod.apply(ctx));
+  const fns = reg.effectFns.filter((fn) => typeof fn === 'function');
+  assert.ok(fns.length > 0, 'apply 必须注册至少一个 effect');
+  for (const fn of fns) {
+    const dispose = fn();
+    assert.equal(
+      typeof dispose,
+      'function',
+      'effect 回调必须返回 dispose 函数 —— 写成 () => { disposeA(); disposeB(); } 会在挂载瞬间把路由注销掉（2026-10-18 真机：/obl-brand/updates 404 但日志打了 mounted）',
+    );
+  }
+  return String(fns.length) + ' 个 effect 回调均返回 disposer';
 });
 
 await check('桩的守卫本身可信：未声明的服务读取会抛、未就绪的依赖不回调', () => {
@@ -1004,6 +1029,48 @@ await check('重启 helper 正文：ASCII / 参数齐全 / 清扫排在 dry-run 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+await check('守夜人正文：pidfile / usebackq / ASCII 时间戳 / 无 for-f 命令形式', async () => {
+  const cmd = mod.WATCH_CMD;
+  assert.equal(typeof cmd, 'string', 'lib 必须导出 WATCH_CMD');
+  assert.ok(/^[\x00-\x7F]*$/.test(cmd), '守夜人正文必须全 ASCII');
+
+  // v2.1 修法：WMI 拉起的游离 cmd 里，for /f 的"命令形式"整体空产出（实测连
+  // `for /f "tokens=1" %%p in ('echo hello')` 都是空的）；必须先把 netstat 写文件，
+  // 再用 usebackq 读文件。这两条同时钉住，防止回潮成"host pid= 永远为空"。
+  assert.ok(cmd.includes('set "PIDFILE=%TEMP%\\obl-brand-host.pid.tmp"'), '缺少 PIDFILE 定义');
+  assert.match(
+    cmd,
+    /netstat -ano \| findstr ":42081" \| findstr LISTENING > "%PIDFILE%"/,
+    '必须先把 netstat 落到 PIDFILE',
+  );
+  assert.match(
+    cmd,
+    /for \/f "usebackq tokens=5" %%p in \("%PIDFILE%"\) do set "HOSTPID=%%p"/,
+    '必须用 usebackq 读文件取 PID',
+  );
+  assert.ok(
+    !/for \/f "tokens=5" %%p in \('netstat/.test(cmd),
+    '禁止回潮：for /f 命令形式取 PID 在 WMI 游离 cmd 里会空产出',
+  );
+
+  // ASCII 时间戳：%DATE% 里的中文星期是 GBK 字节，按 UTF-8 读就是乱码。
+  assert.ok(cmd.includes('%DATE:~0,10% %TIME%'), '日志时间戳必须切片成 %DATE:~0,10%');
+  assert.ok(!cmd.includes('%DATE% %TIME%'), '禁止回潮：裸 %DATE% %TIME% 会写 GBK 乱码');
+
+  // v2 的关键性质必须保留：锁、20s TTL、ready 行带 host pid、42081 探活。
+  assert.ok(cmd.includes('if exist "%LOCK%" exit /b 0'), '必须有锁文件判断');
+  assert.ok(cmd.includes('if %N% GEQ 200 goto expired'), '必须有 20s TTL');
+  assert.ok(cmd.includes('watcher expired: app still running, no relaunch'), '必须有过期分支');
+  assert.ok(cmd.includes('watcher ready: bridge 42081 up (host pid=%HOSTPID%)'), 'ready 行必须带 host pid');
+  assert.ok(cmd.includes('curl -s -o NUL -m 2 http://127.0.0.1:42081/'), '必须用 42081 探活');
+  // 2026-10-18 增强：ready 之后再从宿主监听口里挑出能 HTTP 应答的口（web 口），
+  // 把"重启完成"的判定从"宿主起了"提升到"UI 可连"。
+  assert.ok(cmd.includes(':webprobe'), '必须有 webprobe 子过程');
+  assert.ok(cmd.includes('watcher web ready: http://127.0.0.1:%WEBPORT%/'), '必须有 web ready 日志行');
+
+  return 'pidfile/usebackq/ASCII 时间戳/锁/TTL/ready 行/web 探活 全部到位';
 });
 
 process.stdout.write('\n@oblivion/brand selfcheck\n\n');
