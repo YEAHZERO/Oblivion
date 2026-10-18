@@ -69,7 +69,9 @@ ARM 失败（无 PowerShell / WMI 不可用）仍回退到旧的 helper 路径�
 **`@oblivion/core` 0.2.20**：只在 `package.json` 补 `engines.dsh: ">=0.2.0-rc.2 <0.3.0"` —— DSH 0.2.1 的装载器
 规则是「**有 `engines.dsh` 就按它判、忽略 peers**」，没有这一行的 core 会被整包拒载（症状是认知层静默不见）。
 
-验证：`oblivion-brand` typecheck ✅ / 构建 ✅ / 自检 **21/21**（含 8 条路由断言、守夜人正文断言、effect disposer 断言）/ `check:version` ✅。
+验证：`oblivion-brand` typecheck ✅ / 构建 ✅ / 自检 **24/24**（含 8 条路由断言、守夜人正文断言、effect disposer 断言、pnpm kebab flag 断言、apply 失败回滚断言、scanUpdates 不吞错断言）/ `check:version` ✅。
+
+**补丁修复（2026-10-18，本批次提交后）**：pnpm 标志从 camelCase 改成 kebab-case（`--config.minimum-release-age=0`，market 日志也用的 kebab）；apply 失败时加回滚 `package.json` 防止版本漂移；`scanUpdates` 把 fetch 失败从静默跳过改成返回 `{ errors }` 让面板能区分「无更新」和「网络错误」。三条均进自检。
 
 ## [未发布] — `@oblivion/panel` v0.0.18：**面板三按钮一行**（重启 / 检查更新 / 清理孤儿）+ 更新弹窗
 

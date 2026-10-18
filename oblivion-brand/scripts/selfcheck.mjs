@@ -1073,6 +1073,44 @@ await check('守夜人正文：pidfile / usebackq / ASCII 时间戳 / 无 for-f 
   return 'pidfile/usebackq/ASCII 时间戳/锁/TTL/ready 行/web 探活 全部到位';
 });
 
+// 2026-10-18 三处修复的回防断言：pnpm 标志、apply 失败回滚、scanUpdates 不吞错。
+await check('更新插件：pnpm 标志使用 kebab-case（camelCase 会被 pnpm 静默忽略）', () => {
+  const src = readFileSync(join(ROOT, 'src', 'index.ts'), 'utf8');
+  assert.ok(
+    src.includes('--config.minimum-release-age=0'),
+    '必须用 kebab-case 的 minimum-release-age（pnpm 不认 camelCase）',
+  );
+  assert.ok(
+    !src.includes('--config.minimumReleaseAge=0'),
+    '禁止回潮：camelCase 会被 pnpm 静默忽略，导致 minimumReleaseAge 仍生效',
+  );
+  return 'kebab-case minimum-release-age=0 到位';
+});
+
+await check('更新插件：apply 失败时必须回滚 package.json（防止版本漂移）', () => {
+  const src = readFileSync(join(ROOT, 'src', 'index.ts'), 'utf8');
+  // 关键模式：在 !result.ok 分支里调用 writeFileSync(pkgPath, raw)
+  assert.ok(
+    /!result\.ok[\s\S]{0,200}writeFileSync\([^,]+,\s*raw/.test(src),
+    'apply 失败时必须把 package.json 从 raw 恢复回来（防止 pnpm 失败后 version 漂移）',
+  );
+  return 'apply 失败回滚断言到位';
+});
+
+await check('更新插件：scanUpdates 返回 { items, errors }（不再吞掉 fetch 失败）', () => {
+  const src = readFileSync(join(ROOT, 'src', 'index.ts'), 'utf8');
+  assert.ok(
+    /Promise<\{ items: UpdateItem\[\], errors: UpdateError\[\] }\>/.test(src) ||
+      /Promise<\{ items[^}]*errors[^}]*}\>/.test(src),
+    'scanUpdates 必须返回 { items, errors } 结构，让面板区分「无更新」与「网络错误」',
+  );
+  assert.ok(
+    src.includes('errors.push({ name, error: '),
+    'fetchLatestVersion 失败时必须记录到 errors 而不是静默跳过',
+  );
+  return 'scanUpdates 返回结构正确 + 错误路径非吞错';
+});
+
 process.stdout.write('\n@oblivion/brand selfcheck\n\n');
 for (const [status, name, detail] of results) {
   process.stdout.write(status.padEnd(5) + ' ' + name + (detail ? '\n        ' + detail : '') + '\n');

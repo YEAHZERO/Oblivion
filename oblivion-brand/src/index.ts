@@ -1007,6 +1007,11 @@ interface UpdateItem {
   current: string;
   latest: string;
 }
+/** fetchLatestVersion 失败时的单条记录，供面板区分「无更新」和「网络错误」。 */
+interface UpdateError {
+  name: string;
+  error: string;
+}
 
 function resolvePnpmCjs(): string | null {
   const candidates = [
@@ -1062,29 +1067,35 @@ async function fetchLatestVersion(name: string): Promise<string | null> {
   }
 }
 
-async function scanUpdates(profileDir: string): Promise<UpdateItem[]> {
+async function scanUpdates(profileDir: string): Promise<{ items: UpdateItem[]; errors: UpdateError[] }> {
   const pkg = readJsonFile(join(profileDir, 'package.json'));
   const deps = (pkg?.['dependencies'] ?? {}) as Record<string, unknown>;
   const items: UpdateItem[] = [];
+  const errors: UpdateError[] = [];
   await Promise.all(
     Object.entries(deps).map(async ([name, spec]) => {
       if (!isManagedDependency(name, spec)) return;
       const current = installedVersionOf(profileDir, name);
       if (current === null) return;
       const latest = await fetchLatestVersion(name);
-      if (latest === null) return;
+      if (latest === null) {
+        // 不再吞掉：把失败原因带出来，让面板区分「无更新」和「网络错误」
+        errors.push({ name, error: 'npm 查询失败' });
+        return;
+      }
       if (compareVersions(current, latest) < 0) items.push({ name, current, latest });
     }),
   );
   items.sort((a, b) => a.name.localeCompare(b.name));
-  return items;
+  errors.sort((a, b) => a.name.localeCompare(b.name));
+  return { items, errors };
 }
 
 function runPnpmInstall(pnpm: string, cwd: string): Promise<{ ok: boolean; tail: string; error?: string }> {
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
-      ['--expose-internals', pnpm, 'install', '--no-frozen-lockfile', '--config.minimumReleaseAge=0'],
+      ['--expose-internals', pnpm, 'install', '--no-frozen-lockfile', '--config.minimum-release-age=0'],
       { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true },
     );
     let tail = '';
@@ -1121,7 +1132,7 @@ async function applyUpdates(
   const pnpm = resolvePnpmCjs();
   if (pnpm === null) return { ok: false, changed: [], installed: [], outputTail: '', error: '找不到内置 pnpm' };
   const candidates = await scanUpdates(profileDir);
-  const selected = candidates.filter((item) => names.includes(item.name));
+  const selected = candidates.items.filter((item) => names.includes(item.name));
   if (selected.length === 0) return { ok: false, changed: [], installed: [], outputTail: '', error: '没有可更新的项' };
 
   const pkgPath = join(profileDir, 'package.json');
@@ -1137,7 +1148,14 @@ async function applyUpdates(
 
     const result = await runPnpmInstall(pnpm, profileDir);
     const installed = selected.map((item) => ({ name: item.name, version: installedVersionOf(profileDir, item.name) }));
-    if (!result.ok) return { ok: false, changed: selected, installed, outputTail: result.tail, error: result.error };
+    if (!result.ok) {
+      try {
+        writeFileSync(pkgPath, raw, 'utf8');
+      } catch {
+        /* 恢复失败：备份文件路径仍在 error 里可查 */
+      }
+      return { ok: false, changed: selected, installed, outputTail: result.tail, error: result.error };
+    }
     return { ok: true, changed: selected, installed, outputTail: result.tail };
   } catch (error) {
     try {
@@ -1191,7 +1209,7 @@ function installUpdatesRoutes(ctx: HostCtx, warn: (message: string) => void): vo
           return;
         }
         try {
-          json(200, { ok: true, items: await scanUpdates(location.dir) });
+          json(200, { ok: true, ...await scanUpdates(location.dir) });
         } catch (error) {
           json(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
         }

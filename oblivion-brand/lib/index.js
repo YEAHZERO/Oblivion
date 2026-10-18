@@ -1,11 +1,11 @@
-// oblivion-brand/src/index.ts
+// src/index.ts
 import { spawn as spawn2, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir as homedir3, tmpdir as tmpdir2 } from "node:os";
 import { basename as basename2, dirname, join as join4 } from "node:path";
 
-// oblivion-brand/src/orphans.ts
+// src/orphans.ts
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -255,7 +255,7 @@ function describeSweep(report) {
   return `${cleaned}\uFF08\u626B\u63CF ${String(report.scanned)} \u4E2A\u8FDB\u7A0B\uFF0C\u547D\u4E2D ${String(report.matched)} \u4E2A\u4F20\u8F93\u8FDB\u7A0B${failed}\uFF09`;
 }
 
-// oblivion-brand/src/paths.ts
+// src/paths.ts
 var RESTART_PATH = "/obl-brand/restart";
 var TASKS_PATH = "/obl-brand/tasks";
 var PLUGINS_PATH = "/obl-brand/plugins";
@@ -265,11 +265,11 @@ var ORPHANS_PATH = "/obl-brand/orphans";
 var SESSION_MESSAGE_PATH = "/obl-brand/session/message";
 var SESSION_TAIL_PATH = "/obl-brand/session/tail";
 
-// oblivion-brand/src/profile-plugins.ts
+// src/profile-plugins.ts
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join as join2, resolve } from "node:path";
 
-// oblivion-brand/src/plugin-list.ts
+// src/plugin-list.ts
 var SAFE_ARG = /^[A-Za-z0-9@._/+^~-]+$/;
 function quoteArg(value) {
   if (value !== "" && SAFE_ARG.test(value)) return value;
@@ -339,7 +339,7 @@ function normalizePluginList(raw) {
   };
 }
 
-// oblivion-brand/src/profile-plugins.ts
+// src/profile-plugins.ts
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -479,7 +479,7 @@ function readInstalledPlugins(location, at = Date.now()) {
   };
 }
 
-// oblivion-brand/src/session-tail.ts
+// src/session-tail.ts
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join3 } from "node:path";
@@ -622,7 +622,7 @@ function readSessionTail(sessionsRoot, sessionId, limit, windowBytes = TAIL_WIND
   };
 }
 
-// oblivion-brand/src/session-inject.ts
+// src/session-inject.ts
 var SESSION_INJECT_ENV = "OBLIVION_BRAND_SESSION_INJECT";
 var MAX_SESSION_MESSAGE_CHARS = 2e4;
 var MAX_SESSION_MESSAGE_BYTES = 256 * 1024;
@@ -699,7 +699,7 @@ function httpStatusForPromptFailure(code) {
   return 502;
 }
 
-// oblivion-brand/src/index.ts
+// src/index.ts
 var SCRIPT_PATH = join4(tmpdir2(), "obl-brand-restart.ps1");
 var LOG_PATH = join4(tmpdir2(), "obl-brand-restart.log");
 var MARKET_REGISTRY_ENV = "DSHM_NPM_MIRROR";
@@ -1345,24 +1345,29 @@ async function scanUpdates(profileDir) {
   const pkg = readJsonFile(join4(profileDir, "package.json"));
   const deps = pkg?.["dependencies"] ?? {};
   const items = [];
+  const errors = [];
   await Promise.all(
     Object.entries(deps).map(async ([name, spec]) => {
       if (!isManagedDependency(name, spec)) return;
       const current = installedVersionOf(profileDir, name);
       if (current === null) return;
       const latest = await fetchLatestVersion(name);
-      if (latest === null) return;
+      if (latest === null) {
+        errors.push({ name, error: "npm \u67E5\u8BE2\u5931\u8D25" });
+        return;
+      }
       if (compareVersions(current, latest) < 0) items.push({ name, current, latest });
     })
   );
   items.sort((a, b) => a.name.localeCompare(b.name));
-  return items;
+  errors.sort((a, b) => a.name.localeCompare(b.name));
+  return { items, errors };
 }
 function runPnpmInstall(pnpm, cwd) {
   return new Promise((resolve2) => {
     const child = spawn2(
       process.execPath,
-      ["--expose-internals", pnpm, "install", "--no-frozen-lockfile", "--config.minimumReleaseAge=0"],
+      ["--expose-internals", pnpm, "install", "--no-frozen-lockfile", "--config.minimum-release-age=0"],
       { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, windowsHide: true }
     );
     let tail = "";
@@ -1389,7 +1394,7 @@ async function applyUpdates(profileDir, names) {
   const pnpm = resolvePnpmCjs();
   if (pnpm === null) return { ok: false, changed: [], installed: [], outputTail: "", error: "\u627E\u4E0D\u5230\u5185\u7F6E pnpm" };
   const candidates = await scanUpdates(profileDir);
-  const selected = candidates.filter((item) => names.includes(item.name));
+  const selected = candidates.items.filter((item) => names.includes(item.name));
   if (selected.length === 0) return { ok: false, changed: [], installed: [], outputTail: "", error: "\u6CA1\u6709\u53EF\u66F4\u65B0\u7684\u9879" };
   const pkgPath = join4(profileDir, "package.json");
   const raw = readFileSync2(pkgPath, "utf8");
@@ -1404,7 +1409,13 @@ async function applyUpdates(profileDir, names) {
 `, "utf8");
     const result = await runPnpmInstall(pnpm, profileDir);
     const installed = selected.map((item) => ({ name: item.name, version: installedVersionOf(profileDir, item.name) }));
-    if (!result.ok) return { ok: false, changed: selected, installed, outputTail: result.tail, error: result.error };
+    if (!result.ok) {
+      try {
+        writeFileSync2(pkgPath, raw, "utf8");
+      } catch {
+      }
+      return { ok: false, changed: selected, installed, outputTail: result.tail, error: result.error };
+    }
     return { ok: true, changed: selected, installed, outputTail: result.tail };
   } catch (error) {
     try {
@@ -1453,7 +1464,7 @@ function installUpdatesRoutes(ctx, warn) {
             return;
           }
           try {
-            json(200, { ok: true, items: await scanUpdates(location.dir) });
+            json(200, { ok: true, ...await scanUpdates(location.dir) });
           } catch (error) {
             json(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
           }

@@ -48,7 +48,7 @@ export function PluginUpdates(): JSX.Element {
         credentials: 'same-origin',
       });
       const body = (await response.json().catch(() => null)) as
-        | { ok?: boolean; items?: UpdateItem[]; error?: string }
+        | { ok?: boolean; items?: UpdateItem[]; errors?: Array<{ name: string; error: string }>; error?: string }
         | null;
       if (!response.ok || body?.ok !== true) {
         setPhase('error');
@@ -56,10 +56,17 @@ export function PluginUpdates(): JSX.Element {
         return;
       }
       const list = body.items ?? [];
+      const errs = (body.errors ?? []).map((e) => e.name);
       setItems(list);
       setSelected(new Set(list.map((item) => item.name)));
       setPhase(list.length > 0 ? 'listing' : 'done');
-      setMessage(list.length > 0 ? '' : '所有插件已是最新。');
+      if (errs.length > 0) {
+        setMessage(`检查完成，${String(list.length)} 个可更新；${errs.join('、')} 查询失败。`);
+      } else if (list.length === 0) {
+        setMessage('所有插件已是最新。');
+      } else {
+        setMessage('');
+      }
     } catch (error) {
       setPhase('error');
       setMessage(error instanceof Error ? error.message : String(error));
