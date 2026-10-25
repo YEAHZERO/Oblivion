@@ -643,6 +643,33 @@ Invoke-WebRequest -UseBasicParsing -Method POST http://127.0.0.1:42081/oblivion/
 (Get-Item oblivion-brand\lib\client.js).LastWriteTime = Get-Date   # rev 变 → 旧 rev 的 URL 将 404
 ```
 
+### 9b. 渲染进程 OOM 后 web 层重启连带失败（2026-10-25 未结案）
+
+**症状**：renderer OOM（`Desktop renderer exited: oom`），42 秒后 web 层重启时核心 client 包加载失败
+`desktop web: failed to load plugins/??@deepseek-ai/dsh-client-modules/client.js&rev=1e8e9ecd5d2e`。
+
+**根因推断**：与 9a 同机制（rev 不匹配 ⇒ 404），但触发链不同——
+不是「我们重建插件导致 rev 变化」，而是「renderer OOM 后宿主重启 web 层，
+而核心 client 包恰好在 OOM 前后被重建（mtime/ctime 变了，rev 也随之变了），
+宿主手里握的是旧 rev 的 URL，加载时 404」。属于**启动竞态**，不是配置损坏。
+
+**与 9a 的区别**：
+
+| | 9a（2026-10-17） | 9b（2026-10-25） |
+|---|---|---|
+| 触发源 | 我们重建插件（mtime 变化） | renderer OOM + 宿主重启 web 层 |
+| 未激活 entry | 4 个（panel/brand/daily-life/vimc） | 4 个（全是第三方） |
+| 共同点 | rev 不匹配 ⇒ 404 ⇒ 整条 combo 批跳过 | 同左 |
+
+**处理动作**（用户执行）：
+1. 关闭挂掉的 DeepSeek Harness 进程（5 个）；
+2. 重新启动 `C:\Programs\AITech\DeepSeekHarness\DeepSeek Harness.exe`；
+3. 验证：进程 5 个全 Responding、端口 16887 / 42081 可访问、无新崩溃日志。
+
+**后续提醒**：若再次出现同类崩溃，先确认 OOM 原因（renderer 内存泄漏 or 超大会话日志），
+再决定是否清 Code Cache（`rev` 依赖 Code Cache，清 cache 会强制重新生成）。
+直接点弹窗第三个按钮「禁用第三方插件、备份 profile patch 并重启」最稳。
+
 ## 应用图标：只能改快捷方式，改不了窗口/任务栏
 
 DSH 桌面端有三处「图标」，来源各不相同（依据 `app.asar/lib/main.js`）：
