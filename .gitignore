@@ -54,3 +54,6 @@ Desktop.ini
 .git-msg.txt
 .git-msg2.txt
 .git-commit-msg.txt
+
+# 外部知识库目录（mdRoot）—— 不在本仓库内，不入库
+/Library/那些渐渐被遗忘/
