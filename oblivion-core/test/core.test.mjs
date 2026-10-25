@@ -164,7 +164,7 @@ function applyInTemp(ctx, config = {}) {
 }
 
 describe('装配（apply）', () => {
-  it('注册 10 个模型面工具（含观测面、整理、改名、主题页与自动整理）', () => {
+  it('注册 12 个模型面工具（含观测面、整理、改名、主题页、自动整理与会话导入）', () => {
     const { ctx, seen } = fakeCtx();
     // 用系统临时目录：插件装载时会写 status.json / decisions.jsonl，绝不能落在仓库里
     const tmp = mkdtemp(join(tmpdir(), 'oblivion-tools-'));
@@ -179,6 +179,8 @@ describe('装配（apply）', () => {
         'oblivion_profile',
         'oblivion_query',
         'oblivion_retitle',
+        'oblivion_session_import',
+        'oblivion_session_scan',
         'oblivion_status',
         'oblivion_wiki',
       ]);
@@ -655,17 +657,17 @@ related_wiki: []
     const deps = { knowledge: {}, profile: {}, feedback: null, graph: {} };
 
     const first = kit.registerTools(ctx, deps);
-    assert.equal(first.length, 10, '10 个 oblivion_* 工具都要把注销函数回交出来');
-    assert.equal(defs.size, 10);
+    assert.equal(first.length, 12, '12 个 oblivion_* 工具都要把注销函数回交出来');
+    assert.equal(defs.size, 12);
 
     // 不注销就再装一遍 = 2026-10-17 那次真机现场：apply() 直接抛，MCP 通道从桥接里消失。
     assert.throws(() => kit.registerTools(ctx, deps), /already registered/);
 
-    // 注销后再装：不抛，注册表回到 10 个 —— 这就是 index.ts 把注册包进 ctx.effect 的效果。
+    // 注销后再装：不抛，注册表回到 12 个 —— 这就是 index.ts 把注册包进 ctx.effect 的效果。
     for (const dispose of first) dispose();
     assert.equal(defs.size, 0, 'disposer 调完注册表要清空');
-    assert.equal(kit.registerTools(ctx, deps).length, 10);
-    assert.equal(defs.size, 10);
+    assert.equal(kit.registerTools(ctx, deps).length, 12);
+    assert.equal(defs.size, 12);
   });
 
   it('工具两段式：不带 items 给候选，带 items 落地；服务缺席时只回 skipped', async () => {

@@ -10,6 +10,8 @@ import type { WikiService } from './knowledge/wiki.js';
 import type { OrganizeService } from './organize/index.js';
 import type { StatsService } from './stats/index.js';
 import type { Source, UserProfile } from './types.js';
+import type { SessionScanResult } from './knowledge/session-import.js';
+import { scanSessions, importSessions } from './knowledge/session-import.js';
 import { sha1 } from './util/hash.js';
 
 /**
@@ -592,6 +594,110 @@ export function registerTools(ctx: AppContext, deps: ToolDeps): Disposable[] {
       });
       const { config, ...rest } = snapshot;
       return asCanonical(args.include_config === false ? rest : { ...rest, config });
+    },
+  }));
+
+  /**
+   * 扫描 DSH 会话日志：列出所有可导入的会话及其摘要。
+   *
+   * 只读，不写知识库。用于模型决定是否要导入某些会话。
+   */
+  register(defineTool({
+    name: 'oblivion_session_scan',
+    description:
+      'Scan DSH session logs under ~/.dsh/sessions and return a summary of each session ' +
+      '(session ID, title from projcache, goal, turn count, QA pair count, size in KB, last turn). ' +
+      'Does NOT write to the knowledge base — use `oblivion_session_import` to actually import.',
+    parameters: {
+      limit: {
+        type: 'number',
+        description: 'Max sessions to return (default 20, sorted by file size descending).',
+      },
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      const limit = typeof args.limit === 'number' && args.limit > 0
+        ? Math.min(200, Math.floor(args.limit))
+        : 20;
+      const sessions = await scanSessions(limit);
+      return asCanonical({ count: sessions.length, sessions });
+    },
+  }));
+
+  /**
+   * 从 DSH 会话日志导入问答到知识库。
+   *
+   * 默认 dryRun=true（只预览），必须显式 confirm=true 才真正落盘。
+   * mode='qa': 每轮一页问答沉淀（复用 saveStructured）
+   * mode='digest': 整会话一页整理（由调用方拼 digest 后调 oblivion_digest）
+   */
+  register(defineTool({
+    name: 'oblivion_session_import',
+    description:
+      'Import Q&A pairs from DSH session logs into the Oblivion knowledge base. ' +
+      'Defaults to dry-run (preview only); pass confirm=true to actually write. ' +
+      'mode=qa writes one note per turn; mode=digest writes one note per session. ' +
+      'Already-imported sessions (by ref sessionId#turn-N) are skipped.',
+    parameters: {
+      sessionIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Session IDs to import (e.g. ["session-abc123"]). Empty = all sessions.',
+      },
+      maxPerSession: {
+        type: 'number',
+        description: 'Max turns to import per session (default 20).',
+      },
+      mode: {
+        type: 'string',
+        enum: ['qa', 'digest'],
+        description: 'qa = one note per turn; digest = one note per session.',
+      },
+      dry_run: {
+        type: 'boolean',
+        description: 'Preview only (default true). Set false + confirm=true to write.',
+      },
+      confirm: {
+        type: 'boolean',
+        description: 'Must be true to actually write to the knowledge base (safety gate).',
+      },
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      const sessionIds = Array.isArray(args.sessionIds) ? args.sessionIds : [];
+      const maxPerSession = typeof args.maxPerSession === 'number' && args.maxPerSession > 0
+        ? Math.min(100, Math.floor(args.maxPerSession)) : 20;
+      const mode = args.mode === 'digest' ? 'digest' : 'qa';
+      const dryRun = args.dry_run !== false && !(args.confirm === true);
+      const confirm = args.confirm === true;
+
+      if (!confirm && dryRun) {
+        // dry-run 模式：返回预览而非实际导入
+        const sessions = sessionIds.length > 0
+          ? await scanSessions(sessionIds.length)
+          : await scanSessions(20);
+        return asCanonical({
+          mode: 'preview',
+          dryRun: true,
+          sessions: sessions.slice(0, maxPerSession > 0 ? sessionIds.length * maxPerSession : undefined),
+          hint: 'Pass confirm=true to actually write. Use mode=qa for per-turn notes, mode=digest for per-session digest.',
+        });
+      }
+
+      // 收集已有 ref 做去重
+      const existingItems = deps.knowledge.index.all();
+      const knownRefs = new Set<string>();
+      for (const item of existingItems) {
+        for (const src of item.sources) {
+          if (src.type === 'session') knownRefs.add(src.ref);
+        }
+      }
+
+      const result = await importSessions(
+        { sessionIds, maxPerSession, mode, dryRun: false, knownRefs },
+        (input) => deps.knowledge.saveStructured(input),
+      );
+      return asCanonical(result);
     },
   }));
 

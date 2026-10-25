@@ -140,3 +140,4 @@ export type { DigestDraft, DigestSourceItem } from './organize/digest-scope.js';
 export { expandHome } from './util/paths.js';
 export { normalizeForHash, sha1, shortHash } from './util/hash.js';
 export { ageDays, newId, isoDate, MS_PER_DAY } from './util/time.js';
+export { scanSessions, importSessions } from './knowledge/session-import.js';

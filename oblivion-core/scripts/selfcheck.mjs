@@ -153,10 +153,10 @@ function callRoute(route, method, { origin, body } = {}) {
   });
 }
 
-await check('apply 注册面完整（10 工具 / 1 段落 / 事件 / 各自 effect）', () => {
+await check('apply 注册面完整（12 工具 / 1 段落 / 事件 / 各自 effect）', () => {
   const { ctx, reg } = makeCtx();
   mod.apply(ctx, { dataRoot, mdRoot });
-  assert.equal(reg.tools.length, 10, '工具数应为 10（含观测面、整理、改名、主题页与自动整理）');
+  assert.equal(reg.tools.length, 12, '工具数应为 12（含观测面、整理、改名、主题页、自动整理与会话导入）');
   for (const name of ['oblivion_retitle', 'oblivion_wiki', 'oblivion_organize']) {
     assert.ok(reg.tools.includes(name), '缺少工具 ' + name);
   }

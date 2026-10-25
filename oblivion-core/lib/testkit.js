@@ -305,8 +305,8 @@ async function writeJsonAtomic(path, value) {
 }
 async function readJsonSafe(path) {
   try {
-    const { readFile: readFile10 } = await import("node:fs/promises");
-    return JSON.parse(await readFile10(path, "utf8"));
+    const { readFile: readFile11 } = await import("node:fs/promises");
+    return JSON.parse(await readFile11(path, "utf8"));
   } catch {
     return void 0;
   }
@@ -2986,6 +2986,286 @@ function registerStats(ctx, config, meta) {
 
 // oblivion-core/src/tools.ts
 import { defineTool } from "@deepseek-ai/dsh-tools";
+
+// oblivion-core/src/knowledge/session-import.ts
+import { zstdDecompressSync } from "node:zlib";
+import { readdir as readdir4, readFile as readFile9, stat as stat3 } from "node:fs/promises";
+import { join as join12, resolve as resolve2 } from "node:path";
+var ZSTD_MAGIC = Buffer.from([40, 181, 47, 253]);
+var MAX_FRAME = 64 * 1024 * 1024;
+var SESSIONS_ROOT = resolve2(expandHome("~/.dsh/sessions"));
+var PROJCACHE_DIR = resolve2(expandHome("~/.dsh/storages/session_projcache/sessions"));
+var INTERESTING = /"(turn\/start|turn\/end|user\/message|assistant\/message|session\/title)"/;
+async function readProjcacheMeta(sessionId) {
+  const bareId = sessionId.startsWith("session-") ? sessionId.slice(8) : sessionId;
+  const candidates = [
+    join12(PROJCACHE_DIR, `${bareId}.json`),
+    join12(PROJCACHE_DIR, `session-${bareId}.json`)
+  ];
+  for (const path of candidates) {
+    try {
+      const data = await readFile9(path, "utf8");
+      const doc = JSON.parse(data);
+      const rows = doc?.record?.rows;
+      if (!rows) continue;
+      const titleRaw = rows.title?.val;
+      const title = typeof titleRaw === "object" && titleRaw && "val" in titleRaw ? titleRaw.val : typeof titleRaw === "string" ? titleRaw : "";
+      const goalRaw = rows.goal?.val;
+      const goal = goalRaw?.current ?? "";
+      return { title: title.trim(), goal };
+    } catch {
+    }
+  }
+  return { title: "", goal: "" };
+}
+async function parseZstdSessions(filePath, wantedTurns) {
+  const buf = await readFile9(filePath);
+  const starts = [];
+  for (let i = 0; i < buf.length; ) {
+    const at = buf.indexOf(ZSTD_MAGIC, i);
+    if (at < 0) break;
+    starts.push(at);
+    i = at + 4;
+  }
+  if (starts.length === 0) return [];
+  const result = /* @__PURE__ */ new Map();
+  let currentTurn = null;
+  let remainder = "";
+  for (let k = 0; k < starts.length; k++) {
+    const end = k + 1 < starts.length ? starts[k + 1] : buf.length;
+    let text;
+    try {
+      text = zstdDecompressSync(buf.subarray(starts[k], end), { maxOutputLength: MAX_FRAME }).toString("utf8");
+    } catch {
+      continue;
+    }
+    const parts = (remainder + text).split("\n");
+    remainder = parts.pop() ?? "";
+    for (const line of parts) {
+      if (!line || !INTERESTING.test(line)) continue;
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const type = record.type;
+      const data = record.data ?? {};
+      if (type === "turn/start" && typeof data.turn === "number") {
+        currentTurn = data.turn;
+      } else if (type !== "turn/start" && typeof data.turn === "number") {
+        currentTurn = data.turn;
+      }
+      if (currentTurn === null) continue;
+      if (wantedTurns && !wantedTurns.has(currentTurn)) continue;
+      const arr = result.get(currentTurn) ?? [];
+      arr.push(record);
+      result.set(currentTurn, arr);
+    }
+  }
+  return [...result.entries()].map(([turn, events]) => ({ turn, events })).sort((a, b) => a.turn - b.turn);
+}
+function textOfBlocks(blocks) {
+  if (typeof blocks === "string") return blocks.trim();
+  if (!Array.isArray(blocks)) return "";
+  const parts = [];
+  for (const b of blocks) {
+    if (b && typeof b === "object" && b.type === "text") {
+      const t = b.text;
+      if (typeof t === "string" && t.trim()) parts.push(t.trim());
+    }
+  }
+  return parts.join("\n");
+}
+function extractQA(events) {
+  let question = "";
+  let answer = "";
+  const tools = [];
+  let aborted = false;
+  for (const e of events) {
+    const data = e.data ?? {};
+    switch (e.type) {
+      case "turn/end":
+        aborted = data.reason?.kind === "aborted";
+        break;
+      case "user/message": {
+        const content = data.content;
+        const text = textOfBlocks(content);
+        if (text && !question) question = text;
+        break;
+      }
+      case "assistant/message": {
+        const msg = data.message ?? {};
+        const text = textOfBlocks(msg.content);
+        if (text) answer = answer ? answer + "\n\n" + text : text;
+        break;
+      }
+      case "tool/call":
+        if (typeof data.name === "string" && data.name) tools.push(data.name);
+        break;
+    }
+  }
+  return { question, answer, tools, aborted };
+}
+async function scanSessions(limit) {
+  const entries = await readdir4(SESSIONS_ROOT, { withFileTypes: true }).catch(() => []);
+  const results = [];
+  for (const ws of entries) {
+    if (!ws.isDirectory()) continue;
+    const subEntries = await readdir4(join12(SESSIONS_ROOT, ws.name), { withFileTypes: true }).catch(() => []);
+    for (const sd of subEntries) {
+      if (!sd.isDirectory() || !sd.name.startsWith("session-")) continue;
+      const sessionId = sd.name;
+      const zsPath = join12(SESSIONS_ROOT, ws.name, sessionId, "session.v4.jsonl.zstd");
+      let sizeKb = 0;
+      try {
+        sizeKb = Math.round((await stat3(zsPath)).size / 1024);
+      } catch {
+        continue;
+      }
+      if (sizeKb === 0) continue;
+      const { title: projTitle, goal } = await readProjcacheMeta(sessionId).catch(() => ({ title: "", goal: "" }));
+      const buf = await readFile9(zsPath).catch(() => null);
+      let turnCount = 0;
+      let qaCount = 0;
+      let lastTurn = 0;
+      if (buf) {
+        const starts = [];
+        for (let i = 0; i < buf.length; ) {
+          const at = buf.indexOf(ZSTD_MAGIC, i);
+          if (at < 0) break;
+          starts.push(at);
+          i = at + 4;
+        }
+        const TURN_RE = /"turn\/start"/;
+        const USER_RE = /"user\/message"/;
+        const QN_RE = /"question"[^{]*"([^"]{8,})"/;
+        const AN_RE = /"answer"[^{]*"([^"]{60,})"/;
+        let currentTurn = 0;
+        let hasQuestion = false;
+        for (let k = 0; k < starts.length; k++) {
+          const end = k + 1 < starts.length ? starts[k + 1] : buf.length;
+          let text;
+          try {
+            text = zstdDecompressSync(buf.subarray(starts[k], end), { maxOutputLength: MAX_FRAME }).toString("utf8");
+          } catch {
+            continue;
+          }
+          for (const line of text.split("\n")) {
+            if (TURN_RE.test(line)) {
+              currentTurn++;
+              hasQuestion = false;
+            } else if (USER_RE.test(line)) {
+              hasQuestion = true;
+            } else if (currentTurn > lastTurn) lastTurn = currentTurn;
+          }
+        }
+        turnCount = currentTurn;
+        if (buf && buf.length > 0) {
+          let qLines = 0, aLines = 0;
+          for (let k = 0; k < starts.length; k++) {
+            const end = k + 1 < starts.length ? starts[k + 1] : buf.length;
+            let text;
+            try {
+              text = zstdDecompressSync(buf.subarray(starts[k], end), { maxOutputLength: MAX_FRAME }).toString("utf8");
+            } catch {
+              continue;
+            }
+            const lines = text.split("\n");
+            for (const l of lines) {
+              if (/["']question["']\s*:/.test(l)) qLines++;
+              if (/["']answer["']\s*:/.test(l)) aLines++;
+            }
+          }
+          qaCount = Math.min(qLines, aLines);
+        }
+      }
+      results.push({
+        sessionId,
+        title: projTitle || sessionId,
+        goal,
+        turnCount,
+        qaCount,
+        sizeKb,
+        lastTime: lastTurn
+      });
+    }
+  }
+  results.sort((a, b) => b.sizeKb - a.sizeKb);
+  return limit ? results.slice(0, limit) : results;
+}
+async function importSessions(opts, saveStructured) {
+  const { sessionIds, maxPerSession = 20, mode, dryRun = true, knownRefs = /* @__PURE__ */ new Set() } = opts;
+  let imported = 0;
+  let skipped = 0;
+  const failures = [];
+  for (const sessionId of sessionIds) {
+    const dirs = await readdir4(SESSIONS_ROOT, { withFileTypes: true }).catch(() => []);
+    let zsPath = null;
+    for (const ws of dirs) {
+      if (!ws.isDirectory()) continue;
+      const candidate = join12(SESSIONS_ROOT, ws.name, sessionId, "session.v4.jsonl.zstd");
+      try {
+        await stat3(candidate);
+        zsPath = candidate;
+        break;
+      } catch {
+      }
+    }
+    if (!zsPath) {
+      skipped++;
+      continue;
+    }
+    const { title: projTitle } = await readProjcacheMeta(sessionId).catch(() => ({ title: "" }));
+    const baseTitle = projTitle || sessionId;
+    const wantedTurns = /* @__PURE__ */ new Set();
+    const allTurns = await parseZstdSessions(zsPath, null);
+    const toImport = allTurns.slice(0, maxPerSession);
+    for (const { turn, events } of toImport) {
+      const { question, answer, tools, aborted } = extractQA(events);
+      if (question.length < 8 || answer.length < 60) {
+        skipped++;
+        continue;
+      }
+      if (["\u7EE7\u7EED", "\u597D", "ok", "OK", "\u662F\u7684", "\u5BF9", "\u55EF", "\u53EF\u4EE5", "\u884C"].includes(question.trim())) {
+        skipped++;
+        continue;
+      }
+      const ref = `${sessionId}#turn-${turn}`;
+      if (knownRefs.has(ref)) {
+        skipped++;
+        continue;
+      }
+      const content = mode === "qa" ? `## \u95EE\u9898
+
+${question}
+
+## \u56DE\u7B54
+
+${answer}${aborted ? "\n\n> \uFF08\u4E2D\u65AD\uFF0C\u56DE\u7B54\u53EF\u80FD\u4E0D\u5B8C\u6574\uFF09" : ""}${tools.length ? `
+
+\u6D89\u53CA\u5DE5\u5177: ${tools.join(", ")}` : ""}` : `[\u8F6E ${turn}] ${question}
+
+${answer}`;
+      try {
+        if (!dryRun) {
+          await saveStructured({
+            title: `${baseTitle} \xB7 \u8F6E ${turn}`,
+            topic: question.slice(0, 40),
+            content,
+            sources: [{ type: "session", ref, hash: ref }]
+          });
+        }
+        imported++;
+      } catch (e) {
+        failures.push({ turn, error: String(e) });
+      }
+    }
+  }
+  return { sessionId: sessionIds.join(","), imported, skipped, failures };
+}
+
+// oblivion-core/src/tools.ts
 function asCanonical(value) {
   return value;
 }
@@ -3417,6 +3697,79 @@ function registerTools(ctx, deps) {
       return asCanonical(args.include_config === false ? rest : { ...rest, config });
     }
   }));
+  register(defineTool({
+    name: "oblivion_session_scan",
+    description: "Scan DSH session logs under ~/.dsh/sessions and return a summary of each session (session ID, title from projcache, goal, turn count, QA pair count, size in KB, last turn). Does NOT write to the knowledge base \u2014 use `oblivion_session_import` to actually import.",
+    parameters: {
+      limit: {
+        type: "number",
+        description: "Max sessions to return (default 20, sorted by file size descending)."
+      }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(200, Math.floor(args.limit)) : 20;
+      const sessions = await scanSessions(limit);
+      return asCanonical({ count: sessions.length, sessions });
+    }
+  }));
+  register(defineTool({
+    name: "oblivion_session_import",
+    description: "Import Q&A pairs from DSH session logs into the Oblivion knowledge base. Defaults to dry-run (preview only); pass confirm=true to actually write. mode=qa writes one note per turn; mode=digest writes one note per session. Already-imported sessions (by ref sessionId#turn-N) are skipped.",
+    parameters: {
+      sessionIds: {
+        type: "array",
+        items: { type: "string" },
+        description: 'Session IDs to import (e.g. ["session-abc123"]). Empty = all sessions.'
+      },
+      maxPerSession: {
+        type: "number",
+        description: "Max turns to import per session (default 20)."
+      },
+      mode: {
+        type: "string",
+        enum: ["qa", "digest"],
+        description: "qa = one note per turn; digest = one note per session."
+      },
+      dry_run: {
+        type: "boolean",
+        description: "Preview only (default true). Set false + confirm=true to write."
+      },
+      confirm: {
+        type: "boolean",
+        description: "Must be true to actually write to the knowledge base (safety gate)."
+      }
+    },
+    output: { schema: OBJECT_OUTPUT, render: (_args, value) => asText(value) },
+    async execute(args) {
+      const sessionIds = Array.isArray(args.sessionIds) ? args.sessionIds : [];
+      const maxPerSession = typeof args.maxPerSession === "number" && args.maxPerSession > 0 ? Math.min(100, Math.floor(args.maxPerSession)) : 20;
+      const mode = args.mode === "digest" ? "digest" : "qa";
+      const dryRun = args.dry_run !== false && !(args.confirm === true);
+      const confirm = args.confirm === true;
+      if (!confirm && dryRun) {
+        const sessions = sessionIds.length > 0 ? await scanSessions(sessionIds.length) : await scanSessions(20);
+        return asCanonical({
+          mode: "preview",
+          dryRun: true,
+          sessions: sessions.slice(0, maxPerSession > 0 ? sessionIds.length * maxPerSession : void 0),
+          hint: "Pass confirm=true to actually write. Use mode=qa for per-turn notes, mode=digest for per-session digest."
+        });
+      }
+      const existingItems = deps.knowledge.index.all();
+      const knownRefs = /* @__PURE__ */ new Set();
+      for (const item of existingItems) {
+        for (const src of item.sources) {
+          if (src.type === "session") knownRefs.add(src.ref);
+        }
+      }
+      const result = await importSessions(
+        { sessionIds, maxPerSession, mode, dryRun: false, knownRefs },
+        (input) => deps.knowledge.saveStructured(input)
+      );
+      return asCanonical(result);
+    }
+  }));
   return disposers;
 }
 
@@ -3604,7 +3957,7 @@ function clearMcpChannel() {
 }
 
 // oblivion-core/src/mcp/diag.ts
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 function buildChannelDiag(version, report, stage, error) {
   const text = error === void 0 ? "" : error instanceof Error ? error.message : String(error);
   return {
@@ -3627,8 +3980,8 @@ var WRITE_RETRY_MS = 20;
 var writeQueue = Promise.resolve();
 var lastWriteErrors = /* @__PURE__ */ new Map();
 function delay(ms) {
-  return new Promise((resolve2) => {
-    setTimeout(resolve2, ms);
+  return new Promise((resolve3) => {
+    setTimeout(resolve3, ms);
   });
 }
 function writeChannelDiag(dataRoot, diag) {
@@ -3638,7 +3991,7 @@ function writeChannelDiag(dataRoot, diag) {
   return task;
 }
 async function writeDiag(dataRoot, diag) {
-  const path = join12(expandHome(dataRoot), "mcp-channel-diag.json");
+  const path = join13(expandHome(dataRoot), "mcp-channel-diag.json");
   const previous = lastWriteErrors.get(path);
   const payload = previous === void 0 ? diag : { ...diag, writeError: previous };
   for (let attempt2 = 1; attempt2 <= WRITE_ATTEMPTS; attempt2 += 1) {
@@ -3964,10 +4317,10 @@ function resolveConfig(input) {
 
 // oblivion-core/src/settings-file.ts
 import { readFileSync } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 var SETTINGS_FILE = "settings.json";
 function settingsPathOf(dataRoot) {
-  return join13(expandHome(dataRoot), SETTINGS_FILE);
+  return join14(expandHome(dataRoot), SETTINGS_FILE);
 }
 function writableKeys() {
   return Object.keys(DEFAULT_CONFIG).filter((k) => k !== "dataRoot");
@@ -4183,7 +4536,7 @@ function isTrustedCaller(request) {
   }
 }
 function readBody(request) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     const chunks = [];
     let size = 0;
     let overflow = false;
@@ -4197,10 +4550,10 @@ function readBody(request) {
       chunks.push(chunk);
     });
     request.on("end", () => {
-      resolve2({ body: overflow ? "" : Buffer.concat(chunks).toString("utf8"), overflow });
+      resolve3({ body: overflow ? "" : Buffer.concat(chunks).toString("utf8"), overflow });
     });
     request.on("error", () => {
-      resolve2({ body: "", overflow: false });
+      resolve3({ body: "", overflow: false });
     });
   });
 }
@@ -4379,8 +4732,8 @@ function buildRoutes(primary, fallbacks = []) {
 }
 
 // oblivion-core/src/organize/index.ts
-import { readFile as readFile9 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { readFile as readFile10 } from "node:fs/promises";
+import { join as join15 } from "node:path";
 
 // oblivion-core/src/organize/digest-scope.ts
 var DIGEST_EXCERPT_CHARS = 500;
@@ -4593,7 +4946,7 @@ function parseProposals(text, allowed) {
   return { proposals, dropped };
 }
 async function richExcerpt(path) {
-  const raw = await readFile9(path, "utf8").catch(() => "");
+  const raw = await readFile10(path, "utf8").catch(() => "");
   if (raw === "") return "";
   return contentSection(parseNote(raw).body).replace(/\s+/g, " ").slice(0, EXCERPT_CHARS);
 }
@@ -4608,8 +4961,8 @@ function asRoute(value) {
 function createOrganizeService(deps) {
   const cfg = deps.config.organize;
   const at = deps.at ?? (() => Date.now());
-  const proposalsPath = deps.proposalsPath ?? join14(expandHome(deps.config.dataRoot), "organize-proposals.json");
-  const digestPath = deps.digestPath ?? join14(expandHome(deps.config.dataRoot), "organize-digest.json");
+  const proposalsPath = deps.proposalsPath ?? join15(expandHome(deps.config.dataRoot), "organize-proposals.json");
+  const digestPath = deps.digestPath ?? join15(expandHome(deps.config.dataRoot), "organize-digest.json");
   const runtimeNow = deps.runtime;
   let cachedDefault = null;
   let lastAuto = null;
@@ -5059,6 +5412,7 @@ export {
   generatePerspectives,
   handleMcpMessage,
   heuristicScore,
+  importSessions,
   installSettingsRoute,
   isHumanUserMessage,
   isOblivionOriginated,
@@ -5108,6 +5462,7 @@ export {
   safeName,
   sanitizeSettings,
   sanitizeTags,
+  scanSessions,
   settingsPathOf,
   sha1,
   shortHash,
