@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Oblivion 工作区统一入口：用 **DSH 分发的受控 pnpm** 跑安装 / 类型检查 / 测试 / 构建。
 
@@ -95,7 +95,7 @@ Assert-NoLibVersion
 # **上一代** batch 响应（`:681`）；客户端又规定「一个脚本加载失败 → 整条 combo 批跳过」
 # （`dsh-client-modules/lib/client.js:629`）⇒ `web boot: 4 entries did not activate` ⇒
 # 「DeepSeek Harness 无法使用」。四个未激活的 entry 与当时被重写的四个 client 包**逐一对应**：
-# panel / brand / daily-life / vimc。
+# panel / brand / vimc。
 #
 # 修它的成本极低（关掉 App 再构建），漏掉的代价极高（界面起不来，只能走恢复对话框），
 # 而 `pnpm check` 里就含 build ⇒ 靠人记必踩。所以这里机器拦，并把「为什么」写进报错。
@@ -205,7 +205,7 @@ function Assert-DshNotRunning {
     '构建会重写插件 client 产物 ⇒ rev（sha1(mtimeMs, ctimeMs, size)）变化；运行中的 DSH 若此刻启动或刷新界面，' +
     '手里仍是旧 rev 的 URL，宿主对旧 rev 直接 404（且只保留上一代 batch 响应），一个脚本失败会连坐整条 combo 批 ⇒ ' +
     '「web boot: N entries did not activate」⇒「DeepSeek Harness 无法使用」。' +
-    '2026-10-17 01:48Z 实测：4 个未激活 entry = 当时被重写的 4 个 client 包（panel / brand / daily-life / vimc）。' +
+    '2026-10-17 01:48Z 实测：3 个未激活 entry = 当时被重写的 3 个 client 包（panel / brand / vimc）。' +
     '怎么办：① 完全退出 DSH 后重跑；② 或加 -AllowRunning，跑完立刻完全重启 DSH（别只刷新窗口）；' +
     '③ 只改纯 Host 插件（@oblivion/core / @oblivion/http-bridge）时加 -Filter 收窄范围 —— 不重写任何插件产物，DSH 活着也安全。')
 }
@@ -301,3 +301,4 @@ try {
 finally {
   Pop-Location
 }
+

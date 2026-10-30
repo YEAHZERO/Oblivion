@@ -40,7 +40,6 @@
 | [`@oblivion/core`](oblivion-core/README.md) | **0.2.20** | **认知层内核**：knowledge / qa-loop / perspective / feedback / graph / profile + digest / retitle / wiki / stats / organize；**10 个模型面工具** + MCP 协议面（浏览器扩展那条路）+ 设置页读写路由（`/oblivion-core/settings`）；自动整理**两个作用域**（存量笔记改名/标签 · 本会话沉淀 → 会话整理）；补 `engines.dsh` 避免 0.2.1 拒载 |
 | [`@oblivion/panel`](oblivion-panel/README.md) | **0.0.18** | 侧栏观测面板（嵌 [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar)）：捕获率 / 判定曲线 / 调参建议 / **知识库单栏**；三按钮一行（**重启 DSH** / **检查更新** / **清理孤儿进程**）；挂上 **设置 → Oblivion 知识库**（知识库路径 / 自动整理 / 模型与自动切换，读写走 core 的 `/oblivion-core/settings`） |
 | [`@oblivion/http-bridge`](oblivion-http-bridge/README.md) | **0.1.3** | 浏览器扩展接入：固定端口 `42081` 上的 HTTP 传输层（鉴权 / CORS / 体积 / 健康路由），**不含 MCP 逻辑** |
-| [`@oblivion/daily-life`](oblivion-daily-life/README.md) | **0.0.1** | 「**有数**」物品服役账本：日均成本 / 服役进度 / 闲置天数 |
 | [`@oblivion/bundle`](oblivion-bundle/README.md) | **0.0.1** | 安装入口（插件清单 + 预设配置；**不是插件**） |
 
 > **`@oblivion/core` 的边界（一句话）**：设计书的 **Phase 2–6 合并进这一个包**。落盘根**默认 `~/OblivionKB`**
@@ -95,7 +94,7 @@
 
 > 计划外还长出 4 个包（真实需要，不是原设计）：[`panel`](oblivion-panel/README.md)（观测面板）、
 > [`http-bridge`](oblivion-http-bridge/README.md)（浏览器扩展接入）、
-> [`daily-life`](oblivion-daily-life/README.md)（有数 · 物品服役账本）、[`bundle`](oblivion-bundle/README.md)（安装入口）。
+> [`bundle`](oblivion-bundle/README.md)（安装入口）。
 
 **Oblivion 明确不做的**（由宿主提供，见设计书 §2.2 A 组）：Cordis 容器、YAML Patch 组合引擎、
 插件加载器、LLM 适配器、会话与持久化、56 个 `ui-*` 包、沙箱/审批/权限、遥测……
@@ -114,7 +113,6 @@
 | **`@oblivion/core` 插件怎么用/怎么改** | [`oblivion-core/README.md`](oblivion-core/README.md)（设计书见 [`.design/core-认知内核.md`](.design/core-认知内核.md)，含现状对账） |
 | **`@oblivion/panel` 面板怎么用/怎么改** | [`oblivion-panel/README.md`](oblivion-panel/README.md) |
 | **`@oblivion/http-bridge` 浏览器扩展怎么接** | [`oblivion-http-bridge/README.md`](oblivion-http-bridge/README.md) |
-| **`@oblivion/daily-life`（有数）怎么用** | [`oblivion-daily-life/README.md`](oblivion-daily-life/README.md) |
 | **一条命令装齐所有插件（安装入口）** | [`oblivion-bundle/README.md`](oblivion-bundle/README.md) |
 | **Agent 协作规范与业务规则** | [`.action/`](.action/) |
 | **记忆库怎么用（每轮三步固定动作）** | [`.memory/README.md`](.memory/README.md) |
@@ -124,7 +122,7 @@
 
 > **版本有两条轴，别混**：**产品版本**在根 [`VERSION`](VERSION) / [`CHANGELOG.md`](CHANGELOG.md)；
 > **插件版本**在各自包里的 `VERSION`（`oblivion-brand/` · `oblivion-vimc/` · `oblivion-core/` ·
-> `oblivion-panel/` · `oblivion-http-bridge/` · `oblivion-daily-life/` · `oblivion-bundle/`），
+> `oblivion-panel/` · `oblivion-http-bridge/` · `oblivion-bundle/`），
 > 各自 `pnpm run version:bump` **只加第三位**（patch-only）。
 > 两条轴独立递增（设计书 §12.13）。
 
@@ -155,10 +153,6 @@ Oblivion/
 │   ├── src/ · lib/ · scripts/ · test/
 │   └── README.md
 ├── oblivion-http-bridge/    # @oblivion/http-bridge（浏览器扩展接入：固定端口 42081）
-│   ├── VERSION              #   插件版本单一真源
-│   ├── src/ · lib/ · scripts/ · test/
-│   └── README.md
-├── oblivion-daily-life/     # @oblivion/daily-life（「有数」物品服役账本）
 │   ├── VERSION              #   插件版本单一真源
 │   ├── src/ · lib/ · scripts/ · test/
 │   └── README.md
@@ -257,7 +251,6 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 | 未发版 | 2026-10-04 | **范式修正**：重新开仓，改为 DSH 宿主 + `@oblivion/*` 插件生态；只保留设计书、协作框架与已落地的 `@oblivion/brand` |
 | 未发版 | 2026-10-05 | 新增 `@oblivion/vimc`（键盘导航插件，已装机并附验收证据）。**产品版本未递增**：根 `scripts/bump-version.ps1` 不存在，工具待补（见 [`CHANGELOG.md`](CHANGELOG.md)） |
 | 未发版 | 2026-10-06 起 | 拆出 `@oblivion/core`（认知层内核，Phase 2–6 合并）+ `@oblivion/http-bridge`（浏览器扩展接入）；知识库根裁定为 `C:\Library\那些渐渐被遗忘`（DEC-029） |
-| 未发版 | 2026-10-06 起 | 新增 `@oblivion/panel`（侧栏观测面板）、`@oblivion/daily-life`（有数）、`@oblivion/bundle`（安装入口） |
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.12**：`mcp-channel-diag.json` 落盘**串行化**（`apply:done` 不再被后发先至吞掉）+ 失败不再静默；工具链加**构建守卫**（DSH 活着拒绝构建）。**产品版本未递增**：patch-only 规则下各插件自行递增，见 [`CHANGELOG.md`](CHANGELOG.md) |
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.13**：`mdRoot` 默认值回到 **`~/OblivionKB`**（C 方案原意），本机既有知识库改由 **profile 用户层覆盖**（DEC-029 的语义从「代码默认值」降级为「本机配置」） |
 | 未发版 | 2026-10-17 | `@oblivion/core` **0.2.14**：**工具注册可注销** —— 重新装载不再撞 `already registered`、不再让 `apply()` 整个失败（真机现场见 [`CHANGELOG.md`](CHANGELOG.md)） |
@@ -273,3 +266,4 @@ $pnpm = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnp
 ## 许可证
 
 MIT，详见 [LICENSE](LICENSE)。
+

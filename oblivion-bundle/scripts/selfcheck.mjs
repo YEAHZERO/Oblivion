@@ -252,7 +252,7 @@ await check('交叉验证：自带 patch 的包没被插行', () => {
   return `自带 patch：${selfPatching.join(', ')} —— 均未被插行`;
 });
 
-await check('依赖声明覆盖全部五个成员包（装齐靠这里）', () => {
+await check('依赖声明覆盖全部四个成员包（装齐靠这里）', () => {
   const want = [
     '@oblivion/brand',
     '@oblivion/vimc',
@@ -312,3 +312,4 @@ for (const [status, name, detail] of results) {
 }
 console.log(`\n${results.length} 项，失败 ${failed}，跳过 ${skipped}`);
 process.exit(failed > 0 ? 1 : 0);
+
