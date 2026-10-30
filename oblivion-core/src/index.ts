@@ -30,6 +30,7 @@ import { createRetitleService } from './knowledge/retitle.js';
 import { createWikiService } from './knowledge/wiki.js';
 import { configSources, createSettingsService, mergeSettingsConfig, readSettingsSync } from './settings-file.js';
 import { installSettingsRoute } from './settings-route.js';
+import { installSessionRoutes } from './session-route.js';
 import { registerPerspective } from './perspective/index.js';
 import { OBLIVION_SYSTEM_PROMPT, resolveSectionOrder } from './prompt.js';
 import { attachAgentFromPayload, readRelatedHint, setAgentInstaller } from './prompt-inject.js';
@@ -613,6 +614,21 @@ function applyInner(
   installSettingsRoute(ctx, {
     settings: settingsService,
     catalog: () => organize.catalog(),
+    version: VERSION,
+    log: (message) => ctx.logger?.info?.(config.logPrefix + ' ' + message),
+    warn: (message) => ctx.logger?.warn?.(config.logPrefix + ' ' + message),
+  });
+
+  /**
+   * **DSH 会话导入的 HTTP 通路**（`GET /oblivion-core/sessions` +
+   * `POST /oblivion-core/sessions/import`）。
+   *
+   * 与设置路由同一条纪律：写语义（导入 = 写知识库）只有一份，在 core；
+   * 面板 `fetch` 同源（面板是只读数据面，跨插件服务表取不到 `oblivion`）。
+   * 去重口径与模型工具 `oblivion_session_import` 完全一致（`sources[].ref`）。
+   */
+  installSessionRoutes(ctx, {
+    knowledge,
     version: VERSION,
     log: (message) => ctx.logger?.info?.(config.logPrefix + ' ' + message),
     warn: (message) => ctx.logger?.warn?.(config.logPrefix + ' ' + message),

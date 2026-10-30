@@ -30,7 +30,7 @@ __export(index_exports, {
   inject: () => inject
 });
 module.exports = __toCommonJS(index_exports);
-var import_react5 = require("react");
+var import_react6 = require("react");
 
 // src/client/diag.ts
 function postDiag(payload) {
@@ -46,7 +46,7 @@ function postDiag(payload) {
 }
 
 // src/client/Panel.tsx
-var import_react3 = require("react");
+var import_react4 = require("react");
 
 // src/client/RestartControl.tsx
 var import_react = require("react");
@@ -533,6 +533,238 @@ function PluginUpdates() {
   ] });
 }
 
+// src/client/SessionImport.tsx
+var import_react3 = require("react");
+var import_jsx_runtime3 = require("react/jsx-runtime");
+var SESSIONS_PATH = "/oblivion-core/sessions";
+var IMPORT_PATH = "/oblivion-core/sessions/import";
+var BTN3 = {
+  border: "1px solid rgba(127,127,127,0.35)",
+  borderRadius: 5,
+  background: "transparent",
+  cursor: "pointer",
+  padding: "2px 8px",
+  fontSize: 11
+};
+function SessionImportControl() {
+  const [phase, setPhase] = (0, import_react3.useState)("idle");
+  const [sessions, setSessions] = (0, import_react3.useState)([]);
+  const [selected, setSelected] = (0, import_react3.useState)(/* @__PURE__ */ new Set());
+  const [message, setMessage] = (0, import_react3.useState)("");
+  const scan = (0, import_react3.useCallback)(async () => {
+    setPhase("scanning");
+    setMessage("");
+    try {
+      const response = await fetch(SESSIONS_PATH, {
+        headers: { accept: "application/json" },
+        credentials: "same-origin"
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || body?.ok !== true) {
+        setPhase("error");
+        setMessage(`\u626B\u63CF\u5931\u8D25\uFF1A${body?.error ?? `HTTP ${response.status}`}`);
+        return;
+      }
+      const list = body.sessions ?? [];
+      setSessions(list);
+      setSelected(new Set(list.map((s) => s.sessionId)));
+      setPhase(list.length > 0 ? "listing" : "done");
+      if (list.length === 0) setMessage("\u6CA1\u6709\u53EF\u5BFC\u5165\u7684 DSH \u4F1A\u8BDD\u3002");
+    } catch (error) {
+      setPhase("error");
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+  const preview = (0, import_react3.useCallback)(async () => {
+    const ids = [...selected];
+    if (ids.length === 0) {
+      setMessage("\u6CA1\u6709\u52FE\u9009\u4EFB\u4F55\u4F1A\u8BDD\u3002");
+      return;
+    }
+    setPhase("previewing");
+    setMessage("");
+    try {
+      const response = await fetch(IMPORT_PATH, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionIds: ids, dry_run: true }),
+        credentials: "same-origin"
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || body?.ok !== true) {
+        setPhase("error");
+        setMessage(`\u9884\u89C8\u5931\u8D25\uFF1A${body?.error ?? `HTTP ${response.status}`}`);
+        return;
+      }
+      setPhase("listing");
+      setMessage("\u5DF2\u9884\u89C8\uFF08\u672A\u5199\u5165\uFF09\u3002\u70B9\u300C\u786E\u8BA4\u5BFC\u5165\u300D\u624D\u4F1A\u843D\u76D8\u3002");
+    } catch (error) {
+      setPhase("error");
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, [selected]);
+  const confirmImport = (0, import_react3.useCallback)(async () => {
+    const ids = [...selected];
+    if (ids.length === 0) {
+      setMessage("\u6CA1\u6709\u52FE\u9009\u4EFB\u4F55\u4F1A\u8BDD\u3002");
+      return;
+    }
+    setPhase("importing");
+    setMessage("");
+    try {
+      const response = await fetch(IMPORT_PATH, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionIds: ids, confirm: true, mode: "qa" }),
+        credentials: "same-origin"
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || body?.ok !== true) {
+        setPhase("error");
+        setMessage(`\u5BFC\u5165\u5931\u8D25\uFF1A${body?.error ?? `HTTP ${response.status}`}`);
+        return;
+      }
+      const imported = body.imported ?? 0;
+      const skipped = body.skipped ?? 0;
+      const failures = body.failures?.length ?? 0;
+      setPhase("done");
+      setMessage(
+        `\u5DF2\u5BFC\u5165 ${imported} \u6761\uFF0C\u8DF3\u8FC7 ${skipped} \u6761${failures > 0 ? `\uFF0C\u5931\u8D25 ${failures} \u6761` : ""}\u3002\u5237\u65B0\u9762\u677F\u53EF\u89C1\u3002`
+      );
+    } catch (error) {
+      setPhase("error");
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, [selected]);
+  const toggle = (id) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+  };
+  const busy = phase === "scanning" || phase === "previewing" || phase === "importing";
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        "button",
+        {
+          type: "button",
+          style: { ...BTN3, cursor: busy ? "default" : "pointer" },
+          disabled: busy,
+          onClick: () => {
+            void scan();
+          },
+          children: phase === "scanning" ? "\u6B63\u5728\u626B\u63CF\u2026" : "\u5BFC\u5165 DSH \u4F1A\u8BDD"
+        }
+      ),
+      phase === "listing" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          "button",
+          {
+            type: "button",
+            style: { ...BTN3, cursor: busy ? "default" : "pointer" },
+            disabled: busy,
+            onClick: () => {
+              void preview();
+            },
+            children: "\u9884\u89C8"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          "button",
+          {
+            type: "button",
+            style: {
+              ...BTN3,
+              cursor: busy ? "default" : "pointer",
+              background: "#2d6cdf",
+              border: "1px solid #2d6cdf",
+              color: "#fff"
+            },
+            disabled: busy,
+            onClick: () => {
+              void confirmImport();
+            },
+            children: "\u786E\u8BA4\u5BFC\u5165"
+          }
+        )
+      ] }) : null,
+      message !== "" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { fontSize: 11, opacity: 0.75 }, children: message }) : null
+    ] }),
+    phase === "listing" ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+      "div",
+      {
+        "data-obl-session-dialog": "",
+        style: {
+          position: "fixed",
+          inset: 0,
+          zIndex: 2147483e3,
+          background: "rgba(0,0,0,0.35)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        },
+        children: /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+          "div",
+          {
+            role: "dialog",
+            "aria-modal": "true",
+            "aria-label": "\u53EF\u5BFC\u5165\u7684 DSH \u4F1A\u8BDD",
+            style: {
+              width: 460,
+              maxWidth: "calc(100vw - 48px)",
+              background: "#ffffff",
+              color: "#1a1a1a",
+              borderRadius: 8,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+              padding: "18px 20px 16px",
+              fontFamily: 'system-ui, "Segoe UI", sans-serif'
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { fontSize: 15, fontWeight: 600, marginBottom: 10 }, children: [
+                "\u53EF\u5BFC\u5165\u7684 DSH \u4F1A\u8BDD\uFF08",
+                String(sessions.length),
+                "\uFF09"
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { maxHeight: 260, overflow: "auto", fontSize: 12, lineHeight: "1.8" }, children: sessions.map((s) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { style: { display: "flex", gap: 8, alignItems: "center" }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                  "input",
+                  {
+                    type: "checkbox",
+                    checked: selected.has(s.sessionId),
+                    onChange: () => {
+                      toggle(s.sessionId);
+                    }
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: s.title }),
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { opacity: 0.7, whiteSpace: "nowrap" }, children: [
+                  s.qaCount,
+                  " QA \xB7 ",
+                  s.sizeKb,
+                  "KB"
+                ] })
+              ] }, s.sessionId)) }),
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "button",
+                {
+                  type: "button",
+                  style: { ...BTN3, padding: "4px 16px", fontSize: 12, borderRadius: 5 },
+                  onClick: () => {
+                    setPhase("idle");
+                    setMessage("");
+                  },
+                  children: "\u5173\u95ED"
+                }
+              ) })
+            ]
+          }
+        )
+      }
+    ) : null
+  ] });
+}
+
 // src/client/format.ts
 function percent(ratio) {
   if (typeof ratio !== "number" || !Number.isFinite(ratio)) return "\u2014";
@@ -629,11 +861,11 @@ var POLARIS_ICON_COLOR = "#4176e6";
 var POLARIS_ICON_PATH = "M512 132L579 350.3L780.7 243.3L673.7 445L892 512L673.7 579L780.7 780.7L579 673.7L512 892L445 673.7L243.3 780.7L350.3 579L132 512L350.3 445L243.3 243.3L445 350.3Z";
 
 // src/client/ScoreChart.tsx
-var import_jsx_runtime3 = require("react/jsx-runtime");
+var import_jsx_runtime4 = require("react/jsx-runtime");
 var REJECT_COLOR = "#d9534f";
 function ScoreChart(props) {
   const { curve } = props;
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
     "svg",
     {
       viewBox: "0 0 " + curve.width + " " + curve.height,
@@ -641,8 +873,8 @@ function ScoreChart(props) {
       role: "img",
       "aria-label": "\u5224\u5B9A\u4EF7\u5206\u66F2\u7EBF\uFF1A" + curve.points + " \u4E2A\u70B9\uFF0C\u533A\u95F4 " + (curve.min ?? 0).toFixed(2) + "\u2013" + (curve.max ?? 0).toFixed(2) + (curve.threshold === null ? "" : "\uFF0C\u9608\u503C " + curve.threshold.toFixed(2)),
       children: [
-        curve.ticks.map((tick) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("g", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        curve.ticks.map((tick) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("g", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
             "line",
             {
               x1: curve.padX,
@@ -653,9 +885,9 @@ function ScoreChart(props) {
               strokeWidth: 1
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("text", { x: curve.width - 1, y: tick.y - 2, fontSize: 8, textAnchor: "end", fill: "currentColor", opacity: 0.45, children: tick.label })
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("text", { x: curve.width - 1, y: tick.y - 2, fontSize: 8, textAnchor: "end", fill: "currentColor", opacity: 0.45, children: tick.label })
         ] }, tick.label)),
-        curve.thresholdY === null ? null : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        curve.thresholdY === null ? null : /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
           "line",
           {
             x1: curve.padX,
@@ -668,17 +900,17 @@ function ScoreChart(props) {
             opacity: 0.75
           }
         ),
-        curve.area === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: curve.area, fill: POLARIS_ICON_COLOR, opacity: 0.12, stroke: "none" }),
-        curve.trend === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: curve.trend, fill: "none", stroke: POLARIS_ICON_COLOR, strokeWidth: 1.4, opacity: 0.5 }),
-        curve.line === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("path", { d: curve.line, fill: "none", stroke: POLARIS_ICON_COLOR, strokeWidth: 1.6, strokeLinejoin: "round" }),
-        curve.dots.map((dot, index) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+        curve.area === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("path", { d: curve.area, fill: POLARIS_ICON_COLOR, opacity: 0.12, stroke: "none" }),
+        curve.trend === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("path", { d: curve.trend, fill: "none", stroke: POLARIS_ICON_COLOR, strokeWidth: 1.4, opacity: 0.5 }),
+        curve.line === "" ? null : /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("path", { d: curve.line, fill: "none", stroke: POLARIS_ICON_COLOR, strokeWidth: 1.6, strokeLinejoin: "round" }),
+        curve.dots.map((dot, index) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
           "circle",
           {
             cx: dot.x,
             cy: dot.y,
             r: dot.pass ? 2.2 : 2.6,
             fill: dot.pass ? POLARIS_ICON_COLOR : REJECT_COLOR,
-            children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("title", { children: relativeTime(dot.at) + " \xB7 " + actionLabel(dot.action) + " \xB7 \u5206\u503C " + scoreText(dot.score) })
+            children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("title", { children: relativeTime(dot.at) + " \xB7 " + actionLabel(dot.action) + " \xB7 \u5206\u503C " + scoreText(dot.score) })
           },
           index
         ))
@@ -1009,7 +1241,7 @@ function knowledgeView(rows, options = {}) {
 }
 
 // src/client/Panel.tsx
-var import_jsx_runtime4 = require("react/jsx-runtime");
+var import_jsx_runtime5 = require("react/jsx-runtime");
 var STATUS_ROUTE = "/oblivion-panel/status";
 var S = {
   root: {
@@ -1048,9 +1280,9 @@ var S = {
   li: { padding: "3px 0", borderTop: "1px solid rgba(127,127,127,0.16)" }
 };
 function kpi(label, value) {
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.kpiCell, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: S.kpiLabel, children: label }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: S.kpiValue, children: value })
+  return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.kpiCell, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S.kpiLabel, children: label }),
+    /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S.kpiValue, children: value })
   ] });
 }
 function rowMeta(row) {
@@ -1066,17 +1298,17 @@ function rowMeta(row) {
   return parts.length > 0 ? parts.join(" \xB7 ") : "\u2014";
 }
 function detailLine(row, onOpenFile) {
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { ...S.dim, ...S.mono }, children: detailParts(row).map((part, index) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { ...S.dim, ...S.mono }, children: detailParts(row).map((part, index) => /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { children: [
     index > 0 ? " \xB7 " : "",
     part.label,
     "\uFF1A",
     part.wiki !== void 0 && part.wiki.length > 0 ? part.wiki.map(
-      (page, pageIndex) => page.path === void 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { children: [
+      (page, pageIndex) => page.path === void 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { children: [
         pageIndex > 0 ? "\u3001" : "",
         page.title
-      ] }, page.title) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { children: [
+      ] }, page.title) : /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { children: [
         pageIndex > 0 ? "\u3001" : "",
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
           "a",
           {
             href: "#",
@@ -1104,9 +1336,9 @@ function emptyReason(data) {
   return "\u6709 " + turns + " \u8F6E\u5224\u5B9A\uFF0C\u4F46\u90FD\u8FD8\u6CA1\u6C89\u6DC0\uFF1A\u539F\u56E0\u89C1\u4E0B\u9762\u7684\u300C\u6700\u8FD1\u5224\u5B9A\u300D\u3002";
 }
 function OblivionPanel(props) {
-  const [state, setState] = (0, import_react3.useState)({ status: "loading" });
-  const [showAllKnowledge, setShowAllKnowledge] = (0, import_react3.useState)(false);
-  const load = (0, import_react3.useCallback)(async () => {
+  const [state, setState] = (0, import_react4.useState)({ status: "loading" });
+  const [showAllKnowledge, setShowAllKnowledge] = (0, import_react4.useState)(false);
+  const load = (0, import_react4.useCallback)(async () => {
     setState((prev) => prev.status === "ready" ? prev : { status: "loading" });
     try {
       const response = await fetch(STATUS_ROUTE, { cache: "no-store", credentials: "same-origin" });
@@ -1117,19 +1349,19 @@ function OblivionPanel(props) {
       setState({ status: "error", error: error instanceof Error ? error.message : String(error) });
     }
   }, []);
-  (0, import_react3.useEffect)(() => {
+  (0, import_react4.useEffect)(() => {
     if (props.visible === false) return;
     void load();
   }, [load, props.visible]);
-  const body = (0, import_react3.useMemo)(() => {
-    if (state.status === "loading") return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: S.dim, children: "\u8BFB\u53D6\u4E2D\u2026" });
+  const body = (0, import_react4.useMemo)(() => {
+    if (state.status === "loading") return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S.dim, children: "\u8BFB\u53D6\u4E2D\u2026" });
     if (state.status === "error") {
-      return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.card, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { children: [
+      return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.card, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { children: [
           "\u8BFB\u4E0D\u5230\u89C2\u6D4B\u6570\u636E\uFF1A",
           state.error
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.dim, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.dim, children: [
           "\u82E5\u521A\u88C5\u8F7D\u672C\u63D2\u4EF6\uFF0C\u9700\u8981**\u91CD\u542F\u4E00\u6B21 App**\uFF08Node \u534A\u8FB9\u6539\u52A8\u4E0D\u4F1A\u70ED\u52A0\u8F7D\uFF09\u3002\u8DEF\u7531\uFF1A",
           STATUS_ROUTE
         ] })
@@ -1152,9 +1384,9 @@ function OblivionPanel(props) {
     const wikis = data.wikis ?? [];
     const knowledge = mergeKnowledge({ notes, digests, wikis, items });
     const knowledgeListView = knowledgeView(knowledge, { showAll: showAllKnowledge });
-    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.row, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.dim, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.row, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.dim, children: [
           "core ",
           core ? "v" + String(core.version ?? "?") : "\u672A\u88C5\u8F7D",
           " \xB7 \u9762\u677F v",
@@ -1162,47 +1394,48 @@ function OblivionPanel(props) {
           " \xB7 \u5237\u65B0\u4E8E ",
           relativeTime(data.generatedAt)
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { type: "button", style: S.btn, onClick: () => void load(), children: "\u5237\u65B0" })
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", style: S.btn, onClick: () => void load(), children: "\u5237\u65B0" })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { ...S.row, marginTop: 6, justifyContent: "flex-start", gap: 8 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(RestartControl, {}),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PluginUpdates, {}),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(OrphanControl, {})
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { ...S.row, marginTop: 6, justifyContent: "flex-start", gap: 8 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(RestartControl, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(PluginUpdates, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(OrphanControl, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(SessionImportControl, {})
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.kpi, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.kpi, children: [
         kpi("\u6355\u83B7\u7387", percent(captureRate)),
         kpi("\u5224\u5B9A\u8F6E\u6570", String(turns ?? "\u2014")),
         kpi("\u5DF2\u8BC4\u4F30", String(evaluated ?? "\u2014")),
         kpi("\u5DF2\u6C89\u6DC0", String(captured ?? "\u2014"))
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { ...S.dim, marginTop: 2 }, children: live ? "\u7EDF\u8BA1\u5B9E\u65F6\u8BFB\u81EA " + live.parsed + " \u884C\u7559\u75D5\uFF08\u4FDD\u7559\u671F " + live.windowDays + " \u5929" + (live.dropped > 0 ? "\uFF0C\u6309\u4FDD\u7559\u671F/\u4E0A\u9650\u4E22\u5F03 " + live.dropped + " \u884C" : "") + "\uFF09" : "\u7EDF\u8BA1\u6765\u81EA core \u88C5\u8F7D\u65F6\u7684 status.json \u5FEB\u7167\uFF08\u9700\u8981\u9762\u677F host \u2265 0.0.8 \u624D\u662F\u5B9E\u65F6\u7684\uFF09" }),
-      !core || !turns ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { ...S.card, marginTop: 10 }, children: emptyReason(data) }) : null,
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { ...S.dim, marginTop: 4 }, children: blocker ? "\u4E3B\u8981\u62E6\u622A\u539F\u56E0\uFF1A" + reasonLabel(blocker.reason) + "\uFF08" + blocker.count + " \u6B21\uFF09" : (turns ?? 0) > 0 ? "\u5168\u90E8\u901A\u8FC7\uFF0C\u65E0\u62E6\u622A" : "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55" }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.h, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { ...S.dim, marginTop: 2 }, children: live ? "\u7EDF\u8BA1\u5B9E\u65F6\u8BFB\u81EA " + live.parsed + " \u884C\u7559\u75D5\uFF08\u4FDD\u7559\u671F " + live.windowDays + " \u5929" + (live.dropped > 0 ? "\uFF0C\u6309\u4FDD\u7559\u671F/\u4E0A\u9650\u4E22\u5F03 " + live.dropped + " \u884C" : "") + "\uFF09" : "\u7EDF\u8BA1\u6765\u81EA core \u88C5\u8F7D\u65F6\u7684 status.json \u5FEB\u7167\uFF08\u9700\u8981\u9762\u677F host \u2265 0.0.8 \u624D\u662F\u5B9E\u65F6\u7684\uFF09" }),
+      !core || !turns ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { ...S.card, marginTop: 10 }, children: emptyReason(data) }) : null,
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { ...S.dim, marginTop: 4 }, children: blocker ? "\u4E3B\u8981\u62E6\u622A\u539F\u56E0\uFF1A" + reasonLabel(blocker.reason) + "\uFF08" + blocker.count + " \u6B21\uFF09" : (turns ?? 0) > 0 ? "\u5168\u90E8\u901A\u8FC7\uFF0C\u65E0\u62E6\u622A" : "\u8FD8\u6CA1\u6709\u5224\u5B9A\u8BB0\u5F55" }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.h, children: [
         "\u8C03\u53C2\u5EFA\u8BAE",
         " ",
-        hints.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { style: S.dim, children: [
+        hints.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { style: S.dim, children: [
           "\uFF08\u6682\u65E0\uFF1Acore \u5728\u88C5\u8F7D\u65F6\u6309\u5DF2\u8BC4\u4F30 ",
           evaluated ?? 0,
           " \u8F6E\u7B97\uFF0C\u6837\u672C\u4E0D\u8DB3 20 \u8F6E\u523B\u610F\u4E0D\u5F00\u53E3\uFF09"
-        ] }) : /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: S.dim, children: "\uFF08core \u5728\u88C5\u8F7D\u65F6\u7B97\uFF0C\u4E0D\u662F\u5B9E\u65F6\u7684\uFF09" })
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S.dim, children: "\uFF08core \u5728\u88C5\u8F7D\u65F6\u7B97\uFF0C\u4E0D\u662F\u5B9E\u65F6\u7684\uFF09" })
       ] }),
-      hints.map((hint, index) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: S.card, children: hintLine(hint) }, String(hint.key ?? index))),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: S.h, children: "\u5224\u5B9A\u66F2\u7EBF" }),
-      curve.points === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.dim, children: [
+      hints.map((hint, index) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S.card, children: hintLine(hint) }, String(hint.key ?? index))),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S.h, children: "\u5224\u5B9A\u66F2\u7EBF" }),
+      curve.points === 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.dim, children: [
         "\u8FD8\u6CA1\u6709\u5E26\u5206\u503C\u7684\u5224\u5B9A \u2014\u2014 \u66F2\u7EBF\u4ECE\u7B2C\u4E00\u6761\u8D70\u5B8C\u7B5B\u9009\u7684\u7559\u75D5\u5F00\u59CB\uFF08",
         data.trace?.path ?? "decisions.jsonl",
         "\uFF09\u3002"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { ...S.card, padding: "6px 8px" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ScoreChart, { curve }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { ...S.dim, ...S.mono, marginTop: 2 }, children: curveCaption(series, curve) })
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { ...S.card, padding: "6px 8px" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(ScoreChart, { curve }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { ...S.dim, ...S.mono, marginTop: 2 }, children: curveCaption(series, curve) })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.h, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.h, children: [
         "\u77E5\u8BC6\u5E93\uFF08",
         knowledge.length,
         "\uFF09"
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { ...S.dim, marginBottom: 4 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { ...S.dim, marginBottom: 4 }, children: [
         "\u95EE\u7B54\u7B14\u8BB0 ",
         notes.length,
         " \xB7 \u4F1A\u8BDD\u6574\u7406 ",
@@ -1213,16 +1446,16 @@ function OblivionPanel(props) {
         items.length,
         knowledge.length !== notes.length + digests.length + items.length ? "\uFF08\u540C\u4E3B\u9898\u7684\u591A\u7248\u5E76\u4F5C\u4E00\u884C\uFF0C\u5171 " + knowledge.length + " \u884C\uFF09" : ""
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { ...S.dim, marginBottom: 6 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { ...S.dim, marginBottom: 6 }, children: [
         "\u8DEF\u5F84\u4E0E\u81EA\u52A8\u6574\u7406\uFF1A",
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { opacity: 1 }, children: "\u8BBE\u7F6E \u2192 Oblivion \u77E5\u8BC6\u5E93" })
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { opacity: 1 }, children: "\u8BBE\u7F6E \u2192 Oblivion \u77E5\u8BC6\u5E93" })
       ] }),
-      knowledge.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.dim, children: [
+      knowledge.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.dim, children: [
         "\u8FD8\u6CA1\u6709\u6761\u76EE\uFF0C\u4E5F\u6CA1\u6709\u7B14\u8BB0\uFF08",
         data.mdRoot ?? "\u2014",
         "\uFF09"
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { style: S.list, children: knowledgeListView.visible.map((row) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("li", { style: S.li, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { children: row.notePath !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { style: S.list, children: knowledgeListView.visible.map((row) => /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("li", { style: S.li, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { children: row.notePath !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
           "a",
           {
             href: "#",
@@ -1235,10 +1468,10 @@ function OblivionPanel(props) {
             children: row.title
           }
         ) : row.title }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { ...S.dim, ...S.mono }, children: rowMeta(row) }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { ...S.dim, ...S.mono }, children: rowMeta(row) }),
         detailLine(row, props.onOpenFile)
       ] }, row.key)) }),
-      knowledgeListView.itemOnly.length > KNOWLEDGE_ITEM_LIMIT || showAllKnowledge ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+      knowledgeListView.itemOnly.length > KNOWLEDGE_ITEM_LIMIT || showAllKnowledge ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
         "button",
         {
           type: "button",
@@ -1247,21 +1480,21 @@ function OblivionPanel(props) {
           children: showAllKnowledge ? "\u53EA\u770B\u6709\u7B14\u8BB0\u7684 " + knowledgeListView.backbone.length + " \u884C" : "\u5C55\u5F00\u5168\u90E8 " + knowledge.length + " \u884C\uFF08\u53E6\u6709 " + knowledgeListView.hidden + " \u884C\u4EC5\u5165\u5E93\uFF09"
         }
       ) : null,
-      (data.problems ?? []).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: S.h, children: [
+      (data.problems ?? []).length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S.h, children: [
           "\u8BFB\u53D6\u544A\u8B66\uFF08",
           data.problems?.length,
           "\uFF09"
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { style: S.list, children: (data.problems ?? []).map((problem, index) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("li", { style: { ...S.li, ...S.mono, ...S.dim }, children: problem }, index)) })
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { style: S.list, children: (data.problems ?? []).map((problem, index) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { style: { ...S.li, ...S.mono, ...S.dim }, children: problem }, index)) })
       ] }) : null
     ] });
   }, [state, load, props.onOpenFile, showAllKnowledge]);
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: S.root, children: body });
+  return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S.root, children: body });
 }
 
 // src/client/SettingsSection.tsx
-var import_react4 = require("react");
+var import_react5 = require("react");
 
 // src/client/settings-model.ts
 var SETTINGS_SECTION_ID = "oblivion-knowledge";
@@ -1601,7 +1834,7 @@ async function postSettings(patch, options = {}) {
 }
 
 // src/client/SettingsSection.tsx
-var import_jsx_runtime5 = require("react/jsx-runtime");
+var import_jsx_runtime6 = require("react/jsx-runtime");
 var LABEL = "var(--dsw-alias-label-primary, currentColor)";
 var MUTED = "var(--dsw-alias-label-tertiary, #8b93a1)";
 var BORDER = "var(--dsw-alias-border-l2, #e5e7eb)";
@@ -1702,18 +1935,18 @@ var S2 = {
   }
 };
 function Badge({ source }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.badge, title: "\u8FD9\u4E2A\u503C\u6700\u7EC8\u7531\u8C01\u5B9A\uFF1A" + configSourceLabel(source), children: configSourceLabel(source) });
+  return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.badge, title: "\u8FD9\u4E2A\u503C\u6700\u7EC8\u7531\u8C01\u5B9A\uFF1A" + configSourceLabel(source), children: configSourceLabel(source) });
 }
 function NoticeLine({ notice }) {
   const style = notice.kind === "error" ? S2.errorText : notice.kind === "warn" ? S2.warnText : S2.okText;
-  return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style, children: notice.text });
+  return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style, children: notice.text });
 }
 function OblivionSettingsSection() {
-  const [load, setLoad] = (0, import_react4.useState)({ status: "loading" });
-  const [form, setForm] = (0, import_react4.useState)({});
-  const [busy, setBusy] = (0, import_react4.useState)(false);
-  const [notice, setNotice] = (0, import_react4.useState)(null);
-  const reload = (0, import_react4.useCallback)(async () => {
+  const [load, setLoad] = (0, import_react5.useState)({ status: "loading" });
+  const [form, setForm] = (0, import_react5.useState)({});
+  const [busy, setBusy] = (0, import_react5.useState)(false);
+  const [notice, setNotice] = (0, import_react5.useState)(null);
+  const reload = (0, import_react5.useCallback)(async () => {
     const outcome = await loadSettings();
     if (outcome.ok) {
       setLoad({ status: "ready", payload: outcome.payload });
@@ -1747,10 +1980,10 @@ function OblivionSettingsSection() {
       });
     }
   }, []);
-  (0, import_react4.useEffect)(() => {
+  (0, import_react5.useEffect)(() => {
     void reload();
   }, [reload]);
-  const save = (0, import_react4.useCallback)(async () => {
+  const save = (0, import_react5.useCallback)(async () => {
     const payload2 = load.status === "ready" ? load.payload : null;
     if (payload2 === null) return;
     const { patch, keys } = buildPatch(form);
@@ -1771,31 +2004,31 @@ function OblivionSettingsSection() {
     setNotice(describeSaveResult(outcome.result));
   }, [form, load]);
   if (load.status === "loading") {
-    return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S2.root, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.card, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { style: S2.root, children: /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.card, children: [
       "\u8BFB\u53D6\u4E2D\u2026\uFF08",
       SETTINGS_ROUTE,
       "\uFF09"
     ] }) });
   }
   if (load.status === "error") {
-    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.root, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h2", { style: S2.title, children: SETTINGS_SECTION_LABEL }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.card, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.root, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("h2", { style: S2.title, children: SETTINGS_SECTION_LABEL }),
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.card, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { children: [
           "\u8BFB\u4E0D\u5230\u8BBE\u7F6E\uFF1A",
           load.error
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("p", { style: S2.hint, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("p", { style: S2.hint, children: [
           "\u8FD9\u6761\u901A\u8DEF\u7531 ",
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("code", { children: "@oblivion/core" }),
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("code", { children: "@oblivion/core" }),
           " \u63D0\u4F9B\uFF08",
           SETTINGS_ROUTE,
           "\uFF09\u3002\u82E5\u521A\u66F4\u65B0\u8FC7\u63D2\u4EF6\uFF0C",
           " ",
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("strong", { children: "\u5B8C\u5168\u91CD\u542F DSH" }),
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("strong", { children: "\u5B8C\u5168\u91CD\u542F DSH" }),
           " \u4E4B\u540E\u518D\u770B \u2014\u2014 Node \u534A\u8FB9\u7684\u6539\u52A8\u4E0D\u4F1A\u70ED\u52A0\u8F7D\u3002"
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", style: S2.btn, onClick: () => void reload(), children: "\u91CD\u8BD5" })
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", style: S2.btn, onClick: () => void reload(), children: "\u91CD\u8BD5" })
       ] })
     ] });
   }
@@ -1818,16 +2051,16 @@ function OblivionSettingsSection() {
     const isDirty = form[field.key] !== void 0;
     const willReset = form[field.key] === null;
     const waitingRestart = pending.includes(field.key);
-    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.field, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.fieldHead, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { fontSize: 12 }, children: field.label }),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Badge, { source: resolved.source }),
-        waitingRestart ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.badgeWarn, title: "\u8BBE\u7F6E\u5C42\u5DF2\u7ECF\u5199\u4E86\u8FD9\u4E2A\u503C\uFF0C\u4F46\u6B63\u5728\u8DD1\u7684 core \u8FD8\u662F\u65E7\u503C", children: "\u5F85\u91CD\u542F" }) : null,
-        isDirty ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.badgeWarn, title: willReset ? "\u4FDD\u5B58\u540E\u4F1A\u4ECE\u8BBE\u7F6E\u5C42\u5220\u6389\u8FD9\u4E00\u952E\uFF0C\u56DE\u5230\u4E0B\u5C42\u914D\u7F6E" : "\u6709\u672A\u4FDD\u5B58\u7684\u6539\u52A8", children: willReset ? "\u5C06\u6062\u590D\u9ED8\u8BA4" : "\u5DF2\u6539" }) : null
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.field, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.fieldHead, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: { fontSize: 12 }, children: field.label }),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Badge, { source: resolved.source }),
+        waitingRestart ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.badgeWarn, title: "\u8BBE\u7F6E\u5C42\u5DF2\u7ECF\u5199\u4E86\u8FD9\u4E2A\u503C\uFF0C\u4F46\u6B63\u5728\u8DD1\u7684 core \u8FD8\u662F\u65E7\u503C", children: "\u5F85\u91CD\u542F" }) : null,
+        isDirty ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.badgeWarn, title: willReset ? "\u4FDD\u5B58\u540E\u4F1A\u4ECE\u8BBE\u7F6E\u5C42\u5220\u6389\u8FD9\u4E00\u952E\uFF0C\u56DE\u5230\u4E0B\u5C42\u914D\u7F6E" : "\u6709\u672A\u4FDD\u5B58\u7684\u6539\u52A8", children: willReset ? "\u5C06\u6062\u590D\u9ED8\u8BA4" : "\u5DF2\u6539" }) : null
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { ...S2.row, marginTop: 4 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: { ...S2.row, marginTop: 4 }, children: [
         control,
-        resolved.fromSettings || isDirty ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+        resolved.fromSettings || isDirty ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
           "button",
           {
             type: "button",
@@ -1838,14 +2071,14 @@ function OblivionSettingsSection() {
           }
         ) : null
       ] }),
-      field.hint !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: S2.hint, children: field.hint }) : null
+      field.hint !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style: S2.hint, children: field.hint }) : null
     ] }, field.key);
   }
   function controlOf(field) {
     if (field.kind === "bool") {
       const checked = display(field.key) === true;
-      return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
           "input",
           {
             type: "checkbox",
@@ -1853,14 +2086,14 @@ function OblivionSettingsSection() {
             onChange: (event) => setForm(editField(form, payload, field.key, event.target.checked))
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { fontSize: 12, opacity: 0.8 }, children: checked ? "\u5F00" : "\u5173" })
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: { fontSize: 12, opacity: 0.8 }, children: checked ? "\u5F00" : "\u5173" })
       ] });
     }
     if (field.kind === "number") {
       const scale = field.scale ?? 1;
       const text3 = numberText(display(field.key), scale);
-      return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
           "input",
           {
             type: "number",
@@ -1876,7 +2109,7 @@ function OblivionSettingsSection() {
             }
           }
         ),
-        field.unit !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.mono, children: field.unit }) : null
+        field.unit !== void 0 ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.mono, children: field.unit }) : null
       ] });
     }
     if (field.kind === "select") {
@@ -1884,24 +2117,24 @@ function OblivionSettingsSection() {
       const current = String(display(field.key) ?? "");
       const options = isModel ? withCurrent(modelOptions(catalog, primaryProvider), current) : withCurrent(providerOptions(catalog), current);
       const problem = isModel ? routeProblem(catalog, primaryProvider, current) : routeProblem(catalog, current, String(display("organize.model") ?? ""));
-      return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
           "select",
           {
             style: { ...S2.select, minWidth: isModel ? 220 : 200 },
             value: current,
             onChange: (event) => setForm(editField(form, payload, field.key, event.target.value)),
-            children: options.map((option) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: option.value, children: option.label }, option.value))
+            children: options.map((option) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("option", { value: option.value, children: option.label }, option.value))
           }
         ),
-        problem !== null ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.warnText, children: problem }) : null
+        problem !== null ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.warnText, children: problem }) : null
       ] });
     }
     if (field.kind === "routes") {
-      return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(RoutesEditor, {});
+      return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RoutesEditor, {});
     }
     const text2 = display(field.key) === void 0 || display(field.key) === null ? "" : String(display(field.key));
-    return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
       "input",
       {
         type: "text",
@@ -1930,15 +2163,15 @@ function OblivionSettingsSection() {
       next.splice(to, 0, item);
       setRows(next);
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(import_jsx_runtime5.Fragment, { children: [
-      rows.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.mono, children: "\u8FD8\u6CA1\u6709\u5907\u7528\u8DEF\uFF08\u4E3B\u8DEF\u5931\u8D25\u5C31\u76F4\u63A5\u62A5\u9519\uFF09\u3002" }) : null,
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: 6, width: "100%" }, children: [
-        rows.map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.row, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { style: S2.mono, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+      rows.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.mono, children: "\u8FD8\u6CA1\u6709\u5907\u7528\u8DEF\uFF08\u4E3B\u8DEF\u5931\u8D25\u5C31\u76F4\u63A5\u62A5\u9519\uFF09\u3002" }) : null,
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: 6, width: "100%" }, children: [
+        rows.map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.row, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { style: S2.mono, children: [
             index + 1,
             "."
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
             "select",
             {
               style: S2.select,
@@ -1948,10 +2181,10 @@ function OblivionSettingsSection() {
                 next[index] = { ...row, provider: event.target.value };
                 setRows(next);
               },
-              children: withCurrent(providerOptions(catalog), row.provider).map((option) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: option.value, children: option.label }, option.value))
+              children: withCurrent(providerOptions(catalog), row.provider).map((option) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("option", { value: option.value, children: option.label }, option.value))
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
             "select",
             {
               style: S2.select,
@@ -1961,13 +2194,13 @@ function OblivionSettingsSection() {
                 next[index] = { ...row, model: event.target.value };
                 setRows(next);
               },
-              children: withCurrent(modelOptions(catalog, row.provider), row.model).map((option) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: option.value, children: option.label }, option.value))
+              children: withCurrent(modelOptions(catalog, row.provider), row.model).map((option) => /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("option", { value: option.value, children: option.label }, option.value))
             }
           ),
-          !isCompleteRoute(row) ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.mono, children: "\uFF08\u6CA1\u914D\u5168\uFF0C\u4F1A\u88AB core \u4E22\u6389\uFF09" }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", style: S2.tiny, onClick: () => move(index, index - 1), title: "\u4E0A\u79FB", children: "\u2191" }),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", style: S2.tiny, onClick: () => move(index, index + 1), title: "\u4E0B\u79FB", children: "\u2193" }),
-          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          !isCompleteRoute(row) ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.mono, children: "\uFF08\u6CA1\u914D\u5168\uFF0C\u4F1A\u88AB core \u4E22\u6389\uFF09" }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", style: S2.tiny, onClick: () => move(index, index - 1), title: "\u4E0A\u79FB", children: "\u2191" }),
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", style: S2.tiny, onClick: () => move(index, index + 1), title: "\u4E0B\u79FB", children: "\u2193" }),
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
             "button",
             {
               type: "button",
@@ -1978,52 +2211,52 @@ function OblivionSettingsSection() {
             }
           )
         ] }, index)),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", style: { ...S2.btn, alignSelf: "flex-start" }, onClick: () => setRows([...rows, { provider: "", model: "" }]), children: "\u6DFB\u52A0\u5907\u7528\u8DEF" })
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", style: { ...S2.btn, alignSelf: "flex-start" }, onClick: () => setRows([...rows, { provider: "", model: "" }]), children: "\u6DFB\u52A0\u5907\u7528\u8DEF" })
       ] })
     ] });
   }
   const pendingText = pendingSentence(pending);
   const note = writableNote(payload.writable);
-  return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { "data-obl-settings": "", style: S2.root, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h2", { style: S2.title, children: SETTINGS_SECTION_LABEL }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("p", { style: S2.hint, children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { "data-obl-settings": "", style: S2.root, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("h2", { style: S2.title, children: SETTINGS_SECTION_LABEL }),
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("p", { style: S2.hint, children: [
         "\u8DEF\u5F84\u3001\u81EA\u52A8\u6574\u7406\u4E0E\u6A21\u578B\u9009\u62E9\u3002\u5199\u5165 ",
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("code", { children: payload.path ?? "<dataRoot>/settings.json" }),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("code", { children: payload.path ?? "<dataRoot>/settings.json" }),
         "\uFF08\u4F18\u5148\u7EA7\uFF1A\u9ED8\u8BA4\u503C < profile \u7684\u63D2\u4EF6 config < \u8FD9\u4E00\u9875\uFF09\u3002"
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.card, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.row, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { style: S2.mono, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.card, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.row, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { style: S2.mono, children: [
           "core v",
           payload.version ?? "?"
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.mono, children: SETTINGS_ROUTE })
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.mono, children: SETTINGS_ROUTE })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { ...S2.row, marginTop: 4 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { fontSize: 12 }, children: "\u6253\u5F00\u81EA\u52A8\u6574\u7406\u4F1A\u8D70\uFF1A" }),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: { ...S2.mono, wordBreak: "break-word" }, children: summary.routes })
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: { ...S2.row, marginTop: 4 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: { fontSize: 12 }, children: "\u6253\u5F00\u81EA\u52A8\u6574\u7406\u4F1A\u8D70\uFF1A" }),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: { ...S2.mono, wordBreak: "break-word" }, children: summary.routes })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: S2.hint, children: summary.label }),
-      catalogNoLlm ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("p", { style: S2.warnText, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style: S2.hint, children: summary.label }),
+      catalogNoLlm ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("p", { style: S2.warnText, children: [
         "\u5BBF\u4E3B\u6CA1\u6709 ",
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("code", { children: "llm" }),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("code", { children: "llm" }),
         " \u670D\u52A1\uFF1A\u4E0B\u62C9\u6846\u4E3A\u7A7A\uFF0C\u81EA\u52A8\u6574\u7406\u4F1A\u76F4\u63A5\u8DF3\u8FC7\u3002provider \u8981\u5728 profile \u7684",
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("code", { children: " llm-pi-ai " }),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("code", { children: " llm-pi-ai " }),
         "\u914D\u7F6E\u91CC\u767B\u8BB0\uFF08\u672C\u9875\u4E0D\u78B0\u5BC6\u94A5\uFF0C\u4E5F\u4E0D\u586B\u5730\u5740\uFF09\u3002"
       ] }) : null,
-      catalogMissing && !catalogNoLlm ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: S2.warnText, children: "\u5BBF\u4E3B\u6CA1\u56DE provider \u6E05\u5355 \u2014\u2014 core \u7248\u672C\u65E7\uFF08\u6E05\u5355\u662F 0.2.16 \u8D77\u7684\uFF09\uFF0C\u6216\u6CE8\u518C\u8868\u4E3A\u7A7A\u3002" }) : null,
-      catalogNoModels ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: S2.warnText, children: "\u5217\u5230\u4E86 provider \u4F46\u90FD\u6CA1\u6709\u6A21\u578B \u2014\u2014 \u68C0\u67E5 profile \u91CC\u5404 provider \u7684 models\u3002" }) : null
+      catalogMissing && !catalogNoLlm ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style: S2.warnText, children: "\u5BBF\u4E3B\u6CA1\u56DE provider \u6E05\u5355 \u2014\u2014 core \u7248\u672C\u65E7\uFF08\u6E05\u5355\u662F 0.2.16 \u8D77\u7684\uFF09\uFF0C\u6216\u6CE8\u518C\u8868\u4E3A\u7A7A\u3002" }) : null,
+      catalogNoModels ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style: S2.warnText, children: "\u5217\u5230\u4E86 provider \u4F46\u90FD\u6CA1\u6709\u6A21\u578B \u2014\u2014 \u68C0\u67E5 profile \u91CC\u5404 provider \u7684 models\u3002" }) : null
     ] }),
-    GROUPS.map((group) => /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.card, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { style: S2.heading, children: group.title }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: S2.hint, children: group.hint }),
+    GROUPS.map((group) => /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.card, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("h3", { style: S2.heading, children: group.title }),
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style: S2.hint, children: group.hint }),
       fieldsOf(group.id).map((field) => fieldShell(field, controlOf(field)))
     ] }, group.id)),
-    /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.card, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: S2.row, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.card, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: S2.row, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
           "button",
           {
             type: "button",
@@ -2040,28 +2273,28 @@ function OblivionSettingsSection() {
             children: busy ? "\u4FDD\u5B58\u4E2D\u2026" : "\u4FDD\u5B58"
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("button", { type: "button", style: S2.btn, disabled: dirty === 0 || busy, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", style: S2.btn, disabled: dirty === 0 || busy, onClick: () => {
           setForm({});
           setNotice(null);
         }, children: "\u64A4\u9500\u6539\u52A8" }),
-        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { style: S2.mono, children: dirty === 0 ? "\u6CA1\u6709\u672A\u4FDD\u5B58\u7684\u6539\u52A8" : "\u6709 " + dirty + " \u9879\u672A\u4FDD\u5B58" })
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: S2.mono, children: dirty === 0 ? "\u6CA1\u6709\u672A\u4FDD\u5B58\u7684\u6539\u52A8" : "\u6709 " + dirty + " \u9879\u672A\u4FDD\u5B58" })
       ] }),
-      notice !== null ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(NoticeLine, { notice }) : null,
-      note !== "" ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: S2.hint, children: note }) : null
+      notice !== null ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(NoticeLine, { notice }) : null,
+      note !== "" ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style: S2.hint, children: note }) : null
     ] }),
-    pendingText !== null ? /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { style: { ...S2.card, border: "1px solid " + WARN }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { style: S2.heading, children: "\u8981\u91CD\u542F DSH \u624D\u751F\u6548" }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: S2.warnText, children: pendingText }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { style: S2.hint, children: "\u914D\u7F6E\u5728 core \u88C5\u8F7D\u90A3\u4E00\u523B\u5C31\u56FA\u5316\u8FDB\u5404\u5B50\u6A21\u5757\u4E86\uFF0C\u6240\u4EE5\u8BBE\u7F6E\u5C42\u5199\u4E0B\u7684\u503C\u8981\u4E0B\u4E00\u8F6E\u88C5\u8F7D\u624D\u751F\u6548\u3002 \u4E0B\u9762\u8FD9\u4E2A\u6309\u94AE\u5C31\u662F\u90A3\u6B21\u91CD\u542F\uFF08\u673A\u5236\u53EA\u6709\u4E00\u4EFD\uFF0C\u590D\u7528 @oblivion/brand \u7684\u91CD\u542F\u8DEF\u7531\uFF09\u3002" }),
-      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: { ...S2.row, marginTop: 6 }, children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(RestartControl, {}) })
+    pendingText !== null ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: { ...S2.card, border: "1px solid " + WARN }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("h3", { style: S2.heading, children: "\u8981\u91CD\u542F DSH \u624D\u751F\u6548" }),
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style: S2.warnText, children: pendingText }),
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("p", { style: S2.hint, children: "\u914D\u7F6E\u5728 core \u88C5\u8F7D\u90A3\u4E00\u523B\u5C31\u56FA\u5316\u8FDB\u5404\u5B50\u6A21\u5757\u4E86\uFF0C\u6240\u4EE5\u8BBE\u7F6E\u5C42\u5199\u4E0B\u7684\u503C\u8981\u4E0B\u4E00\u8F6E\u88C5\u8F7D\u624D\u751F\u6548\u3002 \u4E0B\u9762\u8FD9\u4E2A\u6309\u94AE\u5C31\u662F\u90A3\u6B21\u91CD\u542F\uFF08\u673A\u5236\u53EA\u6709\u4E00\u4EFD\uFF0C\u590D\u7528 @oblivion/brand \u7684\u91CD\u542F\u8DEF\u7531\uFF09\u3002" }),
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { style: { ...S2.row, marginTop: 6 }, children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RestartControl, {}) })
     ] }) : null
   ] });
 }
 
 // src/client/leftbar.tsx
-var import_jsx_runtime6 = require("react/jsx-runtime");
+var import_jsx_runtime7 = require("react/jsx-runtime");
 function PolarisGlyph({ size = 16 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
     "svg",
     {
       width: size,
@@ -2070,7 +2303,7 @@ function PolarisGlyph({ size = 16 }) {
       fill: POLARIS_ICON_COLOR,
       "aria-hidden": true,
       style: { display: "block", flex: "0 0 auto" },
-      children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("path", { d: POLARIS_ICON_PATH })
+      children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("path", { d: POLARIS_ICON_PATH })
     }
   );
 }
@@ -2087,7 +2320,7 @@ function openOblivionTab(service, tabType) {
 function createLeftbarAction(onActivate) {
   return function OblivionLeftbarAction(props) {
     const wide = props?.wide !== false;
-    return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
       "button",
       {
         type: "button",
@@ -2107,8 +2340,8 @@ function createLeftbarAction(onActivate) {
           fontSize: 12
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(PolarisGlyph, { size: 16 }),
-          wide ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { children: "Oblivion" }) : null
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(PolarisGlyph, { size: 16 }),
+          wide ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { children: "Oblivion" }) : null
         ]
       }
     );
@@ -2274,11 +2507,11 @@ function apply(ctx) {
     if (outcome === "opened" || outcome === "opened-via-host-prop") logger?.info?.("\u5DF2\u8BF7\u4FA7\u8FB9\u680F\u6253\u5F00\u7B14\u8BB0\uFF1A" + path);
     else warn("\u6253\u5F00\u7B14\u8BB0\u5931\u8D25\uFF08" + outcome + "\uFF09\uFF1A" + path);
   };
-  const panelComponent = (props) => (0, import_react5.createElement)(OblivionPanel, {
+  const panelComponent = (props) => (0, import_react6.createElement)(OblivionPanel, {
     visible: props.visible,
     onOpenFile: (path) => openNote(props, path)
   });
-  result = registerPanelTab(ctx, panelComponent, warn, (size) => (0, import_react5.createElement)(PolarisGlyph, { size }));
+  result = registerPanelTab(ctx, panelComponent, warn, (size) => (0, import_react6.createElement)(PolarisGlyph, { size }));
   if (result.status === "registered") logger?.info?.("\u5DF2\u5728 side bar \u6CE8\u518C Oblivion \u9762\u677F tab");
   else warn("\u9762\u677F tab \u672A\u6CE8\u518C\uFF1A" + String(result.detail ?? result.status));
   let slots;

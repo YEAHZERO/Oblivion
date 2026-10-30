@@ -328,8 +328,10 @@ await check('设置路由真被 apply() 挂上：GET 出生效值+来源+自定�
     },
   });
   mod.apply(ctx, { dataRoot: dir, mdRoot: join(tmp, 'kb-settings-route'), logPrefix: '[sc-set]' });
-  assert.equal(routes.length, 1, 'apply() 必须把设置路由挂上');
+  assert.equal(routes.length, 3, 'apply() 必须把设置路由 + 会话路由挂上');
   assert.equal(routes[0].path, '/oblivion-core/settings');
+  assert.equal(routes[1].path, '/oblivion-core/sessions', '会话扫描路由');
+  assert.equal(routes[2].path, '/oblivion-core/sessions/import', '会话导入路由');
 
   const got = await callRoute(routes[0], 'GET');
   assert.equal(got.status, 200);
