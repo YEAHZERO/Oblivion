@@ -41,6 +41,22 @@ export const UPDATES_APPLY_PATH = '/obl-brand/updates/apply';
 export const ORPHANS_PATH = '/obl-brand/orphans';
 
 /**
+ * 重启前综合检查（GET，只读）。
+ *
+ * 聚合所有 brand 侧可检测的「阻止重启」条件，供面板的 RestartControl 在点击重启按钮前调用，
+ * 以便给出精确的打断说明而非笼统的「任务将会中断」。
+ *
+ * 返回字段：
+ *   - `ok`        boolean           是否安全重启（所有 gate 均通过）
+ *   - `active`    boolean           有 running agent 或 running/stopping job
+ *   - `reason`    string | null     如果有 gate 阻止，给出人类可读的原因
+ *   - `detail`    string[]          具体有哪些 gate 触发（可多条）
+ *
+ * 服务不可用时返回 `{ ok: false, error: '...' }`，面板侧按「无法确认就不弹」处理。
+ */
+export const RESTART_GATES_PATH = '/obl-brand/restart-gates';
+
+/**
  * 向指定 DSH 会话注入一条用户消息（POST，宿主半边）。
  *
  * 这是本仓库唯一一条**写** DSH 会话的路由，走的是 App 自己的会话接口

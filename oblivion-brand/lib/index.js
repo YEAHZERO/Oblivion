@@ -1,11 +1,11 @@
-// oblivion-brand/src/index.ts
+// src/index.ts
 import { spawn as spawn2, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync as existsSync2, readFileSync as readFileSync2, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir as homedir3, tmpdir as tmpdir2 } from "node:os";
 import { basename as basename2, dirname, join as join4 } from "node:path";
 
-// oblivion-brand/src/orphans.ts
+// src/orphans.ts
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -255,21 +255,22 @@ function describeSweep(report) {
   return `${cleaned}\uFF08\u626B\u63CF ${String(report.scanned)} \u4E2A\u8FDB\u7A0B\uFF0C\u547D\u4E2D ${String(report.matched)} \u4E2A\u4F20\u8F93\u8FDB\u7A0B${failed}\uFF09`;
 }
 
-// oblivion-brand/src/paths.ts
+// src/paths.ts
 var RESTART_PATH = "/obl-brand/restart";
 var TASKS_PATH = "/obl-brand/tasks";
 var PLUGINS_PATH = "/obl-brand/plugins";
 var UPDATES_PATH = "/obl-brand/updates";
 var UPDATES_APPLY_PATH = "/obl-brand/updates/apply";
 var ORPHANS_PATH = "/obl-brand/orphans";
+var RESTART_GATES_PATH = "/obl-brand/restart-gates";
 var SESSION_MESSAGE_PATH = "/obl-brand/session/message";
 var SESSION_TAIL_PATH = "/obl-brand/session/tail";
 
-// oblivion-brand/src/profile-plugins.ts
+// src/profile-plugins.ts
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join as join2, resolve } from "node:path";
 
-// oblivion-brand/src/plugin-list.ts
+// src/plugin-list.ts
 var SAFE_ARG = /^[A-Za-z0-9@._/+^~-]+$/;
 function quoteArg(value) {
   if (value !== "" && SAFE_ARG.test(value)) return value;
@@ -339,7 +340,7 @@ function normalizePluginList(raw) {
   };
 }
 
-// oblivion-brand/src/profile-plugins.ts
+// src/profile-plugins.ts
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -479,7 +480,7 @@ function readInstalledPlugins(location, at = Date.now()) {
   };
 }
 
-// oblivion-brand/src/session-tail.ts
+// src/session-tail.ts
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join3 } from "node:path";
@@ -622,7 +623,7 @@ function readSessionTail(sessionsRoot, sessionId, limit, windowBytes = TAIL_WIND
   };
 }
 
-// oblivion-brand/src/session-inject.ts
+// src/session-inject.ts
 var SESSION_INJECT_ENV = "OBLIVION_BRAND_SESSION_INJECT";
 var MAX_SESSION_MESSAGE_CHARS = 2e4;
 var MAX_SESSION_MESSAGE_BYTES = 256 * 1024;
@@ -699,7 +700,7 @@ function httpStatusForPromptFailure(code) {
   return 502;
 }
 
-// oblivion-brand/src/index.ts
+// src/index.ts
 var SCRIPT_PATH = join4(tmpdir2(), "obl-brand-restart.ps1");
 var LOG_PATH = join4(tmpdir2(), "obl-brand-restart.log");
 var MARKET_REGISTRY_ENV = "DSHM_NPM_MIRROR";
@@ -1172,6 +1173,61 @@ function hasActiveTasks(agents, jobs) {
   return ids.some(
     (id) => (jobList(id) ?? []).some((job) => job.status === "running" || job.status === "stopping")
   );
+}
+function installRestartGatesRoute(ctx, warn) {
+  ctx.inject?.(["webServer"], (scope) => {
+    const server = scope.webServer;
+    if (server === void 0 || typeof server.register !== "function") {
+      warn("webServer \u4E0D\u53EF\u7528\uFF0C\u91CD\u542F\u524D\u7F6E\u68C0\u67E5\u8DEF\u7531\u672A\u6302\u8F7D");
+      return;
+    }
+    const dispose = server.register({
+      kind: "exact",
+      path: RESTART_GATES_PATH,
+      handler: async (request, response) => {
+        const json = (status, body) => {
+          response.writeHead(status, { "content-type": "application/json" });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== "GET") {
+          json(405, { ok: false, active: false, error: "method not allowed" });
+          return;
+        }
+        const agents = ctx.get?.("agents");
+        const jobs = ctx.get?.("jobs");
+        if (agents === void 0 || jobs === void 0) {
+          json(503, { ok: false, active: false, error: "service unavailable" });
+          return;
+        }
+        try {
+          const agentsList = Array.isArray(agents) ? agents : [];
+          const jobsList = Array.isArray(jobs) ? jobs : [];
+          const runningAgents = agentsList.filter((a) => a.status === "running");
+          const runningJobs = jobsList.filter((j) => j.status === "running");
+          const stoppingJobs = jobsList.filter((j) => j.status === "stopping");
+          const active = runningAgents.length > 0 || runningJobs.length > 0 || stoppingJobs.length > 0;
+          const detail = [];
+          if (runningAgents.length > 0) detail.push(`agent \xD7 ${runningAgents.length}`);
+          if (runningJobs.length > 0) detail.push(`job(running) \xD7 ${runningJobs.length}`);
+          if (stoppingJobs.length > 0) detail.push(`job(stopping) \xD7 ${stoppingJobs.length}`);
+          json(200, {
+            ok: true,
+            active,
+            reason: active ? "\u6709\u6D3B\u52A8\u4EFB\u52A1\uFF0C\u91CD\u542F\u5C06\u4E2D\u65AD\u5B83\u4EEC" : null,
+            detail
+          });
+        } catch (error) {
+          json(500, {
+            ok: false,
+            active: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    });
+    ctx.effect?.(() => dispose, "oblivion-brand: restart-gates route");
+    ctx.logger?.("@oblivion/brand").info(`\u91CD\u542F\u524D\u7F6E\u68C0\u67E5\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1AGET ${RESTART_GATES_PATH}`);
+  });
 }
 function installTasksRoute(ctx, warn) {
   ctx.inject?.(["webServer"], (scope) => {
@@ -1720,6 +1776,7 @@ function apply(ctx) {
   installMarketRegistryOverride(ctx);
   sweepOnMount(logger);
   installRestartRoute(ctx, warn);
+  installRestartGatesRoute(ctx, warn);
   installTasksRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);
@@ -1748,6 +1805,7 @@ export {
   ORPHAN_SCRIPT,
   ORPHAN_SCRIPT_PATH,
   PLUGINS_PATH,
+  RESTART_GATES_PATH,
   RESTART_PATH,
   RESTART_SCRIPT,
   SESSION_ID_PATTERN,

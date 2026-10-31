@@ -54,7 +54,7 @@ import {
   sweepTransportOrphans,
   writeOrphanScript,
 } from './orphans.js';
-import { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH } from './paths.js';
+import { ORPHANS_PATH, PLUGINS_PATH, RESTART_GATES_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH } from './paths.js';
 import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
 import { parseTailQuery, readSessionTail, resolveDshHome } from './session-tail.js';
 import {
@@ -77,7 +77,7 @@ import {
  * ESM，Node 里 import 不了）。宿主半边与浏览器半边共用 `paths.ts` / `plugin-list.ts`，
  * 所以这里导出的是同一份实现，不是副本。
  */
-export { ORPHANS_PATH, PLUGINS_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH };
+export { ORPHANS_PATH, PLUGINS_PATH, RESTART_GATES_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH };
 export { layerLabel, normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
 export type { InstalledPlugin, PluginLayer, PluginListPayload } from './plugin-list.js';
 export { readInstalledPlugins, resolveProfile };
@@ -837,6 +837,71 @@ function hasActiveTasks(agents: unknown, jobs: unknown): boolean {
   return ids.some((id) =>
     (jobList(id) ?? []).some((job) => job.status === 'running' || job.status === 'stopping'),
   );
+}
+
+/**
+ * 注册「重启前综合检查」路由（GET，只读）。
+ *
+ * 比 `installTasksRoute` 更精细：不仅回答「有没有任务」，还分别列出
+ * running agent / running job / stopping job 各有哪些，让面板在弹确认框时
+ * 展示具体原因。服务不可用时回 503，面板侧按「无法确认就不弹」处理。
+ */
+function installRestartGatesRoute(ctx: HostCtx, warn: (message: string) => void): void {
+  ctx.inject?.(['webServer'], (scope) => {
+    const server = scope.webServer;
+    if (server === undefined || typeof server.register !== 'function') {
+      warn('webServer 不可用，重启前置检查路由未挂载');
+      return;
+    }
+
+    const dispose = server.register({
+      kind: 'exact',
+      path: RESTART_GATES_PATH,
+      handler: async (request, response) => {
+        const json = (status: number, body: unknown): void => {
+          response.writeHead(status, { 'content-type': 'application/json' });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== 'GET') {
+          json(405, { ok: false, active: false, error: 'method not allowed' });
+          return;
+        }
+        const agents = ctx.get?.('agents');
+        const jobs = ctx.get?.('jobs');
+        if (agents === undefined || jobs === undefined) {
+          json(503, { ok: false, active: false, error: 'service unavailable' });
+          return;
+        }
+        try {
+          const agentsList = Array.isArray(agents) ? agents : [];
+          const jobsList = Array.isArray(jobs) ? jobs : [];
+          const runningAgents = agentsList.filter((a: { status?: string }) => a.status === 'running');
+          const runningJobs = jobsList.filter((j: { status?: string }) => j.status === 'running');
+          const stoppingJobs = jobsList.filter((j: { status?: string }) => j.status === 'stopping');
+          const active = runningAgents.length > 0 || runningJobs.length > 0 || stoppingJobs.length > 0;
+          const detail: string[] = [];
+          if (runningAgents.length > 0) detail.push(`agent × ${runningAgents.length}`);
+          if (runningJobs.length > 0) detail.push(`job(running) × ${runningJobs.length}`);
+          if (stoppingJobs.length > 0) detail.push(`job(stopping) × ${stoppingJobs.length}`);
+          json(200, {
+            ok: true,
+            active,
+            reason: active ? '有活动任务，重启将中断它们' : null,
+            detail,
+          });
+        } catch (error) {
+          json(500, {
+            ok: false,
+            active: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+    });
+
+    ctx.effect?.(() => dispose, 'oblivion-brand: restart-gates route');
+    ctx.logger?.('@oblivion/brand').info(`重启前置检查路由已挂载：GET ${RESTART_GATES_PATH}`);
+  });
 }
 
 /**
@@ -1627,6 +1692,7 @@ export function apply(ctx: HostCtx): void {
   // 装载即清扫一次：覆盖不经过本插件按钮的那些重启路径（崩溃 / 任务管理器 / 升级）。
   sweepOnMount(logger);
   installRestartRoute(ctx, warn);
+  installRestartGatesRoute(ctx, warn);
   installTasksRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
   installPluginsRoute(ctx, warn);

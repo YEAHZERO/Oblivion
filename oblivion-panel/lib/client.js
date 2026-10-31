@@ -22,7 +22,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// oblivion-panel/src/client/index.ts
+// src/client/index.ts
 var index_exports = {};
 __export(index_exports, {
   apply: () => apply,
@@ -32,7 +32,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 var import_react6 = require("react");
 
-// oblivion-panel/src/client/diag.ts
+// src/client/diag.ts
 function postDiag(payload) {
   try {
     void fetch("/oblivion-panel/diag", {
@@ -45,14 +45,15 @@ function postDiag(payload) {
   }
 }
 
-// oblivion-panel/src/client/Panel.tsx
+// src/client/Panel.tsx
 var import_react4 = require("react");
 
-// oblivion-panel/src/client/RestartControl.tsx
+// src/client/RestartControl.tsx
 var import_react = require("react");
 var import_jsx_runtime = require("react/jsx-runtime");
 var RESTART_PATH = "/obl-brand/restart";
 var TASKS_PATH = "/obl-brand/tasks";
+var RESTART_GATES_PATH = "/obl-brand/restart-gates";
 var ORPHANS_PATH = "/obl-brand/orphans";
 var BTN = {
   idle: "\u91CD\u542F DSH",
@@ -75,20 +76,23 @@ async function readPayload(response) {
     return null;
   }
 }
-function describeRestartSweep(payload) {
-  const sweep = payload?.sweep;
-  if (sweep === void 0) return null;
-  if (!sweep.ok) {
-    return `DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF08\u91CD\u542F\u524D\u6E05\u626B\u672A\u6267\u884C\uFF1A${sweep.error ?? "\u672A\u77E5\u539F\u56E0"}\uFF09`;
+async function probeRestartGates() {
+  try {
+    const response = await fetch(RESTART_GATES_PATH, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      credentials: "same-origin"
+    });
+    if (response.ok) {
+      const body = await response.json();
+      if (body?.ok === true && typeof body.active === "boolean") {
+        return { active: body.active, detail: body.detail };
+      }
+    }
+  } catch {
   }
-  const killed = sweep.report?.killed.length ?? 0;
-  return killed > 0 ? `DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF08\u91CD\u542F\u524D\u6E05\u6389 ${killed} \u4E2A\u5B64\u513F\u8FDB\u7A0B\uFF09` : "DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF0C\u672C\u9875\u4F1A\u65AD\u5F00\u3002";
-}
-function describeSweep(payload, fallback) {
-  if (typeof payload?.summary === "string" && payload.summary !== "") return payload.summary;
-  const report = payload?.report;
-  if (report === void 0) return fallback;
-  return report.killed.length === 0 ? `\u6CA1\u6709\u53D1\u73B0\u5B64\u513F\u8FDB\u7A0B\uFF08\u626B\u63CF ${report.scanned} \u4E2A\u8FDB\u7A0B\uFF09` : `\u5DF2\u6E05\u7406 ${report.killed.length} \u4E2A\u5B64\u513F\u8FDB\u7A0B\uFF08\u626B\u63CF ${report.scanned} \u4E2A\u8FDB\u7A0B\uFF0C\u547D\u4E2D ${report.matched} \u4E2A\u4F20\u8F93\u8FDB\u7A0B\uFF09`;
+  const legacy = await probeActiveTasks();
+  return { active: legacy };
 }
 async function probeActiveTasks() {
   try {
@@ -104,6 +108,21 @@ async function probeActiveTasks() {
     return false;
   }
 }
+function describeRestartSweep(payload) {
+  const sweep = payload?.sweep;
+  if (sweep === void 0) return null;
+  if (!sweep.ok) {
+    return `DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF08\u91CD\u542F\u524D\u6E05\u626B\u672A\u6267\u884C\uFF1A${sweep.error ?? "\u672A\u77E5\u539F\u56E0"}\uFF09`;
+  }
+  const killed = sweep.report?.killed.length ?? 0;
+  return killed > 0 ? `DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF08\u91CD\u542F\u524D\u6E05\u6389 ${killed} \u4E2A\u5B64\u513F\u8FDB\u7A0B\uFF09` : "DSH \u5C06\u5728\u6570\u79D2\u5185\u91CD\u542F\uFF0C\u672C\u9875\u4F1A\u65AD\u5F00\u3002";
+}
+function describeSweep(payload, fallback) {
+  if (typeof payload?.summary === "string" && payload.summary !== "") return payload.summary;
+  const report = payload?.report;
+  if (report === void 0) return fallback;
+  return report.killed.length === 0 ? `\u6CA1\u6709\u53D1\u73B0\u5B64\u513F\u8FDB\u7A0B\uFF08\u626B\u63CF ${report.scanned} \u4E2A\u8FDB\u7A0B\uFF09` : `\u5DF2\u6E05\u7406 ${report.killed.length} \u4E2A\u5B64\u513F\u8FDB\u7A0B\uFF08\u626B\u63CF ${report.scanned} \u4E2A\u8FDB\u7A0B\uFF0C\u547D\u4E2D ${report.matched} \u4E2A\u4F20\u8F93\u8FDB\u7A0B\uFF09`;
+}
 var BUTTON_STYLE = {
   border: "1px solid rgba(127,127,127,0.35)",
   borderRadius: 5,
@@ -117,6 +136,15 @@ function RestartControl() {
   const [phase, setPhase] = (0, import_react.useState)("idle");
   const [message, setMessage] = (0, import_react.useState)("");
   const [closing, setClosing] = (0, import_react.useState)(false);
+  const [gateDetail, setGateDetail] = (0, import_react.useState)(void 0);
+  (0, import_react.useEffect)(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = "\u6709\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u5173\u95ED\u5C06\u5BFC\u81F4\u4E2D\u65AD";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
   const hideUiForRestart = (0, import_react.useCallback)(() => {
     setClosing(true);
     requestAnimationFrame(() => {
@@ -155,13 +183,14 @@ function RestartControl() {
     }
   }, [hideUiForRestart]);
   const beginRestart = (0, import_react.useCallback)(async () => {
-    const active = await probeActiveTasks();
+    const { active, detail } = await probeRestartGates();
+    setGateDetail(detail);
     if (!active) {
       void restart();
       return;
     }
     setPhase("confirming");
-    setMessage("\u5F53\u524D\u6B63\u5728\u8FD0\u884C\u7684\u4EFB\u52A1\u5C06\u4F1A\u4E2D\u65AD");
+    setMessage(detail && detail.length > 0 ? detail.join(" \xB7 ") : "\u5F53\u524D\u6B63\u5728\u8FD0\u884C\u7684\u4EFB\u52A1\u5C06\u4F1A\u4E2D\u65AD");
   }, [restart]);
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
     closing ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -237,7 +266,10 @@ function RestartControl() {
             },
             children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { fontSize: 15, fontWeight: 600, marginBottom: 10 }, children: "\u9000\u51FA DeepSeek Harness\uFF1F" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { fontSize: 13, lineHeight: 1.6, opacity: 0.85, marginBottom: 18 }, children: "\u5F53\u524D\u6B63\u5728\u8FD0\u884C\u7684\u4EFB\u52A1\u5C06\u4F1A\u4E2D\u65AD" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { fontSize: 13, lineHeight: 1.6, opacity: 0.85, marginBottom: 18 }, children: gateDetail && gateDetail.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                "\u4EE5\u4E0B\u6D3B\u52A8\u4EFB\u52A1\u5C06\u4F1A\u4E2D\u65AD\uFF1A",
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { marginTop: 6, paddingLeft: 20, marginInlineStart: 20 }, children: gateDetail.map((item, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { style: { lineHeight: 1.7 }, children: item }, i)) })
+              ] }) : "\u5F53\u524D\u6B63\u5728\u8FD0\u884C\u7684\u4EFB\u52A1\u5C06\u4F1A\u4E2D\u65AD" }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" }, children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
@@ -266,6 +298,7 @@ function RestartControl() {
                     onClick: () => {
                       setPhase("idle");
                       setMessage("");
+                      setGateDetail(void 0);
                     },
                     children: "\u53D6\u6D88"
                   }
@@ -333,7 +366,7 @@ function OrphanControl() {
   ] });
 }
 
-// oblivion-panel/src/client/PluginUpdates.tsx
+// src/client/PluginUpdates.tsx
 var import_react2 = require("react");
 var import_jsx_runtime2 = require("react/jsx-runtime");
 var UPDATES_PATH = "/obl-brand/updates";
@@ -533,7 +566,7 @@ function PluginUpdates() {
   ] });
 }
 
-// oblivion-panel/src/client/SessionImport.tsx
+// src/client/SessionImport.tsx
 var import_react3 = require("react");
 var import_jsx_runtime3 = require("react/jsx-runtime");
 var SESSIONS_PATH = "/oblivion-core/sessions";
@@ -765,7 +798,7 @@ function SessionImportControl() {
   ] });
 }
 
-// oblivion-panel/src/client/format.ts
+// src/client/format.ts
 function percent(ratio) {
   if (typeof ratio !== "number" || !Number.isFinite(ratio)) return "\u2014";
   return (ratio * 100).toFixed(1) + "%";
@@ -855,12 +888,12 @@ function topBlocker(byReason) {
   return { reason: entries[0][0], count: Number(entries[0][1]) };
 }
 
-// oblivion-panel/src/client/polaris.ts
+// src/client/polaris.ts
 var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
 var POLARIS_ICON_COLOR = "#4176e6";
 var POLARIS_ICON_PATH = "M512 132L579 350.3L780.7 243.3L673.7 445L892 512L673.7 579L780.7 780.7L579 673.7L512 892L445 673.7L243.3 780.7L350.3 579L132 512L350.3 445L243.3 243.3L445 350.3Z";
 
-// oblivion-panel/src/client/ScoreChart.tsx
+// src/client/ScoreChart.tsx
 var import_jsx_runtime4 = require("react/jsx-runtime");
 var REJECT_COLOR = "#d9534f";
 function ScoreChart(props) {
@@ -919,7 +952,7 @@ function ScoreChart(props) {
   );
 }
 
-// oblivion-panel/src/client/chart.ts
+// src/client/chart.ts
 var DEFAULT_WIDTH = 320;
 var DEFAULT_HEIGHT = 76;
 var DEFAULT_PAD_X = 6;
@@ -1018,7 +1051,7 @@ function curveCaption(rows, curve) {
   return parts.join(" \xB7 ");
 }
 
-// oblivion-panel/src/client/knowledge.ts
+// src/client/knowledge.ts
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -1240,7 +1273,7 @@ function knowledgeView(rows, options = {}) {
   return { backbone, itemOnly, visible, hidden: rows.length - visible.length };
 }
 
-// oblivion-panel/src/client/Panel.tsx
+// src/client/Panel.tsx
 var import_jsx_runtime5 = require("react/jsx-runtime");
 var STATUS_ROUTE = "/oblivion-panel/status";
 var S = {
@@ -1493,10 +1526,10 @@ function OblivionPanel(props) {
   return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S.root, children: body });
 }
 
-// oblivion-panel/src/client/SettingsSection.tsx
+// src/client/SettingsSection.tsx
 var import_react5 = require("react");
 
-// oblivion-panel/src/client/settings-model.ts
+// src/client/settings-model.ts
 var SETTINGS_SECTION_ID = "oblivion-knowledge";
 var SETTINGS_SECTION_ORDER = 47;
 var SETTINGS_SECTION_LABEL = "Oblivion \u77E5\u8BC6\u5E93";
@@ -1833,7 +1866,7 @@ async function postSettings(patch, options = {}) {
   return { ok: true, result: body };
 }
 
-// oblivion-panel/src/client/SettingsSection.tsx
+// src/client/SettingsSection.tsx
 var import_jsx_runtime6 = require("react/jsx-runtime");
 var LABEL = "var(--dsw-alias-label-primary, currentColor)";
 var MUTED = "var(--dsw-alias-label-tertiary, #8b93a1)";
@@ -2291,7 +2324,7 @@ function OblivionSettingsSection() {
   ] });
 }
 
-// oblivion-panel/src/client/leftbar.tsx
+// src/client/leftbar.tsx
 var import_jsx_runtime7 = require("react/jsx-runtime");
 function PolarisGlyph({ size = 16 }) {
   return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
@@ -2348,7 +2381,7 @@ function createLeftbarAction(onActivate) {
   };
 }
 
-// oblivion-panel/src/client/open-note.ts
+// src/client/open-note.ts
 function supportsOpenFile(service) {
   if (!service || typeof service.openFile !== "function") return false;
   if (!Array.isArray(service.features)) return true;
@@ -2388,7 +2421,7 @@ function openNoteInSidebar(input) {
   return "failed";
 }
 
-// oblivion-panel/src/client/register.ts
+// src/client/register.ts
 var PANEL_TAB_ID = "oblivion:panel";
 function panelDescriptor(component, icon) {
   return {
@@ -2436,7 +2469,7 @@ function registerPanelTab(ctx, component, warn, icon) {
   return result;
 }
 
-// oblivion-panel/src/client/index.ts
+// src/client/index.ts
 var inject = ["slots"];
 var LOG_NAME = "@oblivion/panel";
 function reportCtxShape(ctx, extra = {}) {

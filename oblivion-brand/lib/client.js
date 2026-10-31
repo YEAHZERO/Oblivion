@@ -22,7 +22,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// oblivion-brand/src/client/index.ts
+// src/client/index.ts
 var index_exports = {};
 __export(index_exports, {
   apply: () => apply,
@@ -31,14 +31,14 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 var import_react5 = require("react");
 
-// oblivion-brand/src/client/polaris.ts
+// src/client/polaris.ts
 var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
 var POLARIS_PATH = "M512.0000 132.0960L558.6323 399.4197L780.6327 243.3673L624.5803 465.3677L891.9040 512.0000L624.5803 558.6323L780.6327 780.6327L558.6323 624.5803L512.0000 891.9040L465.3677 624.5803L243.3673 780.6327L399.4197 558.6323L132.0960 512.0000L399.4197 465.3677L243.3673 243.3673L465.3677 399.4197Z";
 var POLARIS_CENTER_DOT_RADIUS = 33.792;
 var POLARIS_GRADIENT_FROM = "#E8D5A3";
 var POLARIS_GRADIENT_TO = "#7EC8E3";
 
-// oblivion-brand/src/client/settings.ts
+// src/client/settings.ts
 var import_react = require("react");
 var DEFAULT_BRAND_NAME = "Oblivion";
 var MAX_BRAND_NAME_LENGTH = 24;
@@ -122,7 +122,7 @@ function useBrandSettings() {
   return value;
 }
 
-// oblivion-brand/src/client/Brand.tsx
+// src/client/Brand.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 var LABEL_COLOR = "var(--dsw-alias-label-primary, currentColor)";
 function PolarisSvg({ size }) {
@@ -194,10 +194,10 @@ function OblivionBrandName() {
   );
 }
 
-// oblivion-brand/src/client/BrandSettingsPanel.tsx
+// src/client/BrandSettingsPanel.tsx
 var import_react4 = require("react");
 
-// oblivion-brand/src/client/panels.tsx
+// src/client/panels.tsx
 var import_react2 = require("react");
 var import_jsx_runtime2 = require("react/jsx-runtime");
 var PANEL_ORDER_BASE = 5;
@@ -318,17 +318,17 @@ function createEmbeddedPanel(getProvider, label) {
   };
 }
 
-// oblivion-brand/src/client/version.ts
+// src/client/version.ts
 var PLUGIN_VERSION = true ? "0.1.8" : "dev";
 
-// oblivion-brand/src/paths.ts
+// src/paths.ts
 var RESTART_PATH = "/obl-brand/restart";
 var PLUGINS_PATH = "/obl-brand/plugins";
 
-// oblivion-brand/src/client/installed-plugins.tsx
+// src/client/installed-plugins.tsx
 var import_react3 = require("react");
 
-// oblivion-brand/src/plugin-list.ts
+// src/plugin-list.ts
 function statusLabel(entry) {
   return entry.active ? "\u5DF2\u542F\u7528" : "\u5DF2\u88C5\u672A\u542F\u7528";
 }
@@ -390,7 +390,7 @@ function normalizePluginList(raw) {
   };
 }
 
-// oblivion-brand/src/client/theme.ts
+// src/client/theme.ts
 var LABEL = "var(--dsw-alias-label-primary, currentColor)";
 var MUTED = "var(--dsw-alias-label-tertiary, #8b93a1)";
 var BORDER = "var(--dsw-alias-border-l2, #e5e7eb)";
@@ -422,7 +422,7 @@ var monoStyle = {
   color: MUTED
 };
 
-// oblivion-brand/src/client/installed-plugins.tsx
+// src/client/installed-plugins.tsx
 var import_jsx_runtime3 = require("react/jsx-runtime");
 async function copyText(text) {
   const clipboard = globalThis.navigator?.clipboard;
@@ -579,7 +579,7 @@ function InstalledPluginsSection(props) {
   ] });
 }
 
-// oblivion-brand/src/client/BrandSettingsPanel.tsx
+// src/client/BrandSettingsPanel.tsx
 var import_jsx_runtime4 = require("react/jsx-runtime");
 function dataUrlBytes(dataUrl) {
   const comma = dataUrl.indexOf(",");
@@ -985,7 +985,7 @@ function createBrandSettingsPanel(listProviders) {
   };
 }
 
-// oblivion-brand/src/client/index.ts
+// src/client/index.ts
 var inject = ["slots"];
 var BRAND_PRIORITY = -10;
 var SETTINGS_ORDER = 45;

@@ -7,7 +7,7 @@
  * 降级：brand 未装/被停用时路由 404，这里给明确文案而不是静默失败。
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
 
 /** 与 `@oblivion/brand` 的 `RESTART_PATH` 保持一致。 */
@@ -15,6 +15,9 @@ const RESTART_PATH = '/obl-brand/restart';
 
 /** 与 `@oblivion/brand` 的 `TASKS_PATH` 保持一致（GET，只读）。 */
 const TASKS_PATH = '/obl-brand/tasks';
+
+/** 与 `@oblivion/brand` 的 `RESTART_GATES_PATH` 保持一致（GET，只读；聚合详细 gate 信息）。 */
+const RESTART_GATES_PATH = '/obl-brand/restart-gates';
 
 /** 与 `@oblivion/brand` 的 `ORPHANS_PATH` 保持一致。 */
 const ORPHANS_PATH = '/obl-brand/orphans';
@@ -53,12 +56,64 @@ interface HostPayload {
   sweep?: { ok: boolean; error?: string; report?: SweepReport };
 }
 
+/** Gate 响应类型（来自 GET /obl-brand/restart-gates）。 */
+interface GateResponse {
+  ok?: boolean;
+  active?: boolean;
+  reason?: string | null;
+  detail?: string[];
+  error?: string;
+}
+
 /** 读响应体：失败时也要尽量把宿主的说明读出来，别只报一个 HTTP 码。 */
 async function readPayload(response: Response): Promise<HostPayload | null> {
   try {
     return (await response.json()) as HostPayload;
   } catch {
     return null;
+  }
+}
+
+/**
+ * 查询重启前置 gate（聚合 agents + jobs 状态，给出精确的 detail）。
+ *
+ * 优先用新的 /restart-gates 端点；失败时回退到旧的 /tasks 端点（向后兼容老 brand 版本）。
+ */
+async function probeRestartGates(): Promise<{ active: boolean; detail?: string[] }> {
+  try {
+    const response = await fetch(RESTART_GATES_PATH, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      credentials: 'same-origin',
+    });
+    if (response.ok) {
+      const body = (await response.json()) as GateResponse | null;
+      if (body?.ok === true && typeof body.active === 'boolean') {
+        return { active: body.active, detail: body.detail };
+      }
+    }
+  } catch {
+    /* fall through to legacy probe */
+  }
+  const legacy = await probeActiveTasks();
+  return { active: legacy };
+}
+
+/**
+ * 问宿主「现在有没有活动任务」（旧版 /tasks 端点，向后兼容）。
+ */
+async function probeActiveTasks(): Promise<boolean> {
+  try {
+    const response = await fetch(TASKS_PATH, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      credentials: 'same-origin',
+    });
+    if (!response.ok) return false;
+    const body = (await response.json()) as { ok?: boolean; active?: boolean } | null;
+    return body?.ok === true && body.active === true;
+  } catch {
+    return false;
   }
 }
 
@@ -85,28 +140,6 @@ function describeSweep(payload: HostPayload | null, fallback: string): string {
     : `已清理 ${report.killed.length} 个孤儿进程（扫描 ${report.scanned} 个进程，命中 ${report.matched} 个传输进程）`;
 }
 
-/**
- * 问宿主「现在有没有活动任务」。
- *
- * 语义对齐托盘退出时的原生弹窗：有任务才弹「任务将会中断」提醒。
- * 2026-10-18 修正：路由不可用 / 版本错配 / 503 一律按**没有任务**处理（不弹窗直接重启）
- * ——「未知就当有任务」会在宿主没更新出 `/obl-brand/tasks` 时每次点击都误报。
- */
-async function probeActiveTasks(): Promise<boolean> {
-  try {
-    const response = await fetch(TASKS_PATH, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-      credentials: 'same-origin',
-    });
-    if (!response.ok) return false;
-    const body = (await response.json()) as { ok?: boolean; active?: boolean } | null;
-    return body?.ok === true && body.active === true;
-  } catch {
-    return false;
-  }
-}
-
 const BUTTON_STYLE = {
   border: '1px solid rgba(127,127,127,0.35)',
   borderRadius: 5,
@@ -123,6 +156,20 @@ export function RestartControl(): JSX.Element {
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState<string>('');
   const [closing, setClosing] = useState(false);
+  /** 从 gate 路由拿到的详细中断信息。 */
+  const [gateDetail, setGateDetail] = useState<string[] | undefined>(undefined);
+
+  // P0: beforeunload 防护 —— 一旦组件挂载，就告知浏览器当前标签页有未保存的工作。
+  // 这样即使意外导航/刷新，浏览器也会弹原生确认框。
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent): void => {
+      e.preventDefault();
+      // Chrome 要求 returnValue 为字符串（非空），否则不显示提示。
+      e.returnValue = '有任务正在运行，关闭将导致中断';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   const hideUiForRestart = useCallback((): void => {
     setClosing(true);
@@ -167,13 +214,14 @@ export function RestartControl(): JSX.Element {
   }, [hideUiForRestart]);
 
   const beginRestart = useCallback(async (): Promise<void> => {
-    const active = await probeActiveTasks();
+    const { active, detail } = await probeRestartGates();
+    setGateDetail(detail);
     if (!active) {
       void restart();
       return;
     }
     setPhase('confirming');
-    setMessage('当前正在运行的任务将会中断');
+    setMessage(detail && detail.length > 0 ? detail.join(' · ') : '当前正在运行的任务将会中断');
   }, [restart]);
 
   return (
@@ -250,7 +298,18 @@ export function RestartControl(): JSX.Element {
               退出 DeepSeek Harness？
             </div>
             <div style={{ fontSize: 13, lineHeight: 1.6, opacity: 0.85, marginBottom: 18 }}>
-              当前正在运行的任务将会中断
+              {gateDetail && gateDetail.length > 0 ? (
+                <>
+                  以下活动任务将会中断：
+                  <ul style={{ marginTop: 6, paddingLeft: 20, marginInlineStart: 20 }}>
+                    {gateDetail.map((item, i) => (
+                      <li key={i} style={{ lineHeight: 1.7 }}>{item}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                '当前正在运行的任务将会中断'
+              )}
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button
@@ -276,6 +335,7 @@ export function RestartControl(): JSX.Element {
                 onClick={() => {
                   setPhase('idle');
                   setMessage('');
+                  setGateDetail(undefined);
                 }}
               >
                 取消

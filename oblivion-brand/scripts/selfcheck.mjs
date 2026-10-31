@@ -310,16 +310,17 @@ await check('导出形状符合本包约定', () => {
   return '五条路径 / 两个开关常量 / 恢复命令 / 清单校验 / 清扫面 / 会话注入面 / 会话读回面 / apply 齐备';
 });
 
-await check('apply 挂载八条路由；七条只要 webServer，会话注入额外绑 sessionController', async () => {
+await check('apply 挂载九条路由；八条只要 webServer，会话注入额外绑 sessionController', async () => {
   const { ctx, reg } = makeCtx();
   await withEnv(undefined, () => mod.apply(ctx));
   assert.deepEqual(
     reg.injected,
     ['webServer', 'sessionController'],
-    '会话服务要单独 inject（先挂路由、后绑服务），其余七条只依赖 webServer（读回/任务查询/更新也不需要宿主服务）',
+    '会话服务要单独 inject（先挂路由、后绑服务），其余八条只依赖 webServer（读回/任务查询/更新也不需要宿主服务）',
   );
-  assert.equal(reg.routes.length, 8, '应注册八条路由（重启 + 任务查询 + 孤儿清扫 + 已装插件 + 更新检查 + 更新应用 + 会话消息 + 会话读回）');
+  assert.equal(reg.routes.length, 9, '应注册九条路由（重启 + 重启前置检查 + 任务查询 + 孤儿清扫 + 已装插件 + 更新检查 + 更新应用 + 会话消息 + 会话读回）');
   const restart = reg.routes.find((route) => route.path === mod.RESTART_PATH);
+  const gates = reg.routes.find((route) => route.path === mod.RESTART_GATES_PATH);
   const tasks = reg.routes.find((route) => route.path === mod.TASKS_PATH);
   const orphans = reg.routes.find((route) => route.path === mod.ORPHANS_PATH);
   const plugins = reg.routes.find((route) => route.path === mod.PLUGINS_PATH);
@@ -328,6 +329,7 @@ await check('apply 挂载八条路由；七条只要 webServer，会话注入额
   const session = reg.routes.find((route) => route.path === mod.SESSION_MESSAGE_PATH);
   const tail = reg.routes.find((route) => route.path === mod.SESSION_TAIL_PATH);
   assert.ok(restart, '缺少重启路由');
+  assert.ok(gates, '缺少重启前置检查路由');
   assert.ok(tasks, '缺少任务查询路由');
   assert.ok(orphans, '缺少孤儿进程清扫路由');
   assert.ok(plugins, '缺少已装插件清单路由');
@@ -335,7 +337,7 @@ await check('apply 挂载八条路由；七条只要 webServer，会话注入额
   assert.ok(updatesApply, '缺少更新应用路由');
   assert.ok(session, '缺少会话消息路由');
   assert.ok(tail, '缺少会话读回路由');
-  for (const route of [restart, tasks, orphans, plugins, updates, updatesApply, session, tail]) {
+  for (const route of [restart, gates, tasks, orphans, plugins, updates, updatesApply, session, tail]) {
     assert.equal(route.kind, 'exact');
     assert.equal(typeof route.handler, 'function');
   }
