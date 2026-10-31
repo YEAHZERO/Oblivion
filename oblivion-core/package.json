@@ -70,5 +70,6 @@
     "@deepseek-ai/dsh-tools": {
       "optional": true
     }
-  }
+  },
+  "types": "./lib/index.d.ts"
 }

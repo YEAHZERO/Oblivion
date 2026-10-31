@@ -47,3 +47,4 @@ await build({
 // （`tools/check-workspace.ps1` 的 Assert-NoLibVersion 会直接判失败）。
 const size = readFileSync(join(LIB, 'index.js'), 'utf8').length;
 process.stdout.write('@oblivion/http-bridge v' + version + ': lib/index.js (' + size + ' B)\n');
+

@@ -87,3 +87,5 @@ writeFileSync(join(LIB, 'client.js'), wrapped, 'utf8');
 process.stdout.write(
   `@oblivion/panel v${version}: lib/index.js + lib/testkit.js + lib/client.js (${wrapped.length} B client bundle)\n`,
 );
+
+

@@ -33,6 +33,7 @@ import { zstdDecompressSync } from 'node:zlib';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { expandHome } from './../util/paths.js';
+import type { Source } from '../types.js';
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -317,7 +318,7 @@ export async function importSessions(
     dryRun?: boolean;
     knownRefs?: Set<string>; // 已有 ref 集合，用于去重
   },
-  saveStructured: (input: { title: string; topic: string; content: string; tags?: string[]; sources: Array<{ type: string; ref: string; hash: string }> }) => Promise<unknown>,
+  saveStructured: (input: { title: string; topic: string; content: string; tags?: string[]; sources: Source[] }) => Promise<unknown>,
 ): Promise<SessionImportResult> {
   const { sessionIds, maxPerSession = 20, mode, dryRun = true, knownRefs = new Set() } = opts;
   let imported = 0;

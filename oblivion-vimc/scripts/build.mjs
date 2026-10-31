@@ -87,3 +87,4 @@ writeFileSync(clientPath, wrapped, 'utf8');
 process.stdout.write(
   `@oblivion/vimc v${version}: lib/index.js + lib/client.js (${wrapped.length} B client bundle)\n`,
 );
+

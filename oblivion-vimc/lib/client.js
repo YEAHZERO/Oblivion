@@ -22,7 +22,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/client/index.ts
+// oblivion-vimc/src/client/index.ts
 var index_exports = {};
 __export(index_exports, {
   __test: () => __test,
@@ -32,7 +32,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
-// src/client/config.ts
+// oblivion-vimc/src/client/config.ts
 var CONFIG_STORAGE_KEY = "oblivion-vimc:settings:v1";
 var DEFAULT_HINT_CHARACTERS = "dsavewrqcxz";
 var DEFAULT_PAGE_RATIO = 0.6;
@@ -153,7 +153,7 @@ function publicConfig(config) {
   };
 }
 
-// src/client/beat.ts
+// oblivion-vimc/src/client/beat.ts
 function createBeatSender(win, getConfig, endpoint = "/oblivion-vimc/beat", intervalMs = 400) {
   let timer = null;
   let scheduled = false;
@@ -214,7 +214,7 @@ function createBeatSender(win, getConfig, endpoint = "/oblivion-vimc/beat", inte
   };
 }
 
-// src/client/vimium.ts
+// oblivion-vimc/src/client/vimium.ts
 var COMMANDS = {
   // ---- 滚动 ----
   scrollpageup: { command: "scrollPageUp" },
@@ -733,7 +733,7 @@ function matchesExclusion(pattern, href) {
   return href === text;
 }
 
-// src/client/keys.ts
+// oblivion-vimc/src/client/keys.ts
 var DEFAULT_KEY_MAPPINGS = [
   "# Oblivion vimc \u5185\u7F6E\u9ED8\u8BA4\u952E\u4F4D\uFF08Vimium-C map/run \u8BED\u6CD5\uFF1B\u6539\u52A8\u4F1A\u8986\u76D6\u540C\u952E\u4F4D\u7684\u9ED8\u8BA4\u503C\uFF09",
   "map w scrollPageUp",
@@ -824,7 +824,7 @@ function describeBindings(bindings) {
   return bindings.map((binding) => ({ command: binding.command, key: binding.label, source: binding.source }));
 }
 
-// src/client/api.ts
+// oblivion-vimc/src/client/api.ts
 var HELP = [
   "@oblivion/vimc \u2014\u2014 \u628A DSH \u5F53\u6D4F\u89C8\u5668\u7528\uFF08\u9ED8\u8BA4\u952E\u4F4D\uFF0C\u53EF\u5728\u8BBE\u7F6E \u2192 Oblivion \u952E\u76D8\u5BFC\u822A\u91CC\u6539\uFF09",
   "  w / s        \u4E0A\u7FFB / \u4E0B\u7FFB\u4E00\u9875",
@@ -866,7 +866,7 @@ function installApi(win, engine) {
   };
 }
 
-// src/client/scroller.ts
+// oblivion-vimc/src/client/scroller.ts
 var SCROLLABLE_OVERFLOW = /* @__PURE__ */ new Set(["auto", "scroll", "overlay"]);
 var MIN_OVERFLOW_PX = 4;
 var PREFERRED = {
@@ -1039,14 +1039,14 @@ var Scroller = class {
   }
 };
 
-// src/client/types.ts
+// oblivion-vimc/src/client/types.ts
 function asElement(value) {
   if (value === null || typeof value !== "object") return null;
   const candidate = value;
   return typeof candidate.closest === "function" ? candidate : null;
 }
 
-// src/client/focus.ts
+// oblivion-vimc/src/client/focus.ts
 var EDITABLE_SELECTOR = [
   "input",
   "textarea",
@@ -1288,7 +1288,7 @@ function blurActive(win) {
   return true;
 }
 
-// src/client/hints.ts
+// oblivion-vimc/src/client/hints.ts
 var CLICKABLE_SELECTOR = [
   "a[href]",
   "area[href]",
@@ -1677,7 +1677,7 @@ function describeCandidateAttrs(elements, limit = 3) {
   });
 }
 
-// src/client/find.ts
+// oblivion-vimc/src/client/find.ts
 var ALL_HIGHLIGHT = "vimc-find";
 var CURRENT_HIGHLIGHT = "vimc-find-current";
 var MAX_MATCHES = 2e3;
@@ -2167,7 +2167,7 @@ function createFind(win, getConfig, deps) {
   };
 }
 
-// src/client/transcript.ts
+// oblivion-vimc/src/client/transcript.ts
 var TURN_SELECTOR = "[data-chat-turn]";
 var ALIGN_EPSILON_PX = 8;
 var FLASH_MS = 700;
@@ -2240,7 +2240,7 @@ function jumpToTurn(win, scroller, direction, smooth) {
   return true;
 }
 
-// src/client/engine.ts
+// oblivion-vimc/src/client/engine.ts
 function createEngine(win, initial, hooks = {}) {
   let config = normalizeConfig(initial);
   let handled = 0;
@@ -2449,7 +2449,7 @@ function createEngine(win, initial, hooks = {}) {
   };
 }
 
-// src/client/settings.tsx
+// oblivion-vimc/src/client/settings.tsx
 var import_react = require("react");
 var import_jsx_runtime = require("react/jsx-runtime");
 var COLORS = {
@@ -2950,7 +2950,7 @@ function createVimcSettingsPanel(win, engine) {
   };
 }
 
-// src/client/index.ts
+// oblivion-vimc/src/client/index.ts
 var name = "@oblivion/vimc-client";
 var inject = [];
 var SETTINGS_SECTION_ID = "oblivion-vimc";

@@ -1,4 +1,4 @@
-// src/snapshot.ts
+// oblivion-panel/src/snapshot.ts
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 var MAX_JSON_BYTES = 256 * 1024;
@@ -298,7 +298,7 @@ async function buildSnapshot(options) {
   };
 }
 
-// src/client/format.ts
+// oblivion-panel/src/client/format.ts
 function percent(ratio2) {
   if (typeof ratio2 !== "number" || !Number.isFinite(ratio2)) return "\u2014";
   return (ratio2 * 100).toFixed(1) + "%";
@@ -388,7 +388,7 @@ function topBlocker(byReason) {
   return { reason: entries[0][0], count: Number(entries[0][1]) };
 }
 
-// src/client/open-note.ts
+// oblivion-panel/src/client/open-note.ts
 function supportsOpenFile(service) {
   if (!service || typeof service.openFile !== "function") return false;
   if (!Array.isArray(service.features)) return true;
@@ -428,7 +428,7 @@ function openNoteInSidebar(input) {
   return "failed";
 }
 
-// src/client/knowledge.ts
+// oblivion-panel/src/client/knowledge.ts
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -653,7 +653,7 @@ function knowledgeView(rows, options = {}) {
   return { backbone, itemOnly, visible, hidden: rows.length - visible.length };
 }
 
-// src/client/chart.ts
+// oblivion-panel/src/client/chart.ts
 var DEFAULT_WIDTH = 320;
 var DEFAULT_HEIGHT = 76;
 var DEFAULT_PAD_X = 6;
@@ -752,7 +752,7 @@ function curveCaption(rows, curve) {
   return parts.join(" \xB7 ");
 }
 
-// src/client/register.ts
+// oblivion-panel/src/client/register.ts
 var PANEL_TAB_ID = "oblivion:panel";
 function panelDescriptor(component, icon) {
   return {
@@ -800,7 +800,7 @@ function registerPanelTab(ctx, component, warn, icon) {
   return result;
 }
 
-// src/client/settings-model.ts
+// oblivion-panel/src/client/settings-model.ts
 var SETTINGS_ROUTE = "/oblivion-core/settings";
 var GROUPS = [
   { id: "data", title: "\u77E5\u8BC6\u5E93\u4F4D\u7F6E", hint: "\u7B14\u8BB0\u4E0E\u6761\u76EE\u843D\u5728\u672C\u673A\u54EA\u4E2A\u76EE\u5F55\u3002" },

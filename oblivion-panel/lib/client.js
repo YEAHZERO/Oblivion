@@ -22,7 +22,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/client/index.ts
+// oblivion-panel/src/client/index.ts
 var index_exports = {};
 __export(index_exports, {
   apply: () => apply,
@@ -32,7 +32,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 var import_react6 = require("react");
 
-// src/client/diag.ts
+// oblivion-panel/src/client/diag.ts
 function postDiag(payload) {
   try {
     void fetch("/oblivion-panel/diag", {
@@ -45,10 +45,10 @@ function postDiag(payload) {
   }
 }
 
-// src/client/Panel.tsx
+// oblivion-panel/src/client/Panel.tsx
 var import_react4 = require("react");
 
-// src/client/RestartControl.tsx
+// oblivion-panel/src/client/RestartControl.tsx
 var import_react = require("react");
 var import_jsx_runtime = require("react/jsx-runtime");
 var RESTART_PATH = "/obl-brand/restart";
@@ -333,7 +333,7 @@ function OrphanControl() {
   ] });
 }
 
-// src/client/PluginUpdates.tsx
+// oblivion-panel/src/client/PluginUpdates.tsx
 var import_react2 = require("react");
 var import_jsx_runtime2 = require("react/jsx-runtime");
 var UPDATES_PATH = "/obl-brand/updates";
@@ -533,7 +533,7 @@ function PluginUpdates() {
   ] });
 }
 
-// src/client/SessionImport.tsx
+// oblivion-panel/src/client/SessionImport.tsx
 var import_react3 = require("react");
 var import_jsx_runtime3 = require("react/jsx-runtime");
 var SESSIONS_PATH = "/oblivion-core/sessions";
@@ -765,7 +765,7 @@ function SessionImportControl() {
   ] });
 }
 
-// src/client/format.ts
+// oblivion-panel/src/client/format.ts
 function percent(ratio) {
   if (typeof ratio !== "number" || !Number.isFinite(ratio)) return "\u2014";
   return (ratio * 100).toFixed(1) + "%";
@@ -855,12 +855,12 @@ function topBlocker(byReason) {
   return { reason: entries[0][0], count: Number(entries[0][1]) };
 }
 
-// src/client/polaris.ts
+// oblivion-panel/src/client/polaris.ts
 var POLARIS_VIEWBOX = { width: 1024, height: 1024 };
 var POLARIS_ICON_COLOR = "#4176e6";
 var POLARIS_ICON_PATH = "M512 132L579 350.3L780.7 243.3L673.7 445L892 512L673.7 579L780.7 780.7L579 673.7L512 892L445 673.7L243.3 780.7L350.3 579L132 512L350.3 445L243.3 243.3L445 350.3Z";
 
-// src/client/ScoreChart.tsx
+// oblivion-panel/src/client/ScoreChart.tsx
 var import_jsx_runtime4 = require("react/jsx-runtime");
 var REJECT_COLOR = "#d9534f";
 function ScoreChart(props) {
@@ -919,7 +919,7 @@ function ScoreChart(props) {
   );
 }
 
-// src/client/chart.ts
+// oblivion-panel/src/client/chart.ts
 var DEFAULT_WIDTH = 320;
 var DEFAULT_HEIGHT = 76;
 var DEFAULT_PAD_X = 6;
@@ -1018,7 +1018,7 @@ function curveCaption(rows, curve) {
   return parts.join(" \xB7 ");
 }
 
-// src/client/knowledge.ts
+// oblivion-panel/src/client/knowledge.ts
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -1240,7 +1240,7 @@ function knowledgeView(rows, options = {}) {
   return { backbone, itemOnly, visible, hidden: rows.length - visible.length };
 }
 
-// src/client/Panel.tsx
+// oblivion-panel/src/client/Panel.tsx
 var import_jsx_runtime5 = require("react/jsx-runtime");
 var STATUS_ROUTE = "/oblivion-panel/status";
 var S = {
@@ -1493,10 +1493,10 @@ function OblivionPanel(props) {
   return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("div", { style: S.root, children: body });
 }
 
-// src/client/SettingsSection.tsx
+// oblivion-panel/src/client/SettingsSection.tsx
 var import_react5 = require("react");
 
-// src/client/settings-model.ts
+// oblivion-panel/src/client/settings-model.ts
 var SETTINGS_SECTION_ID = "oblivion-knowledge";
 var SETTINGS_SECTION_ORDER = 47;
 var SETTINGS_SECTION_LABEL = "Oblivion \u77E5\u8BC6\u5E93";
@@ -1833,7 +1833,7 @@ async function postSettings(patch, options = {}) {
   return { ok: true, result: body };
 }
 
-// src/client/SettingsSection.tsx
+// oblivion-panel/src/client/SettingsSection.tsx
 var import_jsx_runtime6 = require("react/jsx-runtime");
 var LABEL = "var(--dsw-alias-label-primary, currentColor)";
 var MUTED = "var(--dsw-alias-label-tertiary, #8b93a1)";
@@ -2291,7 +2291,7 @@ function OblivionSettingsSection() {
   ] });
 }
 
-// src/client/leftbar.tsx
+// oblivion-panel/src/client/leftbar.tsx
 var import_jsx_runtime7 = require("react/jsx-runtime");
 function PolarisGlyph({ size = 16 }) {
   return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
@@ -2348,7 +2348,7 @@ function createLeftbarAction(onActivate) {
   };
 }
 
-// src/client/open-note.ts
+// oblivion-panel/src/client/open-note.ts
 function supportsOpenFile(service) {
   if (!service || typeof service.openFile !== "function") return false;
   if (!Array.isArray(service.features)) return true;
@@ -2388,7 +2388,7 @@ function openNoteInSidebar(input) {
   return "failed";
 }
 
-// src/client/register.ts
+// oblivion-panel/src/client/register.ts
 var PANEL_TAB_ID = "oblivion:panel";
 function panelDescriptor(component, icon) {
   return {
@@ -2436,7 +2436,7 @@ function registerPanelTab(ctx, component, warn, icon) {
   return result;
 }
 
-// src/client/index.ts
+// oblivion-panel/src/client/index.ts
 var inject = ["slots"];
 var LOG_NAME = "@oblivion/panel";
 function reportCtxShape(ctx, extra = {}) {

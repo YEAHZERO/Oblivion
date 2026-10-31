@@ -1,4 +1,4 @@
-// src/index.ts
+// oblivion-vimc/src/index.ts
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
