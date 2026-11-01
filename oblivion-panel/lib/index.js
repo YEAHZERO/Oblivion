@@ -1,7 +1,7 @@
 // src/index.ts
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join as join2, resolve } from "node:path";
+import { dirname, isAbsolute, join as join3, resolve } from "node:path";
 
 // src/snapshot.ts
 import { open, readFile, readdir, stat } from "node:fs/promises";
@@ -303,6 +303,157 @@ async function buildSnapshot(options) {
   };
 }
 
+// src/kbtree.ts
+import { readdir as readdir2, stat as stat2 } from "node:fs/promises";
+import { join as join2 } from "node:path";
+var DEFAULT_MAX_DEPTH = 4;
+var DEFAULT_MAX_ENTRIES_PER_DIR = 100;
+var DEFAULT_MAX_NODES = 800;
+async function buildKbTree(options) {
+  const problems = [];
+  const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const maxEntriesPerDir = options.maxEntriesPerDir ?? DEFAULT_MAX_ENTRIES_PER_DIR;
+  const maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES;
+  const coreMdRoot = typeof options.coreMdRoot === "string" && options.coreMdRoot !== "" ? options.coreMdRoot : void 0;
+  const mdRoot = coreMdRoot ?? options.fallbackMdRoot;
+  const mdRootSource = coreMdRoot !== void 0 ? "core" : "fallback";
+  const counters = { files: 0, dirs: 0, nodes: 0 };
+  let truncated = false;
+  async function walk(dirPath, relDir, depth) {
+    if (counters.nodes >= maxNodes) {
+      truncated = true;
+      return [];
+    }
+    let entries = [];
+    try {
+      const names = await readdir2(dirPath);
+      for (const name2 of names) {
+        if (counters.nodes >= maxNodes) {
+          truncated = true;
+          break;
+        }
+        let isDir = false;
+        try {
+          isDir = (await stat2(join2(dirPath, name2))).isDirectory();
+        } catch {
+          continue;
+        }
+        entries.push({ name: name2, isDir });
+      }
+    } catch (error) {
+      problems.push(`${dirPath}: ${String(error)}`);
+      return [];
+    }
+    const dirs = entries.filter((e) => e.isDir).map((e) => e.name);
+    const files = entries.filter((e) => !e.isDir).map((e) => e.name);
+    const overflow = entries.length > maxEntriesPerDir;
+    if (overflow) truncated = true;
+    const nodeLimit = overflow ? maxEntriesPerDir : entries.length;
+    const dirNames = dirs.slice(0, nodeLimit);
+    const fileNames = files.slice(0, Math.max(0, nodeLimit - dirNames.length));
+    const result = [];
+    for (const name2 of dirNames) {
+      counters.nodes += 1;
+      counters.dirs += 1;
+      const relPath = relDir === "" ? name2 : relDir + "/" + name2;
+      const children = depth + 1 <= maxDepth && counters.nodes < maxNodes ? await walk(join2(dirPath, name2), relPath, depth + 1) : void 0;
+      if (depth + 1 > maxDepth) truncated = true;
+      result.push({ name: name2, relPath, kind: "dir", children });
+    }
+    for (const name2 of fileNames) {
+      counters.nodes += 1;
+      counters.files += 1;
+      const relPath = relDir === "" ? name2 : relDir + "/" + name2;
+      result.push({ name: name2, relPath, kind: "file" });
+    }
+    return result;
+  }
+  const tree = await walk(mdRoot, "", 0);
+  return {
+    // 根目录读失败（mdRoot 不存在 / 无权限）：problems 非空，如实报 `ok: false`，
+    // 调用方（路由 / UI）据此区分「树是真的空」和「树读不出来」。
+    ok: problems.length === 0,
+    mdRoot,
+    mdRootSource,
+    tree,
+    truncated,
+    fileCount: counters.files,
+    dirCount: counters.dirs,
+    problems
+  };
+}
+async function readCoreMdRoot(dataRoot) {
+  try {
+    const { readFile: readFile2 } = await import("node:fs/promises");
+    const text = await readFile2(join2(dataRoot, "status.json"), "utf8");
+    if (text.length > 256 * 1024) return void 0;
+    const parsed = JSON.parse(text);
+    if (parsed !== null && typeof parsed === "object" && "mdRoot" in parsed) {
+      const mdRoot = parsed.mdRoot;
+      return typeof mdRoot === "string" && mdRoot !== "" ? mdRoot : void 0;
+    }
+  } catch {
+  }
+  return void 0;
+}
+var MAX_KB_FILE_BYTES = 512 * 1024;
+async function readKbFile(mdRoot, relPath, coreMdRoot) {
+  const clean = typeof relPath === "string" ? relPath.replace(/\\/g, "/") : "";
+  if (clean === "" || clean.startsWith("/")) {
+    return { ok: false, relPath: clean, error: "\u975E\u6CD5\u8DEF\u5F84\uFF1A\u5FC5\u987B\u662F\u975E\u7A7A\u76F8\u5BF9\u8DEF\u5F84" };
+  }
+  const segments = clean.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) {
+    return { ok: false, relPath: clean, error: "\u975E\u6CD5\u8DEF\u5F84\uFF1A\u542B `..` \u6216\u7A7A\u6BB5" };
+  }
+  const root = (typeof coreMdRoot === "string" && coreMdRoot !== "" ? coreMdRoot : mdRoot).replace(/\\/g, "/");
+  const absPath = segments.length === 1 ? join2(root, segments[0]) : segments.map((s, i) => join2(root, segments.slice(0, i + 1).join("/"))).pop();
+  try {
+    const { readFile: readFile2, stat: stat3 } = await import("node:fs/promises");
+    const st = await stat3(absPath);
+    if (!st.isFile()) {
+      return { ok: false, relPath: clean, error: "\u4E0D\u662F\u6587\u4EF6" };
+    }
+    const truncated = st.size > MAX_KB_FILE_BYTES;
+    const text = await readFile2(absPath, "utf8");
+    const content = truncated ? text.slice(0, MAX_KB_FILE_BYTES) : text;
+    return { ok: true, relPath: clean, content, truncated: truncated || void 0 };
+  } catch (error) {
+    return { ok: false, relPath: clean, error: String(error) };
+  }
+}
+var MAX_KB_WRITE_BYTES = 512 * 1024;
+async function writeKbFile(mdRoot, relPath, content, coreMdRoot) {
+  const clean = typeof relPath === "string" ? relPath.replace(/\\/g, "/") : "";
+  if (clean === "" || clean.startsWith("/")) {
+    return { ok: false, relPath: clean, error: "\u975E\u6CD5\u8DEF\u5F84\uFF1A\u5FC5\u987B\u662F\u975E\u7A7A\u76F8\u5BF9\u8DEF\u5F84" };
+  }
+  const segments = clean.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) {
+    return { ok: false, relPath: clean, error: "\u975E\u6CD5\u8DEF\u5F84\uFF1A\u542B `..` \u6216\u7A7A\u6BB5" };
+  }
+  if (typeof content !== "string") {
+    return { ok: false, relPath: clean, error: "content \u5FC5\u987B\u4E3A\u5B57\u7B26\u4E32" };
+  }
+  const utf8Bytes = new TextEncoder().encode(content).length;
+  if (utf8Bytes > MAX_KB_WRITE_BYTES) {
+    return { ok: false, relPath: clean, error: "\u5185\u5BB9\u8D85\u8FC7 512 KB \u4E0A\u9650\uFF0C\u62D2\u7EDD\u5199\u5165" };
+  }
+  const root = (typeof coreMdRoot === "string" && coreMdRoot !== "" ? coreMdRoot : mdRoot).replace(/\\/g, "/");
+  const absPath = segments.length === 1 ? join2(root, segments[0]) : segments.map((s, i) => join2(root, segments.slice(0, i + 1).join("/"))).pop();
+  try {
+    const { writeFile, stat: stat3 } = await import("node:fs/promises");
+    const st = await stat3(absPath);
+    if (!st.isFile()) {
+      return { ok: false, relPath: clean, error: "\u76EE\u6807\u4E0D\u662F\u6587\u4EF6\uFF0C\u62D2\u7EDD\u5199\u5165" };
+    }
+    await writeFile(absPath, content, "utf8");
+    return { ok: true, relPath: clean, bytesWritten: utf8Bytes };
+  } catch (error) {
+    return { ok: false, relPath: clean, error: String(error) };
+  }
+}
+
 // src/index.ts
 var name = "@oblivion/panel";
 var inject = [];
@@ -330,12 +481,16 @@ var DEFAULT_CONFIG = {
   recentLimit: 10,
   routePath: "/oblivion-panel/status",
   diagPath: "/oblivion-panel/diag",
+  /** 知识库目录树路由路径。 */
+  kbTreePath: "/oblivion-panel/kb-tree",
+  /** 知识库文件内容路由路径。 */
+  kbFilePath: "/oblivion-panel/kb-file",
   logPrefix: "[oblivion-panel]"
 };
 async function writeJsonAtomic(path, value) {
   const { mkdir, rename, writeFile } = await import("node:fs/promises");
   await mkdir(dirname(path), { recursive: true });
-  const tmp = join2(dirname(path), "." + process.pid + "-" + Date.now().toString(36) + ".tmp");
+  const tmp = join3(dirname(path), "." + process.pid + "-" + Date.now().toString(36) + ".tmp");
   await writeFile(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
   await rename(tmp, path);
 }
@@ -363,7 +518,7 @@ function safeParse(body) {
 function expandHome(value) {
   if (!value) return homedir();
   if (value === "~") return homedir();
-  if (value.startsWith("~/") || value.startsWith("~\\")) return join2(homedir(), value.slice(2));
+  if (value.startsWith("~/") || value.startsWith("~\\")) return join3(homedir(), value.slice(2));
   return isAbsolute(value) ? value : resolve(value);
 }
 function asConfig(raw) {
@@ -371,10 +526,10 @@ function asConfig(raw) {
 }
 function writeMountEvidence(warn) {
   try {
-    const dir = process.env.OBLIVION_PANEL_EVIDENCE_DIR || join2(process.env.TEMP || process.env.TMP || ".", "oblivion-panel");
+    const dir = process.env.OBLIVION_PANEL_EVIDENCE_DIR || join3(process.env.TEMP || process.env.TMP || ".", "oblivion-panel");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
-      join2(dir, "host-mount.json"),
+      join3(dir, "host-mount.json"),
       JSON.stringify({ plugin: name, version: VERSION, mountedAt: (/* @__PURE__ */ new Date()).toISOString(), pid: process.pid }, null, 2) + "\n",
       "utf8"
     );
@@ -420,6 +575,82 @@ function installStatusRoute(ctx, config, warn) {
     });
     server.register({
       kind: "exact",
+      path: config.kbTreePath,
+      handler: (request, response) => {
+        if (request.method !== "GET") {
+          response.writeHead(405, { allow: "GET", "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: "method not allowed" }));
+          return;
+        }
+        void readCoreMdRoot(dataRoot).then(async (coreMdRoot) => {
+          const tree = await buildKbTree({
+            coreMdRoot,
+            fallbackMdRoot: expandHome(config.fallbackMdRoot)
+          });
+          response.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+          response.end(JSON.stringify({ ...tree, panelVersion: VERSION }));
+        }).catch((error) => {
+          warn(`\u77E5\u8BC6\u5E93\u76EE\u5F55\u6811\u88C5\u914D\u5931\u8D25\uFF1A${String(error)}`);
+          response.writeHead(500, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: "kb-tree failed" }));
+        });
+      }
+    });
+    server.register({
+      kind: "exact",
+      path: config.kbFilePath,
+      handler: (request, response) => {
+        if (request.method === "POST") {
+          void readBody(request).then(async ({ body, overflow }) => {
+            if (overflow) {
+              response.writeHead(413, { "content-type": "application/json" });
+              response.end(JSON.stringify({ ok: false, error: "body too large" }));
+              return;
+            }
+            const parsed = safeParse(body);
+            const file = typeof parsed.file === "string" ? parsed.file : "";
+            const content = typeof parsed.content === "string" ? parsed.content : "";
+            const coreMdRoot = await readCoreMdRoot(dataRoot);
+            const result = await writeKbFile(expandHome(config.fallbackMdRoot), file, content, coreMdRoot);
+            response.writeHead(result.ok ? 200 : 404, {
+              "content-type": "application/json; charset=utf-8",
+              "cache-control": "no-store"
+            });
+            response.end(JSON.stringify({ ...result, panelVersion: VERSION }));
+          }).catch((error) => {
+            warn(`\u77E5\u8BC6\u5E93\u6587\u4EF6\u5199\u5165\u5931\u8D25\uFF1A${String(error)}`);
+            response.writeHead(500, { "content-type": "application/json" });
+            response.end(JSON.stringify({ ok: false, error: "kb-file write failed" }));
+          });
+          return;
+        }
+        if (request.method !== "GET") {
+          response.writeHead(405, { allow: "GET, POST", "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: "method not allowed" }));
+          return;
+        }
+        const url = new URL(request.url ?? "/", "http://localhost");
+        const relPath = url.searchParams.get("file") ?? "";
+        void readCoreMdRoot(dataRoot).then(async (coreMdRoot) => {
+          const result = await readKbFile(
+            expandHome(config.fallbackMdRoot),
+            relPath,
+            coreMdRoot
+          );
+          response.writeHead(result.ok ? 200 : 404, {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store"
+          });
+          response.end(JSON.stringify({ ...result, panelVersion: VERSION }));
+        }).catch((error) => {
+          warn(`\u77E5\u8BC6\u5E93\u6587\u4EF6\u8BFB\u53D6\u5931\u8D25\uFF1A${String(error)}`);
+          response.writeHead(500, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: "kb-file failed" }));
+        });
+      }
+    });
+    server.register({
+      kind: "exact",
       path: config.diagPath,
       handler: (request, response) => {
         if (request.method !== "POST") {
@@ -433,7 +664,7 @@ function installStatusRoute(ctx, config, warn) {
             response.end(JSON.stringify({ ok: false, error: "body too large" }));
             return;
           }
-          const target = join2(dataRoot, "panel-client-diag.json");
+          const target = join3(dataRoot, "panel-client-diag.json");
           await writeJsonAtomic(target, { ...safeParse(body), receivedAt: Date.now() });
           response.writeHead(200, { "content-type": "application/json" });
           response.end(JSON.stringify({ ok: true, path: target }));

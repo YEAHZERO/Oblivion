@@ -1,6 +1,6 @@
 /**
  * 面板内的两个宿主动作（拆成两个组件，便于排成一行）：
- *   - `RestartControl`：「重启 DSH」（POST /obl-brand/restart）
+ *   - `RestartControl`：「强制重启」（POST /obl-brand/restart，会中断所有任务）
  *   - `OrphanControl`：「清理孤儿进程」（POST /obl-brand/orphans，不重启）
  *
  * 两者都**不在这里复制机制**：宿主只回计数与路径，文案在这里拼 —— 机制只有一份。
@@ -19,13 +19,16 @@ const TASKS_PATH = '/obl-brand/tasks';
 /** 与 `@oblivion/brand` 的 `RESTART_GATES_PATH` 保持一致（GET，只读；聚合详细 gate 信息）。 */
 const RESTART_GATES_PATH = '/obl-brand/restart-gates';
 
+/** 与 `@oblivion/brand` 的 `RELOAD_PATH` 保持一致（POST；调 HMR reconcileProfile，保留运行中任务）。 */
+const RELOAD_PATH = '/obl-brand/reload';
+
 /** 与 `@oblivion/brand` 的 `ORPHANS_PATH` 保持一致。 */
 const ORPHANS_PATH = '/obl-brand/orphans';
 
 type Phase = 'idle' | 'confirming' | 'sending' | 'done' | 'error';
 
 const BTN: Record<Phase, string> = {
-  idle: '重启 DSH',
+  idle: '强制重启',
   confirming: '确认退出',
   sending: '正在重启…',
   done: '已发出重启',
@@ -402,6 +405,80 @@ export function OrphanControl(): JSX.Element {
         }}
       >
         {SWEEP_BTN[phase] ?? '清理孤儿进程'}
+      </button>
+      {message ? <span style={MSG_STYLE}>{message}</span> : null}
+    </span>
+  );
+}
+
+/** 「解除卡顿」：调自家 brand 的智能重载端点（POST /obl-brand/reload）。
+ *
+ * 内部调 HMR reconcileProfile，替换插件代码但**保留运行中任务**。
+ * 不依赖 dsh-unlag 是否安装。HMR 服务不可用时返回 503，面板侧静默降级。
+ */
+export function UnlagControl(): JSX.Element {
+  const [phase, setPhase] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
+  const [message, setMessage] = useState<string>('');
+
+  const reload = useCallback(async (): Promise<void> => {
+    setPhase('sending');
+    setMessage('');
+    try {
+      const response = await fetch(RELOAD_PATH, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: '{}',
+        credentials: 'same-origin',
+      });
+      if (response.status === 404) {
+        // brand 未装载此路由（老版本），静默忽略
+        setPhase('idle');
+        setMessage('');
+        return;
+      }
+      if (response.status === 503) {
+        // HMR 服务不可用（DSH 未启动 HMR），静默
+        setPhase('idle');
+        setMessage('');
+        return;
+      }
+      const body = (await response.json()) as { ok?: boolean; status?: string; error?: string } | null;
+      if (!response.ok) {
+        setPhase('error');
+        setMessage(`重载失败（HTTP ${response.status}）${body?.error ? `：${body.error}` : ''}`);
+        return;
+      }
+      if (body?.ok === true) {
+        setPhase('done');
+        setMessage('已更新');
+      } else {
+        setPhase('done');
+        setMessage('已重载');
+      }
+    } catch (error) {
+      setPhase('error');
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <button
+        type="button"
+        style={{
+          ...BUTTON_STYLE,
+          color: phase === 'error' ? '#d9534f' : 'inherit',
+          cursor: phase === 'sending' ? 'default' : 'pointer',
+        }}
+        disabled={phase === 'sending'}
+        title="换掉插件代码并重建界面；运行中的任务保留（调 HMR reconcileProfile，等价于 dsh-unlag 的智能重载）"
+        onClick={() => {
+          void reload();
+        }}
+      >
+        {phase === 'sending' ? '正在重载…' : phase === 'done' ? '重载完成' : '智能重载'}
       </button>
       {message ? <span style={MSG_STYLE}>{message}</span> : null}
     </span>

@@ -79,6 +79,15 @@ export {
   type TabDescriptorLike,
 } from './client/register.js';
 export {
+  buildKbTree,
+  readCoreMdRoot,
+  readKbFile,
+  type KbTreeNode,
+  type KbTreeOptions,
+  type KbTreeResult,
+  type KbFileResult,
+} from './kbtree.js';
+export {
   SETTINGS_ROUTE,
   GROUPS,
   FIELDS,

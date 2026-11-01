@@ -894,3 +894,240 @@ describe('设置分节：表单 → 补丁（写盘前的最后一公里）', ()
     assert.equal(kit.SETTINGS_ROUTE, '/oblivion-core/settings');
   });
 });
+
+describe('知识库目录树', () => {
+  it('buildKbTree：有界目录树，目录在前、文件在后，超限裁剪', async () => {
+    const { mdRoot } = seed();
+    // 额外造一些文件撑出裁剪
+    const capDir = join(mdRoot, '_cap');
+    mkdirSync(capDir, { recursive: true });
+    for (let i = 0; i < 120; i += 1) writeFileSync(join(capDir, `f${i}.md`), 'x', 'utf8');
+
+    const tree = await kit.buildKbTree({
+      coreMdRoot: mdRoot,
+      fallbackMdRoot: mdRoot,
+      maxDepth: 3,
+      maxEntriesPerDir: 100,
+      maxNodes: 800,
+    });
+    assert.equal(tree.ok, true);
+    assert.equal(tree.mdRoot, mdRoot);
+    assert.equal(tree.mdRootSource, 'core');
+    assert.ok(tree.tree.length > 0);
+    // 根下第一个条目应为目录（目录排在文件前）
+    const cap = tree.tree.find((n) => n.name === '_cap');
+    assert.ok(cap);
+    assert.equal(cap.kind, 'dir');
+    assert.equal(cap.children.length, 100, '超过 maxEntriesPerDir 的文件被裁剪');
+    assert.equal(tree.truncated, true);
+    assert.ok(tree.fileCount >= 100);
+    assert.ok(tree.dirCount > 0);
+  });
+
+  it('buildKbTree：mdRoot 不存在时如实报错，不抛', async () => {
+    const tree = await kit.buildKbTree({
+      coreMdRoot: join(tmpdir(), '不存在的路径-kb'),
+      fallbackMdRoot: join(tmpdir(), '不存在的路径-kb'),
+    });
+    assert.equal(tree.ok, false);
+    assert.ok(tree.problems.length > 0);
+    assert.deepEqual(tree.tree, []);
+  });
+
+  it('readCoreMdRoot：status.json 的 mdRoot 字段透传，缺则 undefined', async () => {
+    const { dataRoot, mdRoot } = seed();
+    assert.equal(await kit.readCoreMdRoot(dataRoot), mdRoot);
+    const emptyDataRoot = mkdtempSync(join(tmpdir(), 'oblivion-empty-'));
+    assert.equal(await kit.readCoreMdRoot(emptyDataRoot), undefined);
+  });
+
+  it('apply(ctx, config) 注册 GET /oblivion-panel/kb-tree，响应含 tree 与 panelVersion', async () => {
+    const { dataRoot, mdRoot } = seed();
+    const calls = [];
+    const ctx = {
+      inject: (deps, fn) => {
+        if (deps.includes('webServer')) {
+          fn({
+            webServer: {
+              register: (spec) => calls.push(spec),
+            },
+          });
+        }
+      },
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    };
+    // apply 的签名是 apply(ctx, rawConfig)；config 走 rawConfig 参数。
+    const rawConfig = { dataRoot, fallbackMdRoot: mdRoot, routePath: '/oblivion-panel/status', diagPath: '/oblivion-panel/diag', kbTreePath: '/oblivion-panel/kb-tree', logPrefix: '[oblivion-panel]' };
+    mod.apply(ctx, rawConfig);
+    const kbTree = calls.find((c) => c.path === '/oblivion-panel/kb-tree');
+    assert.ok(kbTree, 'kb-tree 路由已注册');
+    assert.equal(kbTree.kind, 'exact');
+    // 直接重放 handler，自己控制 writeHead/end（不靠真实 HTTP server）。
+    let captured = null;
+    kbTree.handler(
+      { method: 'GET' },
+      {
+        writeHead: (code, headers) => { captured = { code, headers }; },
+        end: (data) => { captured.data = data; },
+      },
+    );
+    // handler 是异步的（readCoreMdRoot → buildKbTree），等一拍再判定
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(captured.code, 200, 'kb-tree 路由返回 200');
+    const parsed = JSON.parse(captured.data);
+    assert.equal(parsed.ok, true);
+    assert.ok(Array.isArray(parsed.tree));
+    assert.ok(parsed.panelVersion, 'panelVersion 在响应里');
+  });
+
+  it('apply：POST 到 kb-tree 路由返回 405', async () => {
+    const { dataRoot } = seed();
+    const calls = [];
+    const ctx = {
+      inject: (deps, fn) => {
+        if (deps.includes('webServer')) fn({ webServer: { register: (spec) => calls.push(spec) } });
+      },
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    };
+    const rawConfig = { dataRoot, fallbackMdRoot: '', routePath: '/oblivion-panel/status', diagPath: '/oblivion-panel/diag', kbTreePath: '/oblivion-panel/kb-tree', logPrefix: '[oblivion-panel]' };
+    await mod.apply(ctx, rawConfig);
+    let captured = null;
+    calls.find((c) => c.path === '/oblivion-panel/kb-tree').handler({ method: 'POST' }, {
+      writeHead: (code, headers) => { captured = { code, headers }; },
+      end: (data) => { captured.data = data; },
+    });
+    assert.equal(captured.code, 405);
+    assert.match(JSON.parse(captured.data).error, /method not allowed/);
+  });
+
+  it('apply：GET /oblivion-panel/kb-file 返回 200 + content（md 文件）', async () => {
+    const { dataRoot, mdRoot } = seed();
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    // 在 mdRoot 下放一个测试 md 文件
+    const testMd = path.join(mdRoot, 'test-note.md');
+    await fs.mkdir(mdRoot, { recursive: true });
+    await fs.writeFile(testMd, '# Test Note\nHello KB', 'utf8');
+
+    const calls = [];
+    const ctx = {
+      inject: (deps, fn) => {
+        if (deps.includes('webServer')) fn({ webServer: { register: (spec) => calls.push(spec) } });
+      },
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    };
+    const rawConfig = { dataRoot, fallbackMdRoot: mdRoot, routePath: '/oblivion-panel/status', diagPath: '/oblivion-panel/diag', kbTreePath: '/oblivion-panel/kb-tree', kbFilePath: '/oblivion-panel/kb-file', logPrefix: '[oblivion-panel]' };
+    mod.apply(ctx, rawConfig);
+    const kbFile = calls.find((c) => c.path === '/oblivion-panel/kb-file');
+    assert.ok(kbFile, 'kb-file 路由已注册');
+    let captured = null;
+    kbFile.handler(
+      { method: 'GET', url: '/oblivion-panel/kb-file?file=test-note.md' },
+      { writeHead: (code, headers) => { captured = { code, headers }; }, end: (data) => { captured.data = data; } },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(captured.code, 200, 'kb-file GET 返回 200');
+    const parsed = JSON.parse(captured.data);
+    assert.equal(parsed.ok, true);
+    assert.ok(parsed.content.includes('# Test Note'), 'content 包含文件内容');
+    // 清理
+    await fs.unlink(testMd).catch(() => {});
+  });
+
+  it('apply：GET /oblivion-panel/kb-file 带 .. 路径返回 404', async () => {
+    const { dataRoot, mdRoot } = seed();
+    const calls = [];
+    const ctx = {
+      inject: (deps, fn) => {
+        if (deps.includes('webServer')) fn({ webServer: { register: (spec) => calls.push(spec) } });
+      },
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    };
+    const rawConfig = { dataRoot, fallbackMdRoot: mdRoot, routePath: '/oblivion-panel/status', diagPath: '/oblivion-panel/diag', kbTreePath: '/oblivion-panel/kb-tree', kbFilePath: '/oblivion-panel/kb-file', logPrefix: '[oblivion-panel]' };
+    mod.apply(ctx, rawConfig);
+    const kbFile = calls.find((c) => c.path === '/oblivion-panel/kb-file');
+    let captured = null;
+    kbFile.handler(
+      { method: 'GET', url: '/oblivion-panel/kb-file?file=..%2F..%2Fetc%2Fpasswd' },
+      { writeHead: (code, headers) => { captured = { code, headers }; }, end: (data) => { captured.data = data; } },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(captured.code, 404, '非法路径返回 404');
+    const parsed = JSON.parse(captured.data);
+    assert.equal(parsed.ok, false);
+  });
+
+  it('apply：POST /oblivion-panel/kb-file 写入文件内容（200）', async () => {
+    const { dataRoot, mdRoot } = seed();
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    // 先创建一个 md 文件，然后 POST 写入新内容
+    const testMd = path.join(mdRoot, 'write-test.md');
+    await fs.mkdir(mdRoot, { recursive: true });
+    await fs.writeFile(testMd, 'original content', 'utf8');
+
+    const calls = [];
+    const ctx = {
+      inject: (deps, fn) => {
+        if (deps.includes('webServer')) fn({ webServer: { register: (spec) => calls.push(spec) } });
+      },
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    };
+    const rawConfig = { dataRoot, fallbackMdRoot: mdRoot, routePath: '/oblivion-panel/status', diagPath: '/oblivion-panel/diag', kbTreePath: '/oblivion-panel/kb-tree', kbFilePath: '/oblivion-panel/kb-file', logPrefix: '[oblivion-panel]' };
+    mod.apply(ctx, rawConfig);
+    let captured = null;
+    const body = JSON.stringify({ file: 'write-test.md', content: 'updated content' });
+    // 构造带 data/end 事件流的可迭代 request 对象（readBody 期望 Node IncomingMessage）
+    const streamMod = await import('node:stream');
+    const stream = new streamMod.Readable({ read() {} });
+    stream.push(body);
+    stream.push(null);
+    calls.find((c) => c.path === '/oblivion-panel/kb-file').handler(
+      { method: 'POST', url: '/oblivion-panel/kb-file', on: (ev, cb) => stream.on(ev, cb) },
+      { writeHead: (code, headers) => { captured = { code, headers }; }, end: (data) => { captured.data = data; } },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(captured.code, 200, 'kb-file POST 返回 200');
+    const parsed = JSON.parse(captured.data);
+    assert.equal(parsed.ok, true);
+    // 验证文件内容确实被更新
+    const diskContent = await fs.readFile(testMd, 'utf8');
+    assert.equal(diskContent, 'updated content', '文件内容已更新');
+    // 清理
+    await fs.unlink(testMd).catch(() => {});
+  });
+
+  it('apply：POST /oblivion-panel/kb-file 带 .. 路径返回 404', async () => {
+    const { dataRoot, mdRoot } = seed();
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    await fs.mkdir(mdRoot, { recursive: true });
+
+    const calls = [];
+    const ctx = {
+      inject: (deps, fn) => {
+        if (deps.includes('webServer')) fn({ webServer: { register: (spec) => calls.push(spec) } });
+      },
+      logger: () => ({ warn: () => {}, info: () => {} }),
+    };
+    const rawConfig = { dataRoot, fallbackMdRoot: mdRoot, routePath: '/oblivion-panel/status', diagPath: '/oblivion-panel/diag', kbTreePath: '/oblivion-panel/kb-tree', kbFilePath: '/oblivion-panel/kb-file', logPrefix: '[oblivion-panel]' };
+    mod.apply(ctx, rawConfig);
+    const kbFile = calls.find((c) => c.path === '/oblivion-panel/kb-file');
+    let captured = null;
+    const body = JSON.stringify({ file: '../etc/passwd', content: 'hack' });
+    // 构造带 data/end 事件流的可迭代 request 对象（readBody 期望 Node IncomingMessage）
+    const streamMod = await import('node:stream');
+    const stream = new streamMod.Readable({ read() {} });
+    stream.push(body);
+    stream.push(null);
+    kbFile.handler(
+      { method: 'POST', url: '/oblivion-panel/kb-file', on: (ev, cb) => stream.on(ev, cb) },
+      { writeHead: (code, headers) => { captured = { code, headers }; }, end: (data) => { captured.data = data; } },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(captured.code, 404, '非法路径 POST 返回 404');
+    const parsed = JSON.parse(captured.data);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error ?? '', /非法路径/);
+  });
+});

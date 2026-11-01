@@ -54,7 +54,7 @@ import {
   sweepTransportOrphans,
   writeOrphanScript,
 } from './orphans.js';
-import { ORPHANS_PATH, PLUGINS_PATH, RESTART_GATES_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH } from './paths.js';
+import { ORPHANS_PATH, PLUGINS_PATH, RELOAD_PATH, RESTART_GATES_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH } from './paths.js';
 import { readInstalledPlugins, resolveProfile } from './profile-plugins.js';
 import { parseTailQuery, readSessionTail, resolveDshHome } from './session-tail.js';
 import {
@@ -77,7 +77,7 @@ import {
  * ESM，Node 里 import 不了）。宿主半边与浏览器半边共用 `paths.ts` / `plugin-list.ts`，
  * 所以这里导出的是同一份实现，不是副本。
  */
-export { ORPHANS_PATH, PLUGINS_PATH, RESTART_GATES_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH };
+export { ORPHANS_PATH, PLUGINS_PATH, RELOAD_PATH, RESTART_GATES_PATH, RESTART_PATH, SESSION_MESSAGE_PATH, SESSION_TAIL_PATH, TASKS_PATH, UPDATES_APPLY_PATH, UPDATES_PATH };
 export { layerLabel, normalizePluginList, quoteArg, restoreCommand, statusLabel, totalRestoreScript } from './plugin-list.js';
 export type { InstalledPlugin, PluginLayer, PluginListPayload } from './plugin-list.js';
 export { readInstalledPlugins, resolveProfile };
@@ -837,6 +837,94 @@ function hasActiveTasks(agents: unknown, jobs: unknown): boolean {
   return ids.some((id) =>
     (jobList(id) ?? []).some((job) => job.status === 'running' || job.status === 'stopping'),
   );
+}
+
+/**
+ * 注册「智能重载」路由（POST）。
+ *
+ * 调用宿主 HMR 服务的 `reconcileProfile`，替换插件代码但**保留运行中任务**。
+ * 等价于 dsh-unlag 的 `/dsh-unlag/reload`，但不依赖该插件是否安装。
+ *
+ * 响应：
+ *   - 200 `{ ok: true, status: 'applied'|'skipped'|... }` — 成功/跳过
+ *   - 503 `{ ok: false, error: 'hmr service unavailable' }` — HMR 服务未就绪
+ *   - 500 `{ ok: false, error: '...' }` — 其他错误
+ */
+function installReloadRoute(ctx: HostCtx, warn: (message: string) => void): void {
+  ctx.inject?.(['webServer'], (scope) => {
+    const server = scope.webServer;
+    if (server === undefined || typeof server.register !== 'function') {
+      warn('webServer 不可用，智能重载路由未挂载');
+      return;
+    }
+
+    const dispose = server.register({
+      kind: 'exact',
+      path: RELOAD_PATH,
+      handler: async (request, response) => {
+        const json = (status: number, body: unknown): void => {
+          response.writeHead(status, { 'content-type': 'application/json' });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== 'POST') {
+          json(405, { ok: false, error: 'method not allowed' });
+          return;
+        }
+
+        // 获取 HMR 服务（与 dsh-unlag 同口径：每次用时重查，因为 HMR 晚启动）
+        const hmr = ctx.get?.('hmr') as
+          | {
+              reconcileProfile?: (requiredBefore: string[]) => Promise<unknown>;
+              runExclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
+            }
+          | undefined;
+
+        if (
+          hmr === undefined ||
+          typeof hmr.reconcileProfile !== 'function' ||
+          typeof hmr.runExclusive !== 'function'
+        ) {
+          json(503, { ok: false, error: 'hmr service unavailable' });
+          return;
+        }
+
+        try {
+          // 拿当前 running 的 entry ids（排除自身，避免把自己的重启算进 baseline）
+          const loader = ctx.get?.('loader') as {
+            entries?: () => Array<{ id: string; fiber?: { state: number } }>;
+          } | undefined;
+
+          let requiredBefore: string[] = [];
+          if (loader?.entries?.()) {
+            requiredBefore = loader
+              .entries()
+              .filter((e) => e.fiber?.state === 2 && e.id !== 'oblivion-brand')
+              .map((e) => e.id);
+          }
+
+          // 通过 HMR 的 exclusive queue 执行 reconcile
+          const result = await hmr.runExclusive(async () => {
+            return hmr.reconcileProfile!(requiredBefore);
+          });
+
+          const statusStr =
+            typeof result === 'object' && result !== null && 'status' in result
+              ? String((result as { status?: string }).status ?? 'unknown')
+              : 'applied';
+
+          json(200, { ok: true, status: statusStr });
+        } catch (error) {
+          json(500, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+    });
+
+    ctx.effect?.(() => dispose, 'oblivion-brand: reload route');
+    ctx.logger?.('@oblivion/brand').info(`智能重载路由已挂载：POST ${RELOAD_PATH}`);
+  });
 }
 
 /**
@@ -1692,6 +1780,7 @@ export function apply(ctx: HostCtx): void {
   // 装载即清扫一次：覆盖不经过本插件按钮的那些重启路径（崩溃 / 任务管理器 / 升级）。
   sweepOnMount(logger);
   installRestartRoute(ctx, warn);
+  installReloadRoute(ctx, warn);
   installRestartGatesRoute(ctx, warn);
   installTasksRoute(ctx, warn);
   installOrphanRoute(ctx, warn);

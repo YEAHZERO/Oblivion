@@ -81,3 +81,12 @@ export const SESSION_MESSAGE_PATH = '/obl-brand/session/message';
  * 参数：`session`（必填，会话 id）、`limit`（可选，1..50，默认 6）。
  */
 export const SESSION_TAIL_PATH = '/obl-brand/session/tail';
+
+/**
+ * 智能重载插件代码（POST）。
+ *
+ * 调用 HMR 服务的 `reconcileProfile`，替换插件代码但**保留运行中任务**。
+ * 等价于 dsh-unlag 的 `/dsh-unlag/reload`，但不依赖该插件是否安装。
+ * 需 HMR 服务可用（未运行时返回 503）。
+ */
+export const RELOAD_PATH = '/obl-brand/reload';

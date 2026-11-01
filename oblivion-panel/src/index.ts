@@ -28,6 +28,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { buildSnapshot } from './snapshot.js';
+import { buildKbTree, readCoreMdRoot, readKbFile, writeKbFile } from './kbtree.js';
 
 /** 与 dshx.yml 的 marker 逐字相同。 */
 export const name = '@oblivion/panel';
@@ -62,6 +63,10 @@ interface Config {
   readonly routePath: string;
   /** 客户端 ctx 形状自报的落盘路由（POST）。 */
   readonly diagPath: string;
+  /** 知识库目录树路由（GET）。 */
+  readonly kbTreePath: string;
+  /** 知识库文件内容路由（GET，?file=相对路径）。 */
+  readonly kbFilePath: string;
   readonly logPrefix: string;
 }
 
@@ -78,6 +83,10 @@ const DEFAULT_CONFIG: Config = {
   recentLimit: 10,
   routePath: '/oblivion-panel/status',
   diagPath: '/oblivion-panel/diag',
+  /** 知识库目录树路由路径。 */
+  kbTreePath: '/oblivion-panel/kb-tree',
+  /** 知识库文件内容路由路径。 */
+  kbFilePath: '/oblivion-panel/kb-file',
   logPrefix: '[oblivion-panel]',
 };
 
@@ -191,6 +200,95 @@ function installStatusRoute(ctx: HostCtx, config: Config, warn: (message: string
             warn(`快照装配失败：${String(error)}`);
             response.writeHead(500, { 'content-type': 'application/json' });
             response.end(JSON.stringify({ ok: false, error: 'snapshot failed' }));
+          });
+      },
+    });
+
+    // 知识库目录树（GET）：装配一棵有界的目录树给左栏「知识库」面板渲染。
+    // 只读、不接受用户输入拼路径（mdRoot 来自 core status.json 或本插件 config 的 fallback）。
+    server.register({
+      kind: 'exact',
+      path: config.kbTreePath,
+      handler: (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET', 'content-type': 'application/json' });
+          response.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+          return;
+        }
+        void readCoreMdRoot(dataRoot)
+          .then(async (coreMdRoot) => {
+            const tree = await buildKbTree({
+              coreMdRoot,
+              fallbackMdRoot: expandHome(config.fallbackMdRoot),
+            });
+            response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+            response.end(JSON.stringify({ ...tree, panelVersion: VERSION }));
+          })
+          .catch((error: unknown) => {
+            warn(`知识库目录树装配失败：${String(error)}`);
+            response.writeHead(500, { 'content-type': 'application/json' });
+            response.end(JSON.stringify({ ok: false, error: 'kb-tree failed' }));
+          });
+      },
+    });
+
+    // 知识库文件内容（GET ?file=相对路径）：两栏面板右栏渲染 md 文档。
+    // 只读 + 路径边界校验（拒绝 `..`/绝对路径）+ 512KB 上限。
+    server.register({
+      kind: 'exact',
+      path: config.kbFilePath,
+      handler: (request, response) => {
+        if (request.method === 'POST') {
+          // 编辑模式保存：POST body {file, content} → writeKbFile
+          void readBody(request)
+            .then(async ({ body, overflow }) => {
+              if (overflow) {
+                response.writeHead(413, { 'content-type': 'application/json' });
+                response.end(JSON.stringify({ ok: false, error: 'body too large' }));
+                return;
+              }
+              const parsed = safeParse(body) as { file?: unknown; content?: unknown };
+              const file = typeof parsed.file === 'string' ? parsed.file : '';
+              const content = typeof parsed.content === 'string' ? parsed.content : '';
+              const coreMdRoot = await readCoreMdRoot(dataRoot);
+              const result = await writeKbFile(expandHome(config.fallbackMdRoot), file, content, coreMdRoot);
+              response.writeHead(result.ok ? 200 : 404, {
+                'content-type': 'application/json; charset=utf-8',
+                'cache-control': 'no-store',
+              });
+              response.end(JSON.stringify({ ...result, panelVersion: VERSION }));
+            })
+            .catch((error: unknown) => {
+              warn(`知识库文件写入失败：${String(error)}`);
+              response.writeHead(500, { 'content-type': 'application/json' });
+              response.end(JSON.stringify({ ok: false, error: 'kb-file write failed' }));
+            });
+          return;
+        }
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET, POST', 'content-type': 'application/json' });
+          response.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+          return;
+        }
+        const url = new URL(request.url ?? '/', 'http://localhost');
+        const relPath = url.searchParams.get('file') ?? '';
+        void readCoreMdRoot(dataRoot)
+          .then(async (coreMdRoot) => {
+            const result = await readKbFile(
+              expandHome(config.fallbackMdRoot),
+              relPath,
+              coreMdRoot,
+            );
+            response.writeHead(result.ok ? 200 : 404, {
+              'content-type': 'application/json; charset=utf-8',
+              'cache-control': 'no-store',
+            });
+            response.end(JSON.stringify({ ...result, panelVersion: VERSION }));
+          })
+          .catch((error: unknown) => {
+            warn(`知识库文件读取失败：${String(error)}`);
+            response.writeHead(500, { 'content-type': 'application/json' });
+            response.end(JSON.stringify({ ok: false, error: 'kb-file failed' }));
           });
       },
     });

@@ -265,6 +265,7 @@ var ORPHANS_PATH = "/obl-brand/orphans";
 var RESTART_GATES_PATH = "/obl-brand/restart-gates";
 var SESSION_MESSAGE_PATH = "/obl-brand/session/message";
 var SESSION_TAIL_PATH = "/obl-brand/session/tail";
+var RELOAD_PATH = "/obl-brand/reload";
 
 // src/profile-plugins.ts
 import { existsSync, readFileSync } from "node:fs";
@@ -1174,6 +1175,53 @@ function hasActiveTasks(agents, jobs) {
     (id) => (jobList(id) ?? []).some((job) => job.status === "running" || job.status === "stopping")
   );
 }
+function installReloadRoute(ctx, warn) {
+  ctx.inject?.(["webServer"], (scope) => {
+    const server = scope.webServer;
+    if (server === void 0 || typeof server.register !== "function") {
+      warn("webServer \u4E0D\u53EF\u7528\uFF0C\u667A\u80FD\u91CD\u8F7D\u8DEF\u7531\u672A\u6302\u8F7D");
+      return;
+    }
+    const dispose = server.register({
+      kind: "exact",
+      path: RELOAD_PATH,
+      handler: async (request, response) => {
+        const json = (status, body) => {
+          response.writeHead(status, { "content-type": "application/json" });
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== "POST") {
+          json(405, { ok: false, error: "method not allowed" });
+          return;
+        }
+        const hmr = ctx.get?.("hmr");
+        if (hmr === void 0 || typeof hmr.reconcileProfile !== "function" || typeof hmr.runExclusive !== "function") {
+          json(503, { ok: false, error: "hmr service unavailable" });
+          return;
+        }
+        try {
+          const loader = ctx.get?.("loader");
+          let requiredBefore = [];
+          if (loader?.entries?.()) {
+            requiredBefore = loader.entries().filter((e) => e.fiber?.state === 2 && e.id !== "oblivion-brand").map((e) => e.id);
+          }
+          const result = await hmr.runExclusive(async () => {
+            return hmr.reconcileProfile(requiredBefore);
+          });
+          const statusStr = typeof result === "object" && result !== null && "status" in result ? String(result.status ?? "unknown") : "applied";
+          json(200, { ok: true, status: statusStr });
+        } catch (error) {
+          json(500, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    });
+    ctx.effect?.(() => dispose, "oblivion-brand: reload route");
+    ctx.logger?.("@oblivion/brand").info(`\u667A\u80FD\u91CD\u8F7D\u8DEF\u7531\u5DF2\u6302\u8F7D\uFF1APOST ${RELOAD_PATH}`);
+  });
+}
 function installRestartGatesRoute(ctx, warn) {
   ctx.inject?.(["webServer"], (scope) => {
     const server = scope.webServer;
@@ -1776,6 +1824,7 @@ function apply(ctx) {
   installMarketRegistryOverride(ctx);
   sweepOnMount(logger);
   installRestartRoute(ctx, warn);
+  installReloadRoute(ctx, warn);
   installRestartGatesRoute(ctx, warn);
   installTasksRoute(ctx, warn);
   installOrphanRoute(ctx, warn);
@@ -1805,6 +1854,7 @@ export {
   ORPHAN_SCRIPT,
   ORPHAN_SCRIPT_PATH,
   PLUGINS_PATH,
+  RELOAD_PATH,
   RESTART_GATES_PATH,
   RESTART_PATH,
   RESTART_SCRIPT,

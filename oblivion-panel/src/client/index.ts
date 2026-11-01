@@ -4,16 +4,20 @@
  * `inject` 刻意留空：本插件**只有**一个可选依赖（`dsh-better-sidebar` 提供的 `ctx.betterSidebar`），
  * 它缺席时应当「不注册面板但插件照常装载」，而不是让整棵客户端树因为一个 UI 服务缺失而倒掉。
  *
- * 四条注册：
+ * 五条注册：
  *   ① **右侧栏 tab**（`registerPanelTab` → `betterSidebar.registerTab`）
  *   ② **左栏入口**（官方 `sidebar.footer.action`）→ 点击把右侧那一列切到 Oblivion 页
  *   ③ **设置分节**（官方 `settings.section`）→ 设置 → **Oblivion 知识库**（路径 / 自动整理 / 模型）
- *   ④ **ctx 形状自报**（POST 给自己的 Node 半边）→ 与 core 的 dump 对照，定位 `inject` 缺失的根因
+ *   ④ **左栏「知识库」面板条目**（`sidebar.panellist`，id `oblivion-kb`，order 10，在「插件」下方）
+ *      + **主栏面板**（`main` keyed slot，key `oblivion-kb`）→ 点击切换主栏到目录树页
+ *   ⑤ **ctx 形状自报**（POST 给自己的 Node 半边）→ 与 core 的 dump 对照，定位 `inject` 缺失的根因
  */
 
 import { createElement } from 'react';
 import { postDiag } from './diag.js';
+import { KbTreeIcon, KbTreePanel } from './KbTree.js';
 import { OblivionPanel } from './Panel.js';
+import { SmartReloadButton } from './SmartReloadButton.js';
 import { OblivionSettingsSection } from './SettingsSection.js';
 import { createLeftbarAction, openOblivionTab, PolarisGlyph, type OpenTabCapable } from './leftbar.js';
 import { openNoteInSidebar, type OpenFileCapable } from './open-note.js';
@@ -224,7 +228,68 @@ export function apply(ctx: ClientCtxLike): void {
     warn('slots 服务不可用：设置分节未注册（设置 → ' + SETTINGS_SECTION_LABEL + ' 不会出现）');
   }
 
-  // ④ ctx 形状自报（带上三个 UI 注册的真实结果，省得靠 DevTools 猜）
+  // ④ 左栏「知识库」面板条目（`sidebar.panellist`，order 10，在「插件」order 0 下方）
+  //    + 主栏面板（`main` keyed slot，key `oblivion-kb`）→ 点击切换主栏到目录树页。
+  //
+  // 同一套降级：`slots` 在就注册，不在就只记一条日志 —— 少一个面板入口绝不该让整个
+  // 客户端 entry 装载失败（那会连右侧栏 tab / 设置分节一起没了）。
+  //
+  // 注意：主栏面板是 **主内容区**（替代 Conversation），不是右侧栏。右侧栏 tab 仍由 ①
+  // 注册（`betterSidebar.registerTab`，id `oblivion:panel`），两条路互不干扰。
+  const KB_PANEL_ID = 'oblivion-kb';
+  let kbPanelRequested = false;
+  if (slots && typeof slots.inject === 'function' && typeof slots.register === 'function') {
+    // 主栏面板组件（`main` keyed slot 才挂内容；`sidebar.panellist` 条目只挂纯图标）
+    const kbPanelComponent = (props: PanelPropsLike) =>
+      createElement(KbTreePanel, {
+        visible: props.visible,
+        onOpenFile: (path: string) => openNote(props, path),
+      });
+    // ④a 左栏面板条目（sidebar.panellist list slot，id = order 10 > plugins order 0 → 在「插件」下方）
+    //     条目行**只渲染图标 + label**（外壳的 PanelRow 约定：`{size, active}`），
+    //     把内容组件挂进去会把整块左侧栏盖住、会话列表点不到（2026-10-31 实测踩过）。
+    try {
+      slots.inject('sidebar.panellist', () =>
+        slots.register?.(
+          { name: 'sidebar.panellist', id: KB_PANEL_ID, order: 10, label: () => '知识库' },
+          KbTreeIcon,
+        ),
+      );
+      kbPanelRequested = true;
+    } catch (error) {
+      warn('知识库面板条目注册失败：' + (error instanceof Error ? error.message : String(error)));
+    }
+    // ④b 主栏面板（main keyed slot，key = KB_PANEL_ID，与 panellist 条目 id 一致）
+    try {
+      slots.inject('main', () =>
+        slots.register?.({ name: 'main', key: KB_PANEL_ID }, kbPanelComponent),
+      );
+      kbPanelRequested = true;
+    } catch (error) {
+      warn('知识库主栏面板注册失败：' + (error instanceof Error ? error.message : String(error)));
+    }
+    // ④c 会话标题栏工具区的「智能重载」图标按钮（与 dsh-unlag 同一槽位规格：
+    //     28×28 图标、只在会话页出现；走自家 brand 的 /obl-brand/reload，不依赖 dsh-unlag 是否安装）
+    try {
+      slots.inject('conversation.session.header.utilities', () =>
+        slots.register?.(
+          {
+            name: 'conversation.session.header.utilities',
+            id: 'oblivion-smart-reload',
+            order: 31,
+            label: () => '智能重载',
+          },
+          SmartReloadButton,
+        ),
+      );
+    } catch (error) {
+      warn('智能重载图标注册失败：' + (error instanceof Error ? error.message : String(error)));
+    }
+  } else {
+    warn('slots 服务不可用：知识库面板入口未注册（左栏「知识库」条目不会出现）');
+  }
+
+  // ⑤ ctx 形状自报（带上三个 UI 注册的真实结果，省得靠 DevTools 猜）
   reportCtxShape(ctx, {
     panelTab: { status: result.status, detail: result.detail ?? null, tabId: PANEL_TAB_ID },
     leftbar: { requested: leftbarRegistered, seat: 'sidebar.footer.action' },
@@ -235,6 +300,7 @@ export function apply(ctx: ClientCtxLike): void {
       order: SETTINGS_SECTION_ORDER,
       note: '真正挂上与否看同目录下 where=settings-section 的那条自报',
     },
+    kbPanel: { requested: kbPanelRequested, id: KB_PANEL_ID, seat: 'sidebar.panellist+main' },
   });
 }
 

@@ -1,5 +1,16 @@
 # 变更日志
 
+## [未发布] — `@oblivion/brand` v0.1.9 + `@oblivion/panel` v0.0.20：**智能重载**（HMR 端点 + 会话标题栏图标按钮）+ 重启按钮改名「强制重启」
+
+- **brand**：新增 `POST /obl-brand/reload`（第 10 条路由）—— 调宿主 HMR 服务 `reconcileProfile(requiredBefore)`，替换插件代码但**保留运行中任务**；HMR 未就绪回 503、非 POST 回 405。等价于 dsh-unlag 的 `/dsh-unlag/reload`，但**不依赖 dsh-unlag 是否安装**。
+- **panel**：
+  - 新增 `SmartReloadButton`（`src/client/SmartReloadButton.tsx`）—— 仿 dsh-unlag 摆位，注册进 `conversation.session.header.utilities`（id `oblivion-smart-reload`，order 31，在 dsh-unlag 的 29 之后），28×28 循环箭头图标 + 8 秒状态文字；**只在会话页出现**。404/503 静默降级。
+  - 面板内的 `UnlagControl` 改为调自家 `/obl-brand/reload`（不再依赖 dsh-unlag 路径与 `x-dsh-unlag` 头），按钮文案「解除卡顿」→「智能重载」。
+  - `RestartControl` 文案「重启 DSH」→「强制重启」（与智能重载并列：一个保留任务、一个中断全部任务）。
+  - `package.json` compat 声明新槽位 `conversation.session.header.utilities`（list）。
+- 两包 VERSION：brand 0.1.8 → 0.1.9；panel 0.0.19 → 0.0.20。
+- 顺带修复：7 个 `tools/*.ps1` 缺 UTF-8 BOM（PS 5.1 按 ANSI 读中文注释解析失败），补 BOM。
+
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)，版本单一真源是仓库根的
 [`VERSION`](VERSION) 文件，由 [`scripts/bump-version.ps1`](scripts/bump-version.ps1) 写入。
 发布流水（三级分层：alpha / rc / patch）记在 `.memory/release/`（本机目录，不入库）。

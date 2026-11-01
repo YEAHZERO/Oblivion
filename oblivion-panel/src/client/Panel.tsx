@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { OrphanControl, RestartControl } from './RestartControl.js';
+import { OrphanControl, RestartControl, UnlagControl } from './RestartControl.js';
 import { PluginUpdates } from './PluginUpdates.js';
 import { SessionImportControl } from './SessionImport.js';
 import { ScoreChart } from './ScoreChart.js';
@@ -313,6 +313,7 @@ export function OblivionPanel(props: PanelTabProps): JSX.Element {
         {/* 四个宿主动作一行：重启 → 检查更新 → 清理孤儿 → 导入 DSH 会话 */}
         <div style={{ ...S.row, marginTop: 6, justifyContent: 'flex-start', gap: 8 }}>
           <RestartControl />
+          <UnlagControl />
           <PluginUpdates />
           <OrphanControl />
           <SessionImportControl />

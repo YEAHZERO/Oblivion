@@ -800,6 +800,127 @@ function registerPanelTab(ctx, component, warn, icon) {
   return result;
 }
 
+// src/kbtree.ts
+import { readdir as readdir2, stat as stat2 } from "node:fs/promises";
+import { join as join2 } from "node:path";
+var DEFAULT_MAX_DEPTH = 4;
+var DEFAULT_MAX_ENTRIES_PER_DIR = 100;
+var DEFAULT_MAX_NODES = 800;
+async function buildKbTree(options) {
+  const problems = [];
+  const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const maxEntriesPerDir = options.maxEntriesPerDir ?? DEFAULT_MAX_ENTRIES_PER_DIR;
+  const maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES;
+  const coreMdRoot = typeof options.coreMdRoot === "string" && options.coreMdRoot !== "" ? options.coreMdRoot : void 0;
+  const mdRoot = coreMdRoot ?? options.fallbackMdRoot;
+  const mdRootSource = coreMdRoot !== void 0 ? "core" : "fallback";
+  const counters = { files: 0, dirs: 0, nodes: 0 };
+  let truncated = false;
+  async function walk(dirPath, relDir, depth) {
+    if (counters.nodes >= maxNodes) {
+      truncated = true;
+      return [];
+    }
+    let entries = [];
+    try {
+      const names = await readdir2(dirPath);
+      for (const name of names) {
+        if (counters.nodes >= maxNodes) {
+          truncated = true;
+          break;
+        }
+        let isDir = false;
+        try {
+          isDir = (await stat2(join2(dirPath, name))).isDirectory();
+        } catch {
+          continue;
+        }
+        entries.push({ name, isDir });
+      }
+    } catch (error) {
+      problems.push(`${dirPath}: ${String(error)}`);
+      return [];
+    }
+    const dirs = entries.filter((e) => e.isDir).map((e) => e.name);
+    const files = entries.filter((e) => !e.isDir).map((e) => e.name);
+    const overflow = entries.length > maxEntriesPerDir;
+    if (overflow) truncated = true;
+    const nodeLimit = overflow ? maxEntriesPerDir : entries.length;
+    const dirNames = dirs.slice(0, nodeLimit);
+    const fileNames = files.slice(0, Math.max(0, nodeLimit - dirNames.length));
+    const result = [];
+    for (const name of dirNames) {
+      counters.nodes += 1;
+      counters.dirs += 1;
+      const relPath = relDir === "" ? name : relDir + "/" + name;
+      const children = depth + 1 <= maxDepth && counters.nodes < maxNodes ? await walk(join2(dirPath, name), relPath, depth + 1) : void 0;
+      if (depth + 1 > maxDepth) truncated = true;
+      result.push({ name, relPath, kind: "dir", children });
+    }
+    for (const name of fileNames) {
+      counters.nodes += 1;
+      counters.files += 1;
+      const relPath = relDir === "" ? name : relDir + "/" + name;
+      result.push({ name, relPath, kind: "file" });
+    }
+    return result;
+  }
+  const tree = await walk(mdRoot, "", 0);
+  return {
+    // 根目录读失败（mdRoot 不存在 / 无权限）：problems 非空，如实报 `ok: false`，
+    // 调用方（路由 / UI）据此区分「树是真的空」和「树读不出来」。
+    ok: problems.length === 0,
+    mdRoot,
+    mdRootSource,
+    tree,
+    truncated,
+    fileCount: counters.files,
+    dirCount: counters.dirs,
+    problems
+  };
+}
+async function readCoreMdRoot(dataRoot) {
+  try {
+    const { readFile: readFile2 } = await import("node:fs/promises");
+    const text2 = await readFile2(join2(dataRoot, "status.json"), "utf8");
+    if (text2.length > 256 * 1024) return void 0;
+    const parsed = JSON.parse(text2);
+    if (parsed !== null && typeof parsed === "object" && "mdRoot" in parsed) {
+      const mdRoot = parsed.mdRoot;
+      return typeof mdRoot === "string" && mdRoot !== "" ? mdRoot : void 0;
+    }
+  } catch {
+  }
+  return void 0;
+}
+var MAX_KB_FILE_BYTES = 512 * 1024;
+async function readKbFile(mdRoot, relPath, coreMdRoot) {
+  const clean = typeof relPath === "string" ? relPath.replace(/\\/g, "/") : "";
+  if (clean === "" || clean.startsWith("/")) {
+    return { ok: false, relPath: clean, error: "\u975E\u6CD5\u8DEF\u5F84\uFF1A\u5FC5\u987B\u662F\u975E\u7A7A\u76F8\u5BF9\u8DEF\u5F84" };
+  }
+  const segments = clean.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) {
+    return { ok: false, relPath: clean, error: "\u975E\u6CD5\u8DEF\u5F84\uFF1A\u542B `..` \u6216\u7A7A\u6BB5" };
+  }
+  const root = (typeof coreMdRoot === "string" && coreMdRoot !== "" ? coreMdRoot : mdRoot).replace(/\\/g, "/");
+  const absPath = segments.length === 1 ? join2(root, segments[0]) : segments.map((s, i) => join2(root, segments.slice(0, i + 1).join("/"))).pop();
+  try {
+    const { readFile: readFile2, stat: stat3 } = await import("node:fs/promises");
+    const st = await stat3(absPath);
+    if (!st.isFile()) {
+      return { ok: false, relPath: clean, error: "\u4E0D\u662F\u6587\u4EF6" };
+    }
+    const truncated = st.size > MAX_KB_FILE_BYTES;
+    const text2 = await readFile2(absPath, "utf8");
+    const content = truncated ? text2.slice(0, MAX_KB_FILE_BYTES) : text2;
+    return { ok: true, relPath: clean, content, truncated: truncated || void 0 };
+  } catch (error) {
+    return { ok: false, relPath: clean, error: String(error) };
+  }
+}
+var MAX_KB_WRITE_BYTES = 512 * 1024;
+
 // src/client/settings-model.ts
 var SETTINGS_ROUTE = "/oblivion-core/settings";
 var GROUPS = [
@@ -1149,6 +1270,7 @@ export {
   WIKI_MAX,
   WIKI_NOTE_DIR,
   actionLabel,
+  buildKbTree,
   buildPatch,
   buildScoreCurve,
   buildSnapshot,
@@ -1183,6 +1305,8 @@ export {
   percent,
   postSettings,
   providerOptions,
+  readCoreMdRoot,
+  readKbFile,
   reasonLabel,
   registerPanelTab,
   relativeTime,

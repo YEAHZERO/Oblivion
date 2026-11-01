@@ -70,7 +70,7 @@ await check('产物存在且可 import', async () => {
   return 'lib/index.js + lib/testkit.js @ v' + mod.VERSION;
 });
 
-await check('apply 注册两条路由（只读快照 + 客户端 ctx 自报）', async () => {
+await check('apply 注册四条路由（只读快照 + 客户端 ctx 自报 + 知识库树 + 文件）', async () => {
   const mod = await import(pathToFileURL(lib).href);
   const routes = [];
   const ctx = {
@@ -81,9 +81,12 @@ await check('apply 注册两条路由（只读快照 + 客户端 ctx 自报）',
     logger: { warn() {}, info() {} },
   };
   mod.apply(ctx, { dataRoot, fallbackMdRoot: mdRoot });
-  assert.equal(routes.length, 2, '应注册 2 条路由（status + diag）');
-  assert.deepEqual(routes.map((r) => r.path).sort(), ['/oblivion-panel/diag', '/oblivion-panel/status']);
-  assert.ok(routes.every((r) => r.kind === 'exact'), '两条都应是 exact 路由');
+  assert.equal(routes.length, 4, '应注册 4 条路由（status + diag + kb-tree + kb-file）');
+  assert.deepEqual(
+    routes.map((r) => r.path).sort(),
+    ['/oblivion-panel/diag', '/oblivion-panel/kb-file', '/oblivion-panel/kb-tree', '/oblivion-panel/status'],
+  );
+  assert.ok(routes.every((r) => r.kind === 'exact'), '四条都应是 exact 路由');
   return routes.map((r) => r.path).join(' + ');
 });
 
