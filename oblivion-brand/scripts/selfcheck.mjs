@@ -13,7 +13,8 @@
  *      守卫本身还有一条**反向验证**（未声明会抛 / 未就绪不回调 / 声明后可读），
  *      否则「桩什么都不给」也能让上面那些断言假通过。
  *   4. 已装插件清单：临时 profile 上读出规格 / 启用态 / 版本 / 恢复命令
- *   5. 清单路由真跑：GET 200（返回体还得能被客户端校验器接受）、POST 405、外来 Origin 403
+ *   5. 清单路由真跑：GET 200（返回体还得能被客户端校验器接受）、POST 405（method 明确且不符；
+ *      宿主转发可能剥掉 method，缺省放行不算 405）、外来 Origin 403
  *   6. profile 定位：DSH_PROFILE_DIR 优先，否则按 DSH_HOME 拼，都没有则 null
  *   7. 市场 registry 覆盖：未设 → 填 npmmirror
  *   8. 运营者优先：已经有人设过 → 一个字都不改
@@ -493,7 +494,7 @@ await check('清单路由真跑：GET 200 / POST 405 / 外来 Origin 403', async
 
     const wrongMethod = fakeResponse();
     await route.handler({ method: 'POST', headers: {} }, wrongMethod.response);
-    assert.equal(wrongMethod.captured.status, 405);
+    assert.equal(wrongMethod.captured.status, 405, 'method 明确且不符时仍 405（缺省 method 现在放行——宿主转发可能剥掉 method）');
 
     const foreign = fakeResponse();
     await route.handler({ method: 'GET', headers: { origin: 'https://evil.example' } }, foreign.response);

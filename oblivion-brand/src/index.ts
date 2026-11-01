@@ -750,7 +750,7 @@ function installRestartRoute(ctx: HostCtx, warn: (message: string) => void): voi
       kind: 'exact',
       path: RESTART_PATH,
       handler: async (request, response) => {
-        if (request.method !== 'POST') {
+        if (request.method !== undefined && request.method !== 'POST') {
           response.writeHead(405, { allow: 'POST' });
           response.end();
           return;
@@ -953,7 +953,7 @@ function installRestartGatesRoute(ctx: HostCtx, warn: (message: string) => void)
           response.writeHead(status, { 'content-type': 'application/json' });
           response.end(JSON.stringify(body));
         };
-        if (request.method !== 'GET') {
+        if (request.method !== undefined && request.method !== 'GET') {
           json(405, { ok: false, active: false, error: 'method not allowed' });
           return;
         }
@@ -1018,7 +1018,7 @@ function installTasksRoute(ctx: HostCtx, warn: (message: string) => void): void 
           response.writeHead(status, { 'content-type': 'application/json' });
           response.end(JSON.stringify(body));
         };
-        if (request.method !== 'GET') {
+        if (request.method !== undefined && request.method !== 'GET') {
           json(405, { ok: false, error: 'method not allowed' });
           return;
         }
@@ -1071,7 +1071,7 @@ function installOrphanRoute(ctx: HostCtx, warn: (message: string) => void): void
           response.end(JSON.stringify(body));
         };
 
-        if (request.method !== 'POST') {
+        if (request.method !== undefined && request.method !== 'POST') {
           json(405, { ok: false, error: 'method not allowed' }, { allow: 'POST' });
           return;
         }
@@ -1129,7 +1129,7 @@ function installPluginsRoute(ctx: HostCtx, warn: (message: string) => void): voi
           response.end(JSON.stringify(body));
         };
 
-        if (request.method !== 'GET') {
+        if (request.method !== undefined && request.method !== 'GET') {
           json(405, { ok: false, error: 'method not allowed' }, { allow: 'GET' });
           return;
         }
@@ -1356,7 +1356,7 @@ function installUpdatesRoutes(ctx: HostCtx, warn: (message: string) => void): vo
       path: UPDATES_PATH,
       handler: async (request, response) => {
         const json = jsonOf(response);
-        if (request.method !== 'GET') {
+        if (request.method !== undefined && request.method !== 'GET') {
           json(405, { ok: false, error: 'method not allowed' });
           return;
         }
@@ -1377,7 +1377,7 @@ function installUpdatesRoutes(ctx: HostCtx, warn: (message: string) => void): vo
       path: UPDATES_APPLY_PATH,
       handler: async (request, response) => {
         const json = jsonOf(response);
-        if (request.method !== 'POST') {
+        if (request.method !== undefined && request.method !== 'POST') {
           json(405, { ok: false, error: 'method not allowed' });
           return;
         }
@@ -1515,7 +1515,7 @@ function installSessionMessageRoute(ctx: HostCtx, warn: (message: string) => voi
           response.end(JSON.stringify(body));
         };
 
-        if (request.method !== 'POST') {
+        if (request.method !== undefined && request.method !== 'POST') {
           json(405, { ok: false, error: 'method not allowed' }, { allow: 'POST' });
           return;
         }
@@ -1619,7 +1619,7 @@ function installSessionTailRoute(ctx: HostCtx, warn: (message: string) => void):
           response.end(JSON.stringify(body));
         };
 
-        if (request.method !== 'GET') {
+        if (request.method !== undefined && request.method !== 'GET') {
           json(405, { ok: false, error: 'method not allowed' }, { allow: 'GET' });
           return;
         }
