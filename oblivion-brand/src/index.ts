@@ -866,8 +866,11 @@ function installReloadRoute(ctx: HostCtx, warn: (message: string) => void): void
           response.writeHead(status, { 'content-type': 'application/json' });
           response.end(JSON.stringify(body));
         };
-        if (request.method !== 'POST') {
-          json(405, { ok: false, error: 'method not allowed' });
+        // 宿主转发的请求对象有时不带 method（或 method 被剥掉）—— 此时不视为
+        // 405，直接走后续逻辑（HMR 不可用时自然 503）。只有**明确声明了 method
+        // 且不是 POST** 时才拒绝。
+        if (request.method !== undefined && request.method !== 'POST') {
+          json(405, { ok: false, error: 'method not allowed, use POST' });
           return;
         }
 

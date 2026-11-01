@@ -1190,8 +1190,8 @@ function installReloadRoute(ctx, warn) {
           response.writeHead(status, { "content-type": "application/json" });
           response.end(JSON.stringify(body));
         };
-        if (request.method !== "POST") {
-          json(405, { ok: false, error: "method not allowed" });
+        if (request.method !== void 0 && request.method !== "POST") {
+          json(405, { ok: false, error: "method not allowed, use POST" });
           return;
         }
         const hmr = ctx.get?.("hmr");
